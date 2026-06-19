@@ -1,0 +1,196 @@
+/**
+ * Phase runner — executes a phase's action list through the gateway.
+ *
+ * Processes ActionRefs sequentially. String refs run in order; Branch refs
+ * apply an optional guard then route based on the action's outcome.
+ *
+ * Guards (Branch.when) are evaluated before the action runs. A false guard
+ * skips the branch entirely and advances to the next ref in the list.
+ *
+ * After every action, resolveNextStep determines the next position with no
+ * invented transitions (invariant 21, prohibition 19).
+ *
+ * A step limit of 100 per phase prevents developer-defined cycles from
+ * running forever. The spec does not prohibit cycles but they are always a
+ * design error, so a loud failure with a clear reason is appropriate.
+ *
+ * Phase lifecycle hooks (before/after/onError) run around the full phase,
+ * not around individual actions. Action-level hooks live inside runGateway.
+ *
+ * Checkpoint is written to the store after a successful phase when
+ * phase.checkpoint === true (invariant 10: every checkpoint is recoverable).
+ */
+
+import type { ActionContext } from "../authoring/types";
+import type { Checkpoint } from "../shared/types";
+import type { JsonRecord } from "../shared/types";
+import type { PhaseResult, RunPhaseInput } from "./types";
+import { runGateway } from "../execution/execution-gateway";
+import { runHook } from "../execution/run-hooks";
+import { resolveNextStep } from "./resolve-next";
+import { executionId, checkpointId } from "../shared/id";
+
+const MAX_STEPS_PER_PHASE = 100;
+
+/** Serialise a TaskStateSnapshot to JsonRecord for checkpoint storage. */
+const snapshotToJson = (snapshot: Parameters<typeof runGateway>[0]["state"]): JsonRecord =>
+  JSON.parse(JSON.stringify(snapshot)) as JsonRecord;
+
+export const runPhase = async ({
+  phase,
+  actionRegistry,
+  state,
+  getApprovalStatus,
+  inputFor,
+  store,
+}: RunPhaseInput): Promise<PhaseResult> => {
+  const phaseCtx: ActionContext = {
+    taskId: state.taskId,
+    executionId: executionId(),
+    agentName: state.agentName,
+    phase: phase.name,
+  };
+
+  // Phase before hook — observes only, never authorizes (invariant 22, prohibition 17).
+  const beforeResult = await runHook(phase.hooks?.before, phaseCtx);
+  if (beforeResult.isErr) {
+    return {
+      status: "failed",
+      snapshot: state,
+      failedReason: `phase before-hook failed: ${beforeResult.error}`,
+    };
+  }
+
+  let currentState: typeof state = { ...state, currentPhase: phase.name };
+  let currentIndex = 0;
+  let stepCount = 0;
+  // Set to true after a Branch routes to a named target via jump.
+  // When the jump target (a plain string action) completes, the phase terminates
+  // rather than continuing sequentially into the rest of the list.
+  // If the target is itself a Branch, it may further route (and set this flag again).
+  let afterJump = false;
+  const { actions } = phase;
+
+  while (currentIndex < actions.length && stepCount < MAX_STEPS_PER_PHASE) {
+    stepCount++;
+    const ref = actions[currentIndex]!;
+    const isJumpTarget = afterJump;
+    afterJump = false;
+
+    // Guard check for Branch nodes — evaluated before the action runs.
+    // A false guard skips this branch; no governance decision is made.
+    if (typeof ref !== "string" && ref.when !== undefined && !ref.when(phaseCtx)) {
+      currentIndex++;
+      continue;
+    }
+
+    const actionName = typeof ref === "string" ? ref : ref.action;
+    const action = actionRegistry.get(actionName);
+    if (action === undefined) {
+      await runHook(phase.hooks?.onError, phaseCtx);
+      return {
+        status: "failed",
+        snapshot: currentState,
+        failedAction: actionName,
+        failedReason: `action "${actionName}" not found in action registry`,
+      };
+    }
+
+    const gwResult = await runGateway({
+      action,
+      rawInput: inputFor(actionName),
+      state: currentState,
+      approvalStatus: getApprovalStatus(actionName),
+      store,
+    });
+
+    if (gwResult.isErr) {
+      // Gateway blocked before fn ran (schema invalid, not legal, no approval, hook failed).
+      await runHook(phase.hooks?.onError, phaseCtx);
+      return {
+        status: "failed",
+        snapshot: currentState,
+        failedAction: actionName,
+        failedReason: gwResult.error,
+      };
+    }
+
+    const { fnResult, updatedSnapshot } = gwResult.value;
+    currentState = updatedSnapshot;
+
+    // Jump targets that are plain string refs terminate the phase immediately.
+    // This enforces decision-tree semantics: a branch routes to exactly one
+    // terminal step, not to all remaining sequential steps (invariant 21).
+    if (isJumpTarget && typeof ref === "string") {
+      if (fnResult.isOk) {
+        return await completePhase(phase, phaseCtx, currentState, store);
+      }
+      await runHook(phase.hooks?.onError, phaseCtx);
+      return {
+        status: "failed",
+        snapshot: currentState,
+        failedAction: actionName,
+        failedReason: fnResult.error,
+      };
+    }
+
+    const next = resolveNextStep({
+      actions,
+      currentIndex,
+      result: fnResult,
+      ctx: phaseCtx,
+    });
+
+    if (next.kind === "end-success") {
+      return await completePhase(phase, phaseCtx, currentState, store);
+    }
+
+    if (next.kind === "end-failure") {
+      await runHook(phase.hooks?.onError, phaseCtx);
+      return {
+        status: "failed",
+        snapshot: currentState,
+        failedAction: actionName,
+        failedReason: next.reason,
+      };
+    }
+
+    currentIndex = next.nextIndex;
+    afterJump = next.viaJump;
+  }
+
+  // Loop exited: either all actions ran naturally or step limit hit.
+  if (stepCount >= MAX_STEPS_PER_PHASE) {
+    await runHook(phase.hooks?.onError, phaseCtx);
+    return {
+      status: "failed",
+      snapshot: currentState,
+      failedReason: `phase "${phase.name}" exceeded ${MAX_STEPS_PER_PHASE}-step limit — possible cycle in declared transitions`,
+    };
+  }
+
+  // All actions ran successfully.
+  return await completePhase(phase, phaseCtx, currentState, store);
+};
+
+/** Write checkpoint (if configured) and run the after hook, then return success. */
+const completePhase = async (
+  phase: RunPhaseInput["phase"],
+  phaseCtx: ActionContext,
+  snapshot: RunPhaseInput["state"],
+  store: RunPhaseInput["store"],
+): Promise<PhaseResult> => {
+  if (phase.checkpoint) {
+    const ckpt: Checkpoint = {
+      id: checkpointId(),
+      taskId: snapshot.taskId,
+      phase: phase.name,
+      state: snapshotToJson(snapshot),
+      createdAt: new Date(),
+    };
+    await store.saveCheckpoint(ckpt);
+  }
+
+  await runHook(phase.hooks?.after, phaseCtx);
+  return { status: "completed", snapshot };
+};
