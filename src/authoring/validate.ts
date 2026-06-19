@@ -1,0 +1,182 @@
+/**
+ * Authoring-time validation for Action, Workflow, Phase, and Agent definitions.
+ *
+ * All validation runs at definition time (when the developer calls delta.action etc.),
+ * not at execution time. A definition that passes validation is safe to register.
+ * A definition that fails must never reach the registry — it is a programming error,
+ * not a runtime failure, so we return Err rather than throw.
+ *
+ * Validated here:
+ * - Schema present on every action (spec invariant 4)
+ * - Risk value in 1–5 when declared
+ * - Unique names within each type (enforced again by registry, checked early here
+ *   to give a clear error before the registry sees it)
+ * - Branch target names reference declared actions within the same phase
+ * - Prerequisite action/workflow names are resolvable in the known registry
+ * - Phase action refs are non-empty
+ * - Workflow phases list is non-empty
+ * - Agent actions list is non-empty
+ */
+
+import type { Result } from "slang-ts";
+import { Ok, Err } from "slang-ts";
+import type { Action, Workflow, Phase, Agent, ActionRef, Branch } from "./types";
+
+const isBranch = (ref: ActionRef): ref is Branch =>
+  typeof ref === "object" && "action" in ref;
+
+/** Collect all action names referenced directly inside a phase's action list. */
+const referencedActionNamesInPhase = (phase: Phase): string[] =>
+  phase.actions.map((ref) => (isBranch(ref) ? ref.action : ref));
+
+/** Collect all branch target names in a phase (onSuccess / onFailure targets). */
+const branchTargetNames = (phase: Phase): string[] =>
+  phase.actions
+    .filter(isBranch)
+    .flatMap((b) => [b.onSuccess, b.onFailure].filter((t): t is string => t !== undefined));
+
+// ---------------------------------------------------------------------------
+// Action
+// ---------------------------------------------------------------------------
+
+export const validateAction = (action: Action): Result<Action, string> => {
+  if (!action.name || action.name.trim() === "") {
+    return Err("action name must be a non-empty string");
+  }
+  if (!action.description || action.description.trim() === "") {
+    return Err(`action "${action.name}": description must be a non-empty string`);
+  }
+  // Every executable action must have a validation schema (invariant 4).
+  if (action.schema === undefined || action.schema === null) {
+    return Err(`action "${action.name}": schema is required (spec invariant 4)`);
+  }
+  // Risk is optional but when declared must be 1–5.
+  if (action.risk !== undefined && (action.risk < 1 || action.risk > 5)) {
+    return Err(`action "${action.name}": risk must be 1, 2, 3, 4, or 5 when declared`);
+  }
+  if (!action.fn || typeof action.fn !== "function") {
+    return Err(`action "${action.name}": fn must be a function`);
+  }
+  return Ok(action);
+};
+
+// ---------------------------------------------------------------------------
+// Phase
+// ---------------------------------------------------------------------------
+
+export const validatePhase = (phase: Phase): Result<Phase, string> => {
+  if (!phase.name || phase.name.trim() === "") {
+    return Err("phase name must be a non-empty string");
+  }
+  if (!phase.description || phase.description.trim() === "") {
+    return Err(`phase "${phase.name}": description must be a non-empty string`);
+  }
+  if (!Array.isArray(phase.actions) || phase.actions.length === 0) {
+    return Err(`phase "${phase.name}": actions list must be non-empty`);
+  }
+
+  // Every action ref in the phase must have a non-empty action name.
+  for (const ref of phase.actions) {
+    const name = isBranch(ref) ? ref.action : ref;
+    if (!name || name.trim() === "") {
+      return Err(`phase "${phase.name}": action ref contains an empty action name`);
+    }
+  }
+
+  // A branch must declare at least one routing target.
+  for (const ref of phase.actions) {
+    if (isBranch(ref)) {
+      const hasTarget = ref.onSuccess !== undefined || ref.onFailure !== undefined || ref.when !== undefined;
+      if (!hasTarget) {
+        return Err(
+          `phase "${phase.name}": branch for action "${ref.action}" must declare onSuccess, onFailure, or when`,
+        );
+      }
+    }
+  }
+
+  // Branch targets must reference actions also declared in this phase.
+  const directNames = new Set(referencedActionNamesInPhase(phase));
+  const targets = branchTargetNames(phase);
+  for (const target of targets) {
+    if (!directNames.has(target)) {
+      return Err(
+        `phase "${phase.name}": branch target "${target}" is not declared in this phase's action list`,
+      );
+    }
+  }
+
+  if (phase.supervision !== undefined) {
+    if (phase.supervision.maxRetries < 0) {
+      return Err(`phase "${phase.name}": maxRetries must be >= 0`);
+    }
+  }
+
+  return Ok(phase);
+};
+
+// ---------------------------------------------------------------------------
+// Workflow
+// ---------------------------------------------------------------------------
+
+export const validateWorkflow = (workflow: Workflow): Result<Workflow, string> => {
+  if (!workflow.name || workflow.name.trim() === "") {
+    return Err("workflow name must be a non-empty string");
+  }
+  if (!workflow.description || workflow.description.trim() === "") {
+    return Err(`workflow "${workflow.name}": description must be a non-empty string`);
+  }
+  if (!workflow.version || workflow.version.trim() === "") {
+    return Err(`workflow "${workflow.name}": version must be a non-empty string`);
+  }
+  if (!Array.isArray(workflow.phases) || workflow.phases.length === 0) {
+    return Err(`workflow "${workflow.name}": phases list must be non-empty`);
+  }
+  return Ok(workflow);
+};
+
+// ---------------------------------------------------------------------------
+// Agent
+// ---------------------------------------------------------------------------
+
+export const validateAgent = (
+  agent: Agent,
+  knownActionNames: Set<string>,
+  knownWorkflowNames: Set<string>,
+): Result<Agent, string> => {
+  if (!agent.name || agent.name.trim() === "") {
+    return Err("agent name must be a non-empty string");
+  }
+  if (!agent.description || agent.description.trim() === "") {
+    return Err(`agent "${agent.name}": description must be a non-empty string`);
+  }
+  if (!agent.role || agent.role.trim() === "") {
+    return Err(`agent "${agent.name}": role must be a non-empty string`);
+  }
+  if (!agent.rolePrompt || agent.rolePrompt.trim() === "") {
+    return Err(`agent "${agent.name}": rolePrompt must be a non-empty string`);
+  }
+  if (!Array.isArray(agent.actions) || agent.actions.length === 0) {
+    return Err(`agent "${agent.name}": actions list must be non-empty`);
+  }
+
+  // Every action attached to the agent must be in the registry.
+  for (const action of agent.actions) {
+    if (!knownActionNames.has(action.name)) {
+      return Err(
+        `agent "${agent.name}": action "${action.name}" must be registered before attaching to an agent`,
+      );
+    }
+  }
+
+  // Every workflow attached to the agent must be in the registry.
+  for (const wf of agent.workflows ?? []) {
+    if (!knownWorkflowNames.has(wf.name)) {
+      return Err(
+        `agent "${agent.name}": workflow "${wf.name}" must be registered before attaching to an agent`,
+      );
+    }
+  }
+
+  return Ok(agent);
+};
