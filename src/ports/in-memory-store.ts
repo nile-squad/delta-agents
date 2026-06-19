@@ -49,6 +49,13 @@ export const createInMemoryStore = (): StoragePort => {
       tasks.set(id, updated);
       return Ok(updated);
     },
+    getLatestTaskByAgent: async (agentName) => {
+      const all = [...tasks.values()].filter((t) => t.assignedAgent === agentName);
+      if (all.length === 0) return Ok(null);
+      // Most recently updated is the "latest" by wall-clock time.
+      const sorted = [...all].sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      return Ok(sorted[0] ?? null);
+    },
 
     // Task trees
     saveTaskTree: async (tree) => {

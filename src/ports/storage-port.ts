@@ -27,6 +27,11 @@ export type StoragePort = {
   saveTask: (task: Task) => Promise<Result<Task, string>>;
   getTask: (id: string) => Promise<Result<Task, string>>;
   updateTask: (id: string, patch: Partial<Task>) => Promise<Result<Task, string>>;
+  /**
+   * Return the most recently updated task for a given agent, or null if none exists.
+   * Used for invariants 25 (always retrievable) and 26 (no duplicate task creation).
+   */
+  getLatestTaskByAgent: (agentName: string) => Promise<Result<Task | null, string>>;
 
   // Task trees — one per root task
   saveTaskTree: (tree: TaskTree) => Promise<Result<TaskTree, string>>;
