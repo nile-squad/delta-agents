@@ -9,6 +9,11 @@
  * The mock also validates that requested actions are currently available. If a
  * scripted response names an action that is not in availableActions, the mock
  * returns Err — this catches tests that would silently skip prerequisite checks.
+ *
+ * An exhausted script is a clean `done` decision, not an Err — the scripted plan
+ * finished. Err is reserved for genuine failure (alwaysFail) and the availability
+ * guard, so the loop's failed/completed split stays meaningful (spec §Execution
+ * Outcomes).
  */
 
 import { Ok, Err } from "slang-ts";
@@ -23,7 +28,7 @@ export type MockResponse = {
 export type MockReasonerOptions = {
   /**
    * Scripted responses returned in order.
-   * If the queue is exhausted and no fallback is set, further calls return Err.
+   * When the queue is exhausted the mock returns a `done` decision.
    */
   responses?: MockResponse[];
   /** When set, every call returns Err with this message (simulates model failure). */
@@ -42,7 +47,8 @@ export const createMockReasoner = ({
 
       const next = queue.shift();
       if (next === undefined) {
-        return Err("mock reasoner: no more responses configured");
+        // Script exhausted — the planned work is finished, not failed.
+        return Ok({ kind: "done", reason: "mock reasoner: script exhausted" });
       }
 
       // Validate that the scripted action is actually available — prevents tests
@@ -59,7 +65,7 @@ export const createMockReasoner = ({
         ...(next.reasoning !== undefined ? { reasoning: next.reasoning } : {}),
       };
 
-      return Ok(request);
+      return Ok({ kind: "act", request });
     },
   };
 };

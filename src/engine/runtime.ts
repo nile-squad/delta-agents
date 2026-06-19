@@ -29,6 +29,7 @@ import type { TaskStateSnapshot } from "../state-space/types";
 import type { SendResult, InspectResult } from "./types";
 import { snapshotFromTask } from "../state-space/task-state";
 import { withEscalation } from "../state-space/task-state";
+import { isOverBudget } from "../shared/cost";
 import { discoverActions } from "../state-space/discover-actions";
 import { runGateway } from "../execution/execution-gateway";
 import { checkEscalation, raiseEscalation, getApprovalStatusForAction, requestApproval } from "../oversight";
@@ -97,13 +98,27 @@ export const runSendLoop = async ({
       rolePrompt: agent.rolePrompt,
     });
 
-    // Reasoner exhausted or cannot propose anything — natural completion.
+    // An Err is a genuine model/API failure or safety refusal — never completion.
+    // A failed reasoner is not a finished task (spec §Execution Outcomes).
     if (reasonResult.isErr) {
+      await store.updateTask(task.id, { status: "failed", updatedAt: new Date() });
+      return {
+        taskId: task.id,
+        status: "failed",
+        snapshot,
+        reason: `reasoner failed: ${reasonResult.error}`,
+      };
+    }
+
+    const decision = reasonResult.value;
+
+    // Explicit completion signal — the goal is satisfied, no further action.
+    if (decision.kind === "done") {
       naturalExit = true;
       break;
     }
 
-    const { actionName, input } = reasonResult.value;
+    const { actionName, input, reasoningCost } = decision.request;
 
     // ── 3. Look up the action definition ────────────────────────────────
     const actionResult = registry.getAction(actionName);
@@ -146,7 +161,7 @@ export const runSendLoop = async ({
     }
 
     // ── 5. Run through the execution gateway ────────────────────────────
-    const gwResult = await runGateway({ action, rawInput: input, state: snapshot, approvalStatus, store });
+    const gwResult = await runGateway({ action, rawInput: input, state: snapshot, approvalStatus, store, reasoningCost });
 
     if (gwResult.isErr) {
       const isApprovalBlock = gwResult.error.startsWith("approval-required:");
@@ -175,6 +190,22 @@ export const runSendLoop = async ({
         store,
       });
       snapshot = withEscalation({ snapshot, escalated: true });
+
+      // An escalated task awaits human oversight. It must stop here — never
+      // continue, and never be reported as completed (spec §Human Oversight,
+      // invariant 13). It lands as "paused" so a human can resolve and resume.
+      await store.updateTask(task.id, {
+        risk: snapshot.risk,
+        trust: snapshot.trust,
+        status: "paused",
+        updatedAt: new Date(),
+      });
+      return {
+        taskId: task.id,
+        status: "blocked",
+        snapshot,
+        reason: `escalated: ${escCheck.reason}`,
+      };
     }
 
     // ── 7. Checkpoint after successful action ────────────────────────────
@@ -204,6 +235,18 @@ export const runSendLoop = async ({
       status: "failed",
       snapshot,
       reason: `task exceeded ${maxSteps}-step limit`,
+    };
+  }
+
+  // A task that stopped while over budget did not finish cleanly — completion
+  // would misreport an exhausted run as success (spec §Cost Friction Detection).
+  if (isOverBudget(snapshot.spent, snapshot.budget)) {
+    await store.updateTask(task.id, { status: "failed", updatedAt: new Date() });
+    return {
+      taskId: task.id,
+      status: "failed",
+      snapshot,
+      reason: "task halted with budget exhausted",
     };
   }
 

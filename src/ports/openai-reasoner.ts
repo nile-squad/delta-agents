@@ -24,7 +24,7 @@ import { Ok, Err } from "slang-ts";
 import type { Result } from "slang-ts";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions/completions";
-import type { ReasonerPort, ReasonerInput, ActionRequest } from "./reasoner-port";
+import type { ReasonerPort, ReasonerInput, ReasonerDecision } from "./reasoner-port";
 
 // Matches the Fetch type the OpenAI client constructor accepts.
 type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -90,6 +90,32 @@ const buildTool = (availableActions: string[]): ChatCompletionTool => ({
   },
 });
 
+// The model calls this when the task goal is satisfied and no further action is
+// needed. It is the explicit completion signal — the engine maps it to a clean
+// "completed" status, distinct from an Err failure (spec §Execution Outcomes).
+const FINISH_TOOL_NAME = "finish_task";
+
+const buildFinishTool = (): ChatCompletionTool => ({
+  type: "function",
+  function: {
+    name: FINISH_TOOL_NAME,
+    description:
+      "Declare the task complete. Call this only when the goal is fully satisfied " +
+      "and no further action is required. Do not call it to abandon a task you cannot finish.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          description: "One-sentence summary of why the task is complete. Stored for audit.",
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+});
+
 // ── Message builder ───────────────────────────────────────────────────────────
 
 const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
@@ -100,9 +126,10 @@ const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
     content: [
       `You are ${agentRole}. ${rolePrompt}`,
       "",
-      "You are driving a governed execution task. Each turn you must choose exactly one action.",
+      "You are driving a governed execution task. Each turn you must call exactly one tool.",
       "Call request_action with the action name and the parameters that action needs.",
       "Only call actions listed in the user message — all others are outside your authority.",
+      "When the goal is fully satisfied and no further action is needed, call finish_task instead.",
     ].join("\n"),
   };
 
@@ -125,10 +152,22 @@ const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
 
 // ── Response parsing ──────────────────────────────────────────────────────────
 
+/**
+ * Tokens the model spent producing this turn, read from the provider's usage
+ * metadata. Folded into the action's recorded cost so token budget enforcement
+ * is real. Duration is left to the gateway (it times fn execution).
+ */
+const reasoningCostFrom = (
+  response: OpenAI.Chat.Completions.ChatCompletion,
+): { tokens: number; durationMs: number } => ({
+  tokens: response.usage?.total_tokens ?? 0,
+  durationMs: 0,
+});
+
 const parseToolCall = (
   response: OpenAI.Chat.Completions.ChatCompletion,
   availableActions: string[],
-): Result<ActionRequest, string> => {
+): Result<ReasonerDecision, string> => {
   const choice = response.choices[0];
   if (choice === undefined) {
     return Err("openai-reasoner: API response contained no choices");
@@ -137,7 +176,7 @@ const parseToolCall = (
   const toolCalls = choice.message.tool_calls;
   if (!toolCalls || toolCalls.length === 0) {
     return Err(
-      `openai-reasoner: model did not call request_action (finish_reason: "${choice.finish_reason}")`,
+      `openai-reasoner: model did not call request_action or finish_task (finish_reason: "${choice.finish_reason}")`,
     );
   }
 
@@ -148,11 +187,6 @@ const parseToolCall = (
       `openai-reasoner: unexpected tool type "${call?.type ?? "none"}" — expected "function"`,
     );
   }
-  if (call.function.name !== "request_action") {
-    return Err(
-      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action"`,
-    );
-  }
 
   let args: Record<string, unknown>;
   try {
@@ -160,6 +194,18 @@ const parseToolCall = (
   } catch {
     return Err(
       `openai-reasoner: failed to parse tool arguments as JSON: ${call.function.arguments}`,
+    );
+  }
+
+  // Explicit completion signal — the goal is satisfied, no further action.
+  if (call.function.name === FINISH_TOOL_NAME) {
+    const reason = typeof args["reason"] === "string" ? args["reason"] : undefined;
+    return Ok({ kind: "done", ...(reason !== undefined ? { reason } : {}) });
+  }
+
+  if (call.function.name !== "request_action") {
+    return Err(
+      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action" or "finish_task"`,
     );
   }
 
@@ -188,9 +234,13 @@ const parseToolCall = (
     typeof args["reasoning"] === "string" ? args["reasoning"] : undefined;
 
   return Ok({
-    actionName,
-    input: actionInput,
-    ...(reasoning !== undefined ? { reasoning } : {}),
+    kind: "act",
+    request: {
+      actionName,
+      input: actionInput,
+      reasoningCost: reasoningCostFrom(response),
+      ...(reasoning !== undefined ? { reasoning } : {}),
+    },
   });
 };
 
@@ -214,7 +264,7 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
   const maxTokens = config.maxTokens ?? DEFAULT_MAX_TOKENS;
 
   return {
-    reason: async (input: ReasonerInput): Promise<Result<ActionRequest, string>> => {
+    reason: async (input: ReasonerInput): Promise<Result<ReasonerDecision, string>> => {
       const { availableActions } = input;
 
       if (availableActions.length === 0) {
@@ -228,7 +278,7 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
           temperature,
           max_tokens: maxTokens,
           messages: buildMessages(input),
-          tools: [buildTool(availableActions)],
+          tools: [buildTool(availableActions), buildFinishTool()],
           tool_choice: "required",
         });
       } catch (e) {

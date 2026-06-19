@@ -13,7 +13,7 @@
  */
 
 import type { Result } from "slang-ts";
-import type { Execution } from "../shared/types";
+import type { Execution, Cost } from "../shared/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 import type { Action } from "../authoring/types";
 import type { StoragePort } from "../ports/storage-port";
@@ -27,6 +27,12 @@ export type GatewayInput = {
   state: TaskStateSnapshot;
   approvalStatus: ApprovalStatus;
   store: StoragePort;
+  /**
+   * Model tokens the reasoner spent proposing this action, reported by the
+   * adapter. Folded into the execution's recorded cost so token budget
+   * enforcement is real. Absent (mock) means zero token cost for this step.
+   */
+  reasoningCost?: Cost;
 };
 
 export type GatewaySuccess = {

@@ -1,5 +1,59 @@
 # Project Context: delta-agents
 
+## Audit (2026-06-19) — live-path vs. spec
+
+Phases 0–10 built a sound, individually-tested library of governance primitives, but
+the live execution path (`createDeltaEngine` → `runSendLoop` → `runGateway`) only wires
+in a fraction of them. Two layers that don't meet. Findings, by severity:
+
+**Critical (FIXED 2026-06-19 — `status:"completed"` is now trustworthy):**
+- **C1 [FIXED] — escalated task was marked `completed`.** Escalation now stops the loop:
+  persists `status:"paused"` + escalation record, returns `SendResult.status:"blocked"`.
+  `runtime.ts` escalation block. Test: engine.spec "C1 ... escalates and blocks".
+- **C2 [FIXED] — reasoner failure was marked `completed`.** `ReasonerPort.reason` now returns
+  `ReasonerDecision = {kind:"act",request} | {kind:"done",reason?}`. `Ok(done)`→completed,
+  `Ok(act)`→run, `Err`→**failed**. Mock: exhausted script→`done` (not Err); `alwaysFail`→Err.
+  OpenAI: added `finish_task` tool alongside `request_action`. Test: "C2 ... marks failed".
+- **C3 [FIXED] — empty discovery = "done" even when budget-exhausted.** Loop-end now checks
+  `isOverBudget` → `failed` ("budget exhausted") as a backstop for the resume-already-over-budget
+  case (mid-loop over-budget is caught first by escalation budget-violation → blocked). Test:
+  "C3 ... resuming over budget fails".
+- **C4 [FIXED] — token cost hard-coded 0.** `ActionRequest.reasoningCost` carries model tokens;
+  OpenAI adapter reads `response.usage.total_tokens`; gateway folds into execution cost +
+  snapshot spent → token budget enforcement is real. Test: "C4 ... token cost is recorded".
+  Note: a `done`-turn's own model tokens are still unaccounted (no execution to attach to) — minor leak.
+
+**High (subsystems built+tested, never called by live path — confirmed by import trace):**
+- **H1** Supervision unenforced: `applyStrategy`/`task-tree`/`abortEntireTree`/`retryWithJitter`
+  have no live callers. Gateway error → plain `status:"failed"`. Prohibition 10 not applied.
+- **H2** Workflows/phases/branching never drive execution: `run-workflow`/`run-phase`/`resolve-next`
+  uncalled. Loop is pure reasoner-picks-action. Invariants 7, 21 unexercised.
+- **H3** Governance math dormant: kalman / value(Bellman/MPC) / surprise / cost-friction /
+  isTrustDegraded uncalled. Gateway feeds `updateRisk` hardcoded `frictionSignal:0,
+  surpriseMagnitude:0` → risk moves only on failure rate. `bayesian-surprise` escalation
+  branch statically unreachable.
+- **H4** Delegation/subtasks absent: nothing sets `parentId` or touches `TaskTree`;
+  `parentBudget`/`parentSpent` never populated so parent-budget legality guard is dead.
+- **H5** Messages/queues unbuilt: no `saveMessage` in engine; busy-agent `send` returns `Err`
+  instead of queueing (spec §No New Task When Work Is Pending).
+
+**Medium:** M1 `pauseTask` lacks terminal-status guard (can resurrect completed task).
+M2 `resumeTask` accepts `"pending"` but error says `(expected "paused")`. M3 duration budget
+excludes reasoner latency (only `fn()` timed). M4 `ReasonerInput.context` (retrieved memory)
+never populated — spec principle 4 unimplemented.
+
+**Low/DX:** L1 `deploy` is a no-op assertion. L2 gateway writes execution row twice/action.
+L3 task+checkpoint persisted every step (2 writes/step). L4 lingering `Record<string,unknown>`/
+`as unknown as` casts vs. the "no unknown" rule. L5 OpenAI adapter pins `max_tokens`/`temperature`
+(newer gpt-5.x models prefer `max_completion_tokens`, ignore temperature).
+
+Critical set C1–C4 DONE (552 tests pass under vitest; bun shows same 4 pre-existing
+`vi.runAllTimersAsync` timer failures only). Files touched: `ports/reasoner-port.ts`,
+`ports/mock-reasoner.ts`, `ports/openai-reasoner.ts`, `execution/types.ts`,
+`execution/execution-gateway.ts`, `engine/runtime.ts`, + tests in `engine.spec.ts` and
+`openai-reasoner.spec.ts`. H-series (unwired supervision/workflow/governance-math/delegation/
+messaging) is phase-sized, still pending, scoped separately.
+
 ## Overview
 Delta Agents is a deterministic autonomous control plane for AI agents. It provides the execution layer that constrains, validates, supervises, and audits agent behavior. The model reasons; the engine governs. The full specification is in `delta-agents.spec.md` (1185 lines) — that is the canonical blueprint for implementation.
 

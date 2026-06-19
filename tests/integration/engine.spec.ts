@@ -18,6 +18,30 @@ import { Ok, Err } from "slang-ts";
 import { createDeltaEngine } from "../../src/engine";
 import { createInMemoryStore } from "../../src/ports";
 import { createMockReasoner } from "../../src/ports/mock-reasoner";
+import type { ReasonerPort } from "../../src/ports/reasoner-port";
+import { taskId, checkpointId } from "../../src/shared/id";
+import { initialRiskState, initialTrust } from "../../src/governance";
+import type { JsonRecord } from "../../src/shared/types";
+
+// A reasoner that scripts one act per step (with a reported reasoning token cost)
+// and signals done when the script is exhausted. Used to drive token-budget and
+// escalation paths the mock cannot (the mock reports no usage).
+const costReasoner = (steps: Array<{ actionName: string; tokens: number }>): ReasonerPort => {
+  const queue = [...steps];
+  return {
+    reason: async ({ availableActions }) => {
+      const next = queue.shift();
+      if (next === undefined) return Ok({ kind: "done" });
+      if (!availableActions.includes(next.actionName)) {
+        return Err(`unavailable: ${next.actionName}`);
+      }
+      return Ok({
+        kind: "act",
+        request: { actionName: next.actionName, input: {}, reasoningCost: { tokens: next.tokens, durationMs: 0 } },
+      });
+    },
+  };
+};
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -454,6 +478,100 @@ describe("invariant 26 — no new task when agent already has active work", () =
     const result = await delta.send({ goal: "new goal", agentName: "busy-agent" });
     expect(result.isErr).toBe(true);
     if (result.isErr) expect(result.error).toMatch(/invariant 26/);
+  });
+});
+
+// ── Critical-set corrections (C1–C4) ──────────────────────────────────────────
+
+describe("loop terminal states are honest (C1–C4)", () => {
+  it("C2 — a reasoner failure marks the task failed, never completed", async () => {
+    const store = createInMemoryStore();
+    const delta = createDeltaEngine({
+      store,
+      reasoner: createMockReasoner({ alwaysFail: "model exploded" }),
+    });
+    const act = delta.action({ name: "act", description: "test action", schema: z.object({}), fn: noop });
+    delta.deploy(delta.agent({ name: "fail-agent", description: "d", role: "r", rolePrompt: ".", actions: [act] }));
+
+    const result = await delta.send({ goal: "go", agentName: "fail-agent" });
+    expect(result.isOk).toBe(true);
+    if (result.isOk) {
+      expect(result.value.status).toBe("failed");
+      expect(result.value.reason).toMatch(/reasoner failed/);
+    }
+  });
+
+  it("C4 — reasoning token cost is recorded on the execution and drives spent", async () => {
+    const store = createInMemoryStore();
+    const delta = createDeltaEngine({
+      store,
+      reasoner: costReasoner([{ actionName: "work", tokens: 50 }]),
+    });
+    const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: noop });
+    delta.deploy(delta.agent({ name: "cost-agent", description: "d", role: "r", rolePrompt: ".", actions: [work] }));
+
+    const sent = await delta.send({ goal: "do work", agentName: "cost-agent", budget: { tokens: 10_000, durationMs: 300_000 } });
+    expect(sent.isOk).toBe(true);
+    if (!sent.isOk) return;
+    expect(sent.value.status).toBe("completed");
+
+    const state = await delta.inspect(sent.value.taskId);
+    if (state.isOk) {
+      expect(state.value.executions[0]?.cost.tokens).toBe(50);
+    }
+  });
+
+  it("C1 — exceeding token budget escalates and blocks, never completes", async () => {
+    const store = createInMemoryStore();
+    const delta = createDeltaEngine({
+      store,
+      reasoner: costReasoner([{ actionName: "spend", tokens: 50 }]),
+    });
+    const spend = delta.action({ name: "spend", description: "test action", schema: z.object({}), fn: noop });
+    delta.deploy(delta.agent({ name: "budget-agent", description: "d", role: "r", rolePrompt: ".", actions: [spend] }));
+
+    // Tiny token budget — one 50-token step blows past it.
+    const result = await delta.send({ goal: "overspend", agentName: "budget-agent", budget: { tokens: 10, durationMs: 300_000 } });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("blocked");
+    expect(result.value.reason).toMatch(/escalated/);
+
+    const state = await delta.inspect(result.value.taskId);
+    if (state.isOk) {
+      expect(state.value.escalations.length).toBeGreaterThan(0);
+      expect(state.value.escalations[0]?.trigger).toBe("budget-violation");
+      expect(state.value.task.status).toBe("paused");
+    }
+  });
+
+  it("C3 — resuming a task already over budget fails, never completes", async () => {
+    const store = createInMemoryStore();
+    const delta = createDeltaEngine({ store, reasoner: createMockReasoner() });
+    const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: noop });
+    delta.deploy(delta.agent({ name: "spent-agent", description: "d", role: "r", rolePrompt: ".", actions: [work] }));
+
+    // Seed a paused task and a checkpoint whose snapshot is already over budget.
+    const id = taskId();
+    const now = new Date();
+    const budget = { tokens: 10, durationMs: 1_000 };
+    await store.saveTask({
+      id, rootId: id, status: "paused", goal: "exhausted", assignedAgent: "spent-agent",
+      budget, risk: initialRiskState(), trust: initialTrust(), createdAt: now, updatedAt: now,
+    });
+    const overSpentSnapshot: JsonRecord = {
+      taskId: id, rootId: id, agentName: "spent-agent", status: "paused",
+      completedActions: [], completedWorkflows: [],
+      budget, spent: { tokens: 999, durationMs: 0 },
+      risk: initialRiskState() as unknown as JsonRecord, trust: initialTrust() as unknown as JsonRecord,
+    };
+    await store.saveCheckpoint({ id: checkpointId(), taskId: id, state: overSpentSnapshot, createdAt: now });
+
+    const resumed = await delta.resume(id);
+    expect(resumed.isOk).toBe(true);
+    if (!resumed.isOk) return;
+    expect(resumed.value.status).toBe("failed");
+    expect(resumed.value.reason).toMatch(/budget exhausted/);
   });
 });
 

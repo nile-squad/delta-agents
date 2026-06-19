@@ -83,6 +83,34 @@ const mockCompletionResponse = (
   usage: { prompt_tokens: 80, completion_tokens: 30, total_tokens: 110 },
 });
 
+// A response where the model called finish_task to signal completion.
+const mockFinishResponse = (reason: string): Record<string, unknown> => ({
+  id: "chatcmpl-finish",
+  object: "chat.completion",
+  created: 1_700_000_000,
+  model: "gpt-4o-mini",
+  choices: [
+    {
+      index: 0,
+      message: {
+        role: "assistant",
+        content: null,
+        refusal: null,
+        tool_calls: [
+          {
+            id: "call_finish",
+            type: "function",
+            function: { name: "finish_task", arguments: JSON.stringify({ reason }) },
+          },
+        ],
+      },
+      finish_reason: "tool_calls",
+      logprobs: null,
+    },
+  ],
+  usage: { prompt_tokens: 80, completion_tokens: 10, total_tokens: 90 },
+});
+
 // A response where the model produced text instead of calling a tool.
 const mockTextResponse = (): Record<string, unknown> => ({
   id: "chatcmpl-text",
@@ -123,9 +151,9 @@ describe("createOpenAIReasoner — happy path", () => {
     const result = await reasoner.reason(makeInput());
 
     expect(result.isOk).toBe(true);
-    if (!result.isOk) return;
-    expect(result.value.actionName).toBe("lookup-customer");
-    expect(result.value.input).toEqual({ customerId: "cust_123" });
+    if (!result.isOk || result.value.kind !== "act") throw new Error("expected act decision");
+    expect(result.value.request.actionName).toBe("lookup-customer");
+    expect(result.value.request.input).toEqual({ customerId: "cust_123" });
   });
 
   it("passes reasoning through when the model provides it", async () => {
@@ -139,8 +167,8 @@ describe("createOpenAIReasoner — happy path", () => {
     const result = await reasoner.reason(makeInput());
 
     expect(result.isOk).toBe(true);
-    if (!result.isOk) return;
-    expect(result.value.reasoning).toBe("Customer found, notification is next step");
+    if (!result.isOk || result.value.kind !== "act") throw new Error("expected act decision");
+    expect(result.value.request.reasoning).toBe("Customer found, notification is next step");
   });
 
   it("reasoning is absent when model omits it", async () => {
@@ -152,8 +180,8 @@ describe("createOpenAIReasoner — happy path", () => {
     const result = await reasoner.reason(makeInput());
 
     expect(result.isOk).toBe(true);
-    if (!result.isOk) return;
-    expect(result.value.reasoning).toBeUndefined();
+    if (!result.isOk || result.value.kind !== "act") throw new Error("expected act decision");
+    expect(result.value.request.reasoning).toBeUndefined();
   });
 
   it("input with multiple field types roundtrips correctly", async () => {
@@ -166,8 +194,35 @@ describe("createOpenAIReasoner — happy path", () => {
     const result = await reasoner.reason(makeInput());
 
     expect(result.isOk).toBe(true);
-    if (!result.isOk) return;
-    expect(result.value.input).toEqual(complexInput);
+    if (!result.isOk || result.value.kind !== "act") throw new Error("expected act decision");
+    expect(result.value.request.input).toEqual(complexInput);
+  });
+
+  it("reports reasoning token cost from usage metadata", async () => {
+    const reasoner = createOpenAIReasoner({
+      apiKey: "test-key",
+      fetch: fetchReturning(mockCompletionResponse("lookup-customer", { id: "c1" })),
+    });
+
+    const result = await reasoner.reason(makeInput());
+
+    expect(result.isOk).toBe(true);
+    if (!result.isOk || result.value.kind !== "act") throw new Error("expected act decision");
+    // mockCompletionResponse reports total_tokens: 110.
+    expect(result.value.request.reasoningCost?.tokens).toBe(110);
+  });
+
+  it("returns a done decision when the model calls finish_task", async () => {
+    const reasoner = createOpenAIReasoner({
+      apiKey: "test-key",
+      fetch: fetchReturning(mockFinishResponse("goal satisfied")),
+    });
+
+    const result = await reasoner.reason(makeInput());
+
+    expect(result.isOk).toBe(true);
+    if (!result.isOk || result.value.kind !== "done") throw new Error("expected done decision");
+    expect(result.value.reason).toBe("goal satisfied");
   });
 });
 
@@ -466,7 +521,9 @@ describe("createOpenAIReasoner — message content inspection", () => {
 
     expect(capturedBody!["tool_choice"]).toBe("required");
     const tools = capturedBody!["tools"] as Array<{ function: { name: string } }>;
-    expect(tools).toHaveLength(1);
-    expect(tools[0]?.function.name).toBe("request_action");
+    expect(tools).toHaveLength(2);
+    const toolNames = tools.map((t) => t.function.name);
+    expect(toolNames).toContain("request_action");
+    expect(toolNames).toContain("finish_task");
   });
 });

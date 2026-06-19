@@ -12,7 +12,7 @@
  */
 
 import type { Result } from "slang-ts";
-import type { Task } from "../shared/types";
+import type { Task, Cost } from "../shared/types";
 
 // What the reasoner returns: a proposed action and the input it wants to pass.
 export type ActionRequest = {
@@ -22,7 +22,25 @@ export type ActionRequest = {
   input: Record<string, string | number | boolean | null>;
   /** Optional reasoning trace for audit/diagnostics. Not used for governance decisions. */
   reasoning?: string;
+  /**
+   * Model tokens consumed producing this proposal, reported by the adapter from
+   * the provider's usage metadata. The engine folds this into the action's
+   * recorded cost so token budget enforcement is real (spec §Bellman: tokens are
+   * the primary governance currency). Absent for adapters that cannot report
+   * usage (e.g. the mock) — treated as zero.
+   */
+  reasoningCost?: Cost;
 };
+
+/**
+ * A reasoner decision is explicit: either commit to one action, or declare the
+ * task done. Completion is no longer inferred from the reasoner failing or
+ * running out — those are distinct, observable outcomes (a clean `done` versus
+ * an `Err` model/API failure). This keeps `status: "completed"` trustworthy.
+ */
+export type ReasonerDecision =
+  | { kind: "act"; request: ActionRequest }
+  | { kind: "done"; reason?: string };
 
 export type ReasonerInput = {
   task: Task;
@@ -36,9 +54,12 @@ export type ReasonerInput = {
 
 export type ReasonerPort = {
   /**
-   * Reason about the current task state and return a proposed action request.
-   * Returns Err when the model cannot produce a valid proposal (e.g., no available
-   * actions, model failure, safety refusal).
+   * Reason about the current task state and return an explicit decision:
+   * `act` to commit to one action, or `done` when the task is finished.
+   *
+   * Returns Err only for genuine failures — model/API error, safety refusal,
+   * or a malformed response. The engine maps Err to a failed task, never to
+   * completion (a failed reasoner is not a finished task).
    */
-  reason: (input: ReasonerInput) => Promise<Result<ActionRequest, string>>;
+  reason: (input: ReasonerInput) => Promise<Result<ReasonerDecision, string>>;
 };

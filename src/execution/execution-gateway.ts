@@ -37,6 +37,7 @@ export const runGateway = async ({
   state,
   approvalStatus,
   store,
+  reasoningCost,
 }: GatewayInput): Promise<Result<GatewaySuccess, string>> => {
   // ── 1. Schema validation ────────────────────────────────────────────────
   // Must be the first check. An invalid schema means the reasoner sent bad
@@ -117,8 +118,10 @@ export const runGateway = async ({
 
   const endedAt = new Date();
   const durationMs = endedAt.getTime() - startedAt.getTime();
-  // Token count is filled by the model adapter in Phase 10; 0 here.
-  const actualCost = { tokens: 0, durationMs };
+  // Cost = reasoning tokens (from the model adapter's usage) + fn wall-clock time.
+  // Tokens are the primary governance currency; threading them here makes token
+  // budget enforcement real (spec §Bellman Optimization).
+  const actualCost = { tokens: reasoningCost?.tokens ?? 0, durationMs };
 
   const fnSucceeded = fnResult.isOk;
 
