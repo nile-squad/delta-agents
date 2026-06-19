@@ -1,0 +1,58 @@
+{
+  "name": "delta-agents",
+  "version": "0.0.1",
+  "description": "Deterministic autonomous control plane for AI agents",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "test": "bun test tests/",
+    "test:watch": "bun test tests/ --watch",
+    "test:vitest": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "bun run test && bun run typecheck && bun run bun-build.ts && tsc -p tsconfig.build.json"
+  },
+  "homepage": "https://github.com/hussein-kizz/delta-agents#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hussein-kizz/delta-agents.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hussein-kizz/delta-agents/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "autonomous-agents",
+    "governance",
+    "control-plane",
+    "state-machine",
+    "supervision",
+    "task-orchestration",
+    "agent-safety",
+    "human-oversight",
+    "typescript"
+  ],
+  "author": "Hussein Kizz",
+  "license": "MIT",
+  "sideEffects": false,
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@vitest/ui": "^4.0.15",
+    "vitest": "^4.0.15"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "nanoid": "^5.1.11",
+    "slang-ts": "^0.0.7",
+    "zod": "^3.23.0"
+  }
+}
