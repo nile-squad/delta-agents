@@ -17,6 +17,7 @@ import type {
   Execution,
   Checkpoint,
   ApprovalRequest,
+  EscalationRecord,
   Message,
   Queue,
 } from "../shared/types";
@@ -27,6 +28,7 @@ export const createInMemoryStore = (): StoragePort => {
   const executions = new Map<string, Execution>();
   const checkpointsByTask = new Map<string, Checkpoint[]>();
   const approvals = new Map<string, ApprovalRequest>();
+  const escalationsByTask = new Map<string, EscalationRecord[]>();
   const messagesByTask = new Map<string, Message[]>();
   const queues = new Map<string, Queue>();
 
@@ -119,6 +121,20 @@ export const createInMemoryStore = (): StoragePort => {
         (a) => a.taskId === taskId && a.status === "pending",
       );
       return Ok(result);
+    },
+    getApprovalsByTask: async (taskId) => {
+      const result = [...approvals.values()].filter((a) => a.taskId === taskId);
+      return Ok(result);
+    },
+
+    // Escalations — appended in order; getEscalationsByTask returns all in insertion order
+    saveEscalation: async (record) => {
+      const existing = escalationsByTask.get(record.taskId) ?? [];
+      escalationsByTask.set(record.taskId, [...existing, record]);
+      return Ok(record);
+    },
+    getEscalationsByTask: async (taskId) => {
+      return Ok(escalationsByTask.get(taskId) ?? []);
     },
 
     // Messages — appended in insertion order (FIFO)

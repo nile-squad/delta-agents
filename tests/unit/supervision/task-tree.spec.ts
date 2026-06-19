@@ -25,14 +25,14 @@ const emptyTree = (): TaskTree => ({
 describe("requestSlot — slot allocation (invariants 15, 16)", () => {
   it("grants the first slot immediately", () => {
     const result = requestSlot(emptyTree(), "sub-1");
-    expect(result.granted).toBe(true);
+    expect("granted" in result && result.granted).toBe(true);
     expect(result.tree.activeChildren).toContain("sub-1");
   });
 
   it("grants the second slot immediately", () => {
     const { tree: t1 } = requestSlot(emptyTree(), "sub-1") as { granted: true; tree: TaskTree };
     const result = requestSlot(t1, "sub-2");
-    expect(result.granted).toBe(true);
+    expect("granted" in result && result.granted).toBe(true);
     expect(result.tree.activeChildren).toContain("sub-2");
     expect(result.tree.activeChildren.length).toBe(2);
   });

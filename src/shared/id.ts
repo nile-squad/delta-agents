@@ -19,5 +19,6 @@ export const taskId = (): string => generateId("tsk_");
 export const executionId = (): string => generateId("exc_");
 export const checkpointId = (): string => generateId("ckpt_");
 export const approvalId = (): string => generateId("appr_");
+export const escalationId = (): string => generateId("esc_");
 export const messageId = (): string => generateId("msg_");
 export const queueId = (): string => generateId("que_");

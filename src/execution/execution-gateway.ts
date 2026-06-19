@@ -62,7 +62,9 @@ export const runGateway = async ({
     const detail =
       approvalStatus === "pending"
         ? "approval is pending human resolution"
-        : "approval has not been requested yet";
+        : approvalStatus === "rejected"
+          ? "approval was rejected by a human reviewer"
+          : "approval has not been requested yet";
     return Err(
       `approval-required: action "${action.name}" requires human approval — ${detail}`,
     );

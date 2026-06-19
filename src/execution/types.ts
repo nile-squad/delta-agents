@@ -18,7 +18,7 @@ import type { TaskStateSnapshot } from "../state-space/types";
 import type { Action } from "../authoring/types";
 import type { StoragePort } from "../ports/storage-port";
 
-export type ApprovalStatus = "none" | "pending" | "approved";
+export type ApprovalStatus = "none" | "pending" | "approved" | "rejected";
 
 export type GatewayInput = {
   action: Action;

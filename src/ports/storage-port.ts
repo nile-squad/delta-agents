@@ -17,6 +17,7 @@ import type {
   Execution,
   Checkpoint,
   ApprovalRequest,
+  EscalationRecord,
   Message,
   Queue,
 } from "../shared/types";
@@ -47,6 +48,12 @@ export type StoragePort = {
   getApprovalRequest: (id: string) => Promise<Result<ApprovalRequest, string>>;
   updateApprovalRequest: (id: string, patch: Partial<ApprovalRequest>) => Promise<Result<ApprovalRequest, string>>;
   getPendingApprovals: (taskId: string) => Promise<Result<ApprovalRequest[], string>>;
+  /** Returns all approval requests for a task regardless of status (pending/approved/rejected). */
+  getApprovalsByTask: (taskId: string) => Promise<Result<ApprovalRequest[], string>>;
+
+  // Escalations — every escalation is TaskID-attributable and auditable (invariant 13)
+  saveEscalation: (record: EscalationRecord) => Promise<Result<EscalationRecord, string>>;
+  getEscalationsByTask: (taskId: string) => Promise<Result<EscalationRecord[], string>>;
 
   // Messages — all attributable to a TaskID (invariant 9)
   saveMessage: (message: Message) => Promise<Result<Message, string>>;

@@ -105,6 +105,24 @@ export type ApprovalRequest = {
   createdAt: Date;
 };
 
+// Escalation triggers (spec §Human Oversight). Every escalation is TaskID-attributable (invariant 13).
+export type EscalationTrigger =
+  | "risk-threshold"
+  | "bayesian-surprise"
+  | "policy-violation"
+  | "budget-violation"
+  | "workflow-failure"
+  | "explicit";
+
+// Every escalation is stored and attributable so oversight is never silent (invariant 13).
+export type EscalationRecord = {
+  id: string;
+  taskId: string;
+  trigger: EscalationTrigger;
+  reason: string;
+  createdAt: Date;
+};
+
 // All messages are TaskID-attributable (invariant 9).
 // payload is JSON-serialized to stay storable without schema drift.
 export type Message = {
