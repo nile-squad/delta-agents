@@ -54,6 +54,7 @@
     "@libsql/client": "^0.17.4",
     "drizzle-orm": "^0.45.2",
     "nanoid": "^5.1.11",
+    "openai": "^6.44.0",
     "slang-ts": "^0.0.7",
     "zod": "^3.23.0"
   }

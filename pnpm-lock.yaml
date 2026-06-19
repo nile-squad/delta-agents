@@ -17,6 +17,9 @@ importers:
       nanoid:
         specifier: ^5.1.11
         version: 5.1.11
+      openai:
+        specifier: ^6.44.0
+        version: 6.44.0(ws@8.21.0)(zod@3.25.76)
       slang-ts:
         specifier: ^0.0.7
         version: 0.0.7(typescript@5.9.3)
@@ -524,6 +527,17 @@ packages:
 
   obug@2.1.1:
     resolution: {integrity: sha512-uTqF9MuPraAQ+IsnPf366RG4cP9RtUi7MLO1N3KEc+wb0a6yKpeL0lmk2IB1jY5KHPAlTc6T/JRdC/YqxHNwkQ==}
+
+  openai@6.44.0:
+    resolution: {integrity: sha512-09/gH+8jH0RgUwsgWHAaxsKGRT5zVZ95IaJUnqAWj6XejIBmnFRwq2WUIF37VtDEsmGrtPmvCs5+yBSeZGWvkA==}
+    peerDependencies:
+      ws: ^8.18.0
+      zod: ^3.25 || ^4.0
+    peerDependenciesMeta:
+      ws:
+        optional: true
+      zod:
+        optional: true
 
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
@@ -1040,6 +1054,11 @@ snapshots:
   nanoid@5.1.11: {}
 
   obug@2.1.1: {}
+
+  openai@6.44.0(ws@8.21.0)(zod@3.25.76):
+    optionalDependencies:
+      ws: 8.21.0
+      zod: 3.25.76
 
   pathe@2.0.3: {}
 

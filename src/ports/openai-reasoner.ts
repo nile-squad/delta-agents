@@ -1,0 +1,241 @@
+/**
+ * OpenAI ReasonerPort adapter — production reasoning via the chat completions API.
+ *
+ * Uses a single `request_action` function tool with `tool_choice: "required"` so
+ * the model is forced to commit to one action each turn. The `action_name` parameter
+ * carries an enum constraint derived from the discoverable actions, which steers the
+ * model without removing its discretion about which action to pick.
+ *
+ * The engine remains bounded regardless of the model's capability. A weaker model
+ * still goes through every governance check; a stronger model is still blocked by
+ * the same gateway rules (README: "A weaker model is still safe. A stronger model
+ * is still bounded.").
+ *
+ * Usage:
+ *   const reasoner = createOpenAIReasoner({ model: "gpt-4o" });
+ *   // or with explicit key:
+ *   const reasoner = createOpenAIReasoner({ apiKey: process.env.OPENAI_API_KEY });
+ *
+ * For testing, inject a custom fetch:
+ *   const reasoner = createOpenAIReasoner({ apiKey: "test", fetch: mockFetch });
+ */
+
+import { Ok, Err } from "slang-ts";
+import type { Result } from "slang-ts";
+import OpenAI from "openai";
+import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions/completions";
+import type { ReasonerPort, ReasonerInput, ActionRequest } from "./reasoner-port";
+
+// Matches the Fetch type the OpenAI client constructor accepts.
+type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+
+export type OpenAIReasonerConfig = {
+  /** OpenAI API key. Falls back to OPENAI_API_KEY environment variable. */
+  apiKey?: string;
+  /**
+   * Chat completions model. Defaults to "gpt-4o-mini" — cost-effective
+   * and sufficiently capable for governed action selection.
+   */
+  model?: string;
+  /**
+   * Sampling temperature. Defaults to 0 for deterministic, reproducible
+   * action selection. Increase for exploratory agents.
+   */
+  temperature?: number;
+  /** Maximum output tokens. Defaults to 512. */
+  maxTokens?: number;
+  /**
+   * Custom fetch implementation. Useful for tests that need to return
+   * scripted responses without making real HTTP calls.
+   */
+  fetch?: FetchFn;
+};
+
+const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_TEMPERATURE = 0;
+const DEFAULT_MAX_TOKENS = 512;
+
+// ── Tool definition ───────────────────────────────────────────────────────────
+
+const buildTool = (availableActions: string[]): ChatCompletionTool => ({
+  type: "function",
+  function: {
+    name: "request_action",
+    description:
+      "Commit to the single best next action for the current task step. " +
+      "The engine will validate and execute it; you do not execute anything directly.",
+    parameters: {
+      type: "object",
+      properties: {
+        action_name: {
+          type: "string",
+          description: "Exact name of the action to execute. Must be one of the available actions.",
+          enum: availableActions,
+        },
+        input: {
+          type: "object",
+          description: "Parameters the action function expects. Provide all required fields.",
+          additionalProperties: true,
+        },
+        reasoning: {
+          type: "string",
+          description: "One-sentence explanation of why this action was chosen. Stored for audit.",
+        },
+      },
+      required: ["action_name", "input"],
+      additionalProperties: false,
+    },
+  },
+});
+
+// ── Message builder ───────────────────────────────────────────────────────────
+
+const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
+  const { task, availableActions, agentRole, rolePrompt, context } = input;
+
+  const system: ChatCompletionMessageParam = {
+    role: "system",
+    content: [
+      `You are ${agentRole}. ${rolePrompt}`,
+      "",
+      "You are driving a governed execution task. Each turn you must choose exactly one action.",
+      "Call request_action with the action name and the parameters that action needs.",
+      "Only call actions listed in the user message — all others are outside your authority.",
+    ].join("\n"),
+  };
+
+  const userLines = [
+    `Task goal: ${task.goal}`,
+    `Task ID: ${task.id}`,
+    `Available actions: ${availableActions.join(", ")}`,
+  ];
+  if (context !== undefined && context.length > 0) {
+    userLines.push("", "Context:", context);
+  }
+
+  const user: ChatCompletionMessageParam = {
+    role: "user",
+    content: userLines.join("\n"),
+  };
+
+  return [system, user];
+};
+
+// ── Response parsing ──────────────────────────────────────────────────────────
+
+const parseToolCall = (
+  response: OpenAI.Chat.Completions.ChatCompletion,
+  availableActions: string[],
+): Result<ActionRequest, string> => {
+  const choice = response.choices[0];
+  if (choice === undefined) {
+    return Err("openai-reasoner: API response contained no choices");
+  }
+
+  const toolCalls = choice.message.tool_calls;
+  if (!toolCalls || toolCalls.length === 0) {
+    return Err(
+      `openai-reasoner: model did not call request_action (finish_reason: "${choice.finish_reason}")`,
+    );
+  }
+
+  const call = toolCalls[0];
+  // Narrow the union: only function-type tool calls carry a .function property.
+  if (call === undefined || call.type !== "function") {
+    return Err(
+      `openai-reasoner: unexpected tool type "${call?.type ?? "none"}" — expected "function"`,
+    );
+  }
+  if (call.function.name !== "request_action") {
+    return Err(
+      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action"`,
+    );
+  }
+
+  let args: Record<string, unknown>;
+  try {
+    args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+  } catch {
+    return Err(
+      `openai-reasoner: failed to parse tool arguments as JSON: ${call.function.arguments}`,
+    );
+  }
+
+  const actionName = args["action_name"];
+  if (typeof actionName !== "string" || actionName.length === 0) {
+    return Err(
+      `openai-reasoner: action_name is missing or not a string in arguments: ${JSON.stringify(args)}`,
+    );
+  }
+
+  if (!availableActions.includes(actionName)) {
+    return Err(
+      `openai-reasoner: model chose "${actionName}" which is not in availableActions ${JSON.stringify(availableActions)}`,
+    );
+  }
+
+  const rawInput = args["input"];
+  const actionInput: Record<string, string | number | boolean | null> =
+    rawInput !== null &&
+    typeof rawInput === "object" &&
+    !Array.isArray(rawInput)
+      ? (rawInput as Record<string, string | number | boolean | null>)
+      : {};
+
+  const reasoning =
+    typeof args["reasoning"] === "string" ? args["reasoning"] : undefined;
+
+  return Ok({
+    actionName,
+    input: actionInput,
+    ...(reasoning !== undefined ? { reasoning } : {}),
+  });
+};
+
+// ── Factory ───────────────────────────────────────────────────────────────────
+
+/**
+ * Create an OpenAI-backed ReasonerPort.
+ *
+ * The returned reasoner calls the chat completions API each turn, forcing a
+ * tool call that names the next action and its input. The engine validates,
+ * governs, and executes — the model only proposes.
+ */
+export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): ReasonerPort => {
+  const client = new OpenAI({
+    apiKey: config.apiKey,
+    ...(config.fetch !== undefined ? { fetch: config.fetch } : {}),
+  });
+
+  const model = config.model ?? DEFAULT_MODEL;
+  const temperature = config.temperature ?? DEFAULT_TEMPERATURE;
+  const maxTokens = config.maxTokens ?? DEFAULT_MAX_TOKENS;
+
+  return {
+    reason: async (input: ReasonerInput): Promise<Result<ActionRequest, string>> => {
+      const { availableActions } = input;
+
+      if (availableActions.length === 0) {
+        return Err("openai-reasoner: no available actions — nothing to propose");
+      }
+
+      let response: OpenAI.Chat.Completions.ChatCompletion;
+      try {
+        response = await client.chat.completions.create({
+          model,
+          temperature,
+          max_tokens: maxTokens,
+          messages: buildMessages(input),
+          tools: [buildTool(availableActions)],
+          tool_choice: "required",
+        });
+      } catch (e) {
+        return Err(`openai-reasoner: API request failed — ${String(e)}`);
+      }
+
+      return parseToolCall(response, availableActions);
+    },
+  };
+};
