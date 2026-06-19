@@ -161,7 +161,7 @@ export const runSendLoop = async ({
     }
 
     // ── 5. Run through the execution gateway ────────────────────────────
-    const gwResult = await runGateway({ action, rawInput: input, state: snapshot, approvalStatus, store, reasoningCost });
+    const gwResult = await runGateway({ action, rawInput: input, state: snapshot, approvalStatus, store, reasoningCost, stepIndex: step });
 
     if (gwResult.isErr) {
       const isApprovalBlock = gwResult.error.startsWith("approval-required:");
@@ -173,14 +173,17 @@ export const runSendLoop = async ({
       return { taskId: task.id, status: "failed", snapshot, reason: gwResult.error };
     }
 
-    const { fnResult, updatedSnapshot } = gwResult.value;
+    const { fnResult, updatedSnapshot, surpriseMagnitude } = gwResult.value;
     snapshot = updatedSnapshot;
 
     // ── 6. Escalation check ─────────────────────────────────────────────
+    // surpriseMagnitude is now a real signal — a large divergence between
+    // predicted and observed health can trigger oversight (spec §Bayesian Surprise).
     const escCheck = checkEscalation({
       risk: snapshot.risk,
       spent: snapshot.spent,
       budget: snapshot.budget,
+      surpriseMagnitude,
     });
     if (escCheck.escalate) {
       await raiseEscalation({

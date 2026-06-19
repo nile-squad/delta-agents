@@ -575,6 +575,50 @@ describe("loop terminal states are honest (C1–C4)", () => {
   });
 });
 
+// ── Governance signals wired into the live loop (Package A / H3) ──────────────
+
+describe("governance math drives the live loop (H3)", () => {
+  it("a large predicted-vs-observed health divergence escalates via bayesian-surprise", async () => {
+    const store = createInMemoryStore();
+    const delta = createDeltaEngine({
+      store,
+      reasoner: costReasoner([{ actionName: "burn", tokens: 1000 }]),
+    });
+    const burn = delta.action({ name: "burn", description: "test action", schema: z.object({}), fn: noop });
+    delta.deploy(delta.agent({ name: "surprise-agent", description: "d", role: "r", rolePrompt: ".", actions: [burn] }));
+
+    // Budget 100 tokens; the step spends 1000 → observed health ~0.2 against a
+    // predicted (cold-start) health of 1.0 → surprise ~0.8, above the 0.7
+    // escalation threshold. This trigger was statically unreachable before H3.
+    const result = await delta.send({ goal: "burn tokens", agentName: "surprise-agent", budget: { tokens: 100, durationMs: 300_000 } });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("blocked");
+
+    const state = await delta.inspect(result.value.taskId);
+    if (state.isOk) {
+      expect(state.value.escalations[0]?.trigger).toBe("bayesian-surprise");
+    }
+  });
+
+  it("kalman health estimate is computed and carried on the snapshot", async () => {
+    const store = createInMemoryStore();
+    const delta = createDeltaEngine({
+      store,
+      reasoner: costReasoner([{ actionName: "work", tokens: 10 }]),
+    });
+    const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: noop });
+    delta.deploy(delta.agent({ name: "kalman-agent", description: "d", role: "r", rolePrompt: ".", actions: [work] }));
+
+    const sent = await delta.send({ goal: "work", agentName: "kalman-agent", budget: { tokens: 10_000, durationMs: 300_000 } });
+    expect(sent.isOk).toBe(true);
+    if (!sent.isOk) return;
+    expect(sent.value.snapshot.kalman).toBeDefined();
+    expect(sent.value.snapshot.kalman?.estimate).toBeGreaterThanOrEqual(0);
+    expect(sent.value.snapshot.kalman?.estimate).toBeLessThanOrEqual(1);
+  });
+});
+
 // ── Decoupling check ──────────────────────────────────────────────────────────
 
 describe("decoupling — modules individually importable", () => {

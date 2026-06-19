@@ -11,6 +11,7 @@
  */
 
 import type { Cost, ExecutionStatus, RiskState, TrustState } from "../shared/types";
+import type { KalmanState } from "../governance/types";
 
 export type TaskStateSnapshot = {
   taskId: string;
@@ -29,6 +30,12 @@ export type TaskStateSnapshot = {
 
   risk: RiskState;
   trust: TrustState;
+
+  // Continuous execution-health estimate, carried across steps so the Kalman
+  // filter warms up instead of cold-starting every action. Undefined on the
+  // first step; the gateway seeds it from the action's risk/cost priors.
+  // Persisted in the checkpoint snapshot, so it survives pause/resume.
+  kalman?: KalmanState;
 
   currentWorkflow?: string;
   currentPhase?: string;

@@ -28,14 +28,29 @@ in a fraction of them. Two layers that don't meet. Findings, by severity:
   have no live callers. Gateway error → plain `status:"failed"`. Prohibition 10 not applied.
 - **H2** Workflows/phases/branching never drive execution: `run-workflow`/`run-phase`/`resolve-next`
   uncalled. Loop is pure reasoner-picks-action. Invariants 7, 21 unexercised.
-- **H3** Governance math dormant: kalman / value(Bellman/MPC) / surprise / cost-friction /
-  isTrustDegraded uncalled. Gateway feeds `updateRisk` hardcoded `frictionSignal:0,
-  surpriseMagnitude:0` → risk moves only on failure rate. `bayesian-surprise` escalation
-  branch statically unreachable.
+- **H3 [FIXED 2026-06-19 — Package A] Governance math wired into the live loop.** New pure
+  module `src/governance/step-signals.ts` (`assembleStepSignals`) composes friction + Kalman
+  health + Bayesian surprise; gateway feeds the result to `updateRisk` (was hardcoded zeros) and
+  returns `surpriseMagnitude`; runtime forwards it to `checkEscalation`. `TaskStateSnapshot`
+  gained `kalman?: KalmanState` (persists in checkpoints, survives pause/resume). Progress proxy
+  for the hornless free loop = `completedActions / (stepIndex+1)`. The `bayesian-surprise`
+  escalation branch is now reachable (integration test proves it fires). Still dormant from H3's
+  original list: `value.ts` (Bellman/MPC `projectHorizon`, `computeActionValue`) and
+  `isTrustDegraded` — not yet wired; surprise→trust ("surprise" TrustUpdateOutcome) also not yet
+  used (gateway still success/failure only). Tests: engine.spec "governance math drives the live
+  loop (H3)" + `tests/unit/governance/step-signals.spec.ts` (8 unit).
 - **H4** Delegation/subtasks absent: nothing sets `parentId` or touches `TaskTree`;
   `parentBudget`/`parentSpent` never populated so parent-budget legality guard is dead.
 - **H5** Messages/queues unbuilt: no `saveMessage` in engine; busy-agent `send` returns `Err`
-  instead of queueing (spec §No New Task When Work Is Pending).
+  instead of queueing (spec §No New Task When Work Is Pending). H5a (busy-agent queueing) is the
+  small self-contained Package B; H5b (supervisor/agent comms) rides with H4.
+
+Storage note: all 8 entities already have working store methods in BOTH adapters (in-memory +
+Drizzle), so no remaining H-item needs new DB schema. New persisted state (H1 retry counters,
+done) rides inside the checkpoint `TaskStateSnapshot` JsonRecord.
+
+H-series sequence (scoped): A=H3 [DONE], B=H5a [next, small], C=H2+H1 [needs coexistence
+decision: C-a/C-b/C-c], D=H4+H5b [needs delegation-trigger + concurrency decision].
 
 **Medium:** M1 `pauseTask` lacks terminal-status guard (can resurrect completed task).
 M2 `resumeTask` accepts `"pending"` but error says `(expected "paused")`. M3 duration budget

@@ -23,10 +23,12 @@ import { Ok, Err } from "slang-ts";
 import type { Result } from "slang-ts";
 import type { GatewayInput, GatewaySuccess } from "./types";
 import type { ActionContext } from "../authoring/types";
+import type { TaskStateSnapshot } from "../state-space/types";
 import { checkLegality } from "../state-space/check-legality";
 import { withCompletedAction, withSpent } from "../state-space/task-state";
 import { updateTrust } from "../governance/trust";
 import { updateRisk } from "../governance/risk";
+import { assembleStepSignals } from "../governance/step-signals";
 import { executionId } from "../shared/id";
 import { zeroCost } from "../shared/cost";
 import { runHook } from "./run-hooks";
@@ -38,6 +40,7 @@ export const runGateway = async ({
   approvalStatus,
   store,
   reasoningCost,
+  stepIndex = 0,
 }: GatewayInput): Promise<Result<GatewaySuccess, string>> => {
   // ── 1. Schema validation ────────────────────────────────────────────────
   // Must be the first check. An invalid schema means the reasoner sent bad
@@ -148,29 +151,41 @@ export const runGateway = async ({
     cost: actualCost,
   };
 
-  // ── 10. Update trust (asymmetric decay) ────────────────────────────────
+  // ── 10. Assemble real governance signals ───────────────────────────────
+  // Friction, Bayesian surprise, and the Kalman health estimate are computed
+  // from this step's observed cost and progress (was hardcoded to zero, so risk
+  // only ever moved on failure rate and surprise escalation was unreachable).
+  const completedAfter =
+    fnSucceeded && !state.completedActions.includes(action.name)
+      ? state.completedActions.length + 1
+      : state.completedActions.length;
+  const signals = assembleStepSignals({
+    priorKalman: state.kalman,
+    anticipatedRisk: action.risk,
+    hasEstimatedCost: action.estimatedCost !== undefined,
+    priorSpent: state.spent,
+    actualCost,
+    budget: state.budget,
+    completedActionsCount: completedAfter,
+    stepIndex,
+    fnSucceeded,
+  });
+
+  // ── 11. Update trust (asymmetric decay) ────────────────────────────────
   // Success accrues slowly; failure decays fast (spec §Asymmetric Reputation Decay).
   const updatedTrust = updateTrust({
     current: state.trust,
     outcome: fnSucceeded ? "success" : "failure",
   });
 
-  // ── 11. Update risk from evidence ─────────────────────────────────────
-  // Phase 4 feeds only the failure rate signal; friction + Kalman surprise
-  // signals are integrated in Phase 8 when the engine runs the full loop.
-  const updatedRisk = updateRisk({
-    current: state.risk,
-    evidence: {
-      frictionSignal: 0,
-      surpriseMagnitude: 0,
-      recentFailureRate: fnSucceeded ? 0 : 1,
-    },
-  });
+  // ── 12. Update risk from evidence ─────────────────────────────────────
+  const updatedRisk = updateRisk({ current: state.risk, evidence: signals.evidence });
 
-  // ── 12. Produce updated snapshot ───────────────────────────────────────
+  // ── 13. Produce updated snapshot ───────────────────────────────────────
   // Only Ok outcomes add the action to completedActions — never infer
-  // success from the absence of an error (invariant 19).
-  let updatedSnapshot = { ...state, trust: updatedTrust, risk: updatedRisk };
+  // success from the absence of an error (invariant 19). Kalman health carries
+  // forward so the estimator warms up across steps and survives pause/resume.
+  let updatedSnapshot: TaskStateSnapshot = { ...state, trust: updatedTrust, risk: updatedRisk, kalman: signals.kalman };
 
   if (fnSucceeded) {
     updatedSnapshot = withCompletedAction({
@@ -182,5 +197,5 @@ export const runGateway = async ({
     updatedSnapshot = withSpent({ snapshot: updatedSnapshot, spent: actualCost });
   }
 
-  return Ok({ fnResult, execution, updatedSnapshot });
+  return Ok({ fnResult, execution, updatedSnapshot, surpriseMagnitude: signals.surprise.magnitude });
 };

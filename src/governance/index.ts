@@ -50,3 +50,6 @@ export {
   computeActionValue,
   projectHorizon,
 } from "./value";
+
+export type { StepSignalsInput, StepSignals } from "./step-signals";
+export { assembleStepSignals } from "./step-signals";

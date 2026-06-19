@@ -33,6 +33,11 @@ export type GatewayInput = {
    * enforcement is real. Absent (mock) means zero token cost for this step.
    */
   reasoningCost?: Cost;
+  /**
+   * 0-based step index in the driving loop. Feeds the progress proxy used by
+   * friction detection (distinct completions per attempted step). Defaults to 0.
+   */
+  stepIndex?: number;
 };
 
 export type GatewaySuccess = {
@@ -45,8 +50,14 @@ export type GatewaySuccess = {
   /** Execution record written to store before fn ran. Finalised after fn returns. */
   execution: Execution;
   /**
-   * Snapshot updated with: spent cost, trust, risk, and (only on Ok) completedActions.
-   * The caller persists this to the task record.
+   * Snapshot updated with: spent cost, trust, risk, Kalman health, and (only on
+   * Ok) completedActions. The caller persists this to the task record.
    */
   updatedSnapshot: TaskStateSnapshot;
+  /**
+   * Bayesian surprise magnitude [0,1] for this step (observed vs predicted
+   * health). The loop forwards it to checkEscalation so a large divergence can
+   * trigger oversight — previously this signal was never computed.
+   */
+  surpriseMagnitude: number;
 };
