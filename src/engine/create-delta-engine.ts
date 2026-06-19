@@ -29,9 +29,10 @@ import { makeDefineAction } from "../authoring/define-action";
 import { makeDefineWorkflow } from "../authoring/define-workflow";
 import { makeDefinePhase } from "../authoring/define-phase";
 import { makeDefineAgent } from "../authoring/define-agent";
-import { taskId } from "../shared/id";
+import type { Message } from "../shared/types";
+import { taskId, messageId } from "../shared/id";
 import { initialRiskState, initialTrust } from "../governance";
-import { zeroCost } from "../shared/cost";
+import { snapshotFromTask } from "../state-space/task-state";
 import { runSendLoop, pauseTask, resumeTask, inspectTask, resolveApproval } from "./runtime";
 
 const DEFAULT_BUDGET = { tokens: 10_000, durationMs: 300_000 };
@@ -67,14 +68,36 @@ export const createDeltaEngine = ({
 
   const send: DeltaEngine["send"] = async ({ goal, agentName, budget = DEFAULT_BUDGET }) => {
     // ── Invariant 26: no new task if agent already has active/queued work ──
+    // Per spec §No New Task When Work Is Pending, a busy agent does not get a
+    // second task. The inbound goal is queued as a message attributable to the
+    // existing task (invariant 9) and the engine returns that task and its
+    // current status — it does not reject the caller.
     const latestResult = await store.getLatestTaskByAgent(agentName);
     if (latestResult.isOk && latestResult.value !== null) {
       const existing = latestResult.value;
       if (existing.status === "running" || existing.status === "pending") {
-        return Err(
-          `agent "${agentName}" already has an active task ("${existing.id}") — ` +
-          `call resume("${existing.id}") or inspect("${existing.id}") instead of creating a new task (invariant 26)`,
-        );
+        const message: Message = {
+          id: messageId(),
+          taskId: existing.id,
+          sender: "caller",
+          receiver: agentName,
+          payload: goal,
+          createdAt: new Date(),
+        };
+        const queued = await store.saveMessage(message);
+        if (queued.isErr) {
+          return Err(
+            `send failed: agent "${agentName}" is busy and the message could not be queued: ${queued.error}`,
+          );
+        }
+        return Ok({
+          taskId: existing.id,
+          status: "queued",
+          snapshot: snapshotFromTask(existing),
+          reason:
+            `agent "${agentName}" is busy on task "${existing.id}" — ` +
+            `message queued, no new task created (invariant 26)`,
+        });
       }
     }
 

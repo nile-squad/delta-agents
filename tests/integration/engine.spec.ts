@@ -451,15 +451,15 @@ describe("lastTask — retrieval without stored TaskID (invariant 25)", () => {
 });
 
 describe("invariant 26 — no new task when agent already has active work", () => {
-  it("send returns Err when agent's previous task is still 'running'", async () => {
+  it("send queues the inbound goal onto the existing task instead of creating a new one", async () => {
     const store = createInMemoryStore();
-    // Manually create a running task for the agent
-    const { taskId: newId } = await import("../../src/shared/id");
+    // Manually create a running task for the agent.
     const { initialRiskState, initialTrust } = await import("../../src/governance");
     const now = new Date();
+    const existingId = taskId();
     await store.saveTask({
-      id: newId(),
-      rootId: newId(),
+      id: existingId,
+      rootId: existingId,
       status: "running",
       goal: "previous goal",
       assignedAgent: "busy-agent",
@@ -476,8 +476,22 @@ describe("invariant 26 — no new task when agent already has active work", () =
     delta.deploy(ag);
 
     const result = await delta.send({ goal: "new goal", agentName: "busy-agent" });
-    expect(result.isErr).toBe(true);
-    if (result.isErr) expect(result.error).toMatch(/invariant 26/);
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    // Returns the existing task and a "queued" status — no second task created.
+    expect(result.value.status).toBe("queued");
+    expect(result.value.taskId).toBe(existingId);
+
+    const last = await delta.lastTask("busy-agent");
+    if (last.isOk) expect(last.value?.id).toBe(existingId);
+
+    // The inbound goal is attributable to the existing task (invariant 9).
+    const msgs = await store.getMessages(existingId);
+    if (msgs.isOk) {
+      expect(msgs.value.length).toBe(1);
+      expect(msgs.value[0]?.taskId).toBe(existingId);
+      expect(msgs.value[0]?.payload).toBe("new goal");
+    }
   });
 });
 

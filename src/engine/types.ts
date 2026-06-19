@@ -39,10 +39,15 @@ export type SendInput = {
 
 export type SendResult = {
   taskId: string;
-  /** completed — all actions ran. blocked — waiting on a human decision. failed — non-recoverable. */
-  status: "completed" | "failed" | "blocked";
+  /**
+   * completed — all actions ran. blocked — waiting on a human decision.
+   * failed — non-recoverable. queued — agent was busy, so the inbound goal was
+   * attached as a message to its existing task and no new task was created
+   * (spec §No New Task When Work Is Pending; taskId is the existing task's id).
+   */
+  status: "completed" | "failed" | "blocked" | "queued";
   snapshot: TaskStateSnapshot;
-  /** Populated when status is "blocked" or "failed". */
+  /** Populated when status is "blocked", "failed", or "queued". */
   reason?: string;
 };
 
@@ -76,7 +81,9 @@ export type DeltaEngine = {
   /**
    * Hand a goal to a named agent and drive execution to completion (or until blocked).
    * Creates a new TaskID, runs the reasoner loop, and returns the terminal result.
-   * Returns Err when the agent is unknown or already has an active task (invariant 26).
+   * If the agent is already busy, no new task is created: the goal is queued as a
+   * message on its existing task and the result status is "queued" (invariant 26).
+   * Returns Err only when the agent is unknown or persistence fails.
    */
   send: (input: SendInput) => Promise<Result<SendResult, string>>;
   /**

@@ -41,16 +41,32 @@ in a fraction of them. Two layers that don't meet. Findings, by severity:
   loop (H3)" + `tests/unit/governance/step-signals.spec.ts` (8 unit).
 - **H4** Delegation/subtasks absent: nothing sets `parentId` or touches `TaskTree`;
   `parentBudget`/`parentSpent` never populated so parent-budget legality guard is dead.
-- **H5** Messages/queues unbuilt: no `saveMessage` in engine; busy-agent `send` returns `Err`
-  instead of queueing (spec §No New Task When Work Is Pending). H5a (busy-agent queueing) is the
-  small self-contained Package B; H5b (supervisor/agent comms) rides with H4.
+- **H5a [FIXED 2026-06-19 — Package B] Busy-agent `send` now queues instead of rejecting.**
+  Per spec §No New Task When Work Is Pending: when an agent already has a running/pending task,
+  `send` saves a `Message` (sender:"caller", payload:goal) attributable to the existing task
+  (invariant 9) and returns `Ok({ status:"queued", taskId: existingId, ... })` — no second task
+  (invariant 26 / prohibition 21). Return-shape decision: added `"queued"` to `SendResult.status`
+  (means "attached to existing task," distinct from the existing task's own lifecycle status).
+  `create-delta-engine.ts` send busy-branch. Test: engine.spec invariant-26 "queues the inbound
+  goal onto the existing task". NOTE: messages are persisted+attributable but NOT yet consumed —
+  nothing drains the queue when the agent frees up; the reasoner doesn't see queued messages.
+  That consumption/drain path is **H5b**, deferred with H4 (supervisor/agent comms).
+- **H5b** Supervisor/agent comms + queue consumption still unbuilt: `Queue` type + `saveQueue`/
+  `getQueue` unused; queued messages never drained into a resumed/freed task; `Channel` authoring
+  type unused. Rides with H4 (delegation introduces the supervisor↔child comms that need this).
 
 Storage note: all 8 entities already have working store methods in BOTH adapters (in-memory +
 Drizzle), so no remaining H-item needs new DB schema. New persisted state (H1 retry counters,
 done) rides inside the checkpoint `TaskStateSnapshot` JsonRecord.
 
-H-series sequence (scoped): A=H3 [DONE], B=H5a [next, small], C=H2+H1 [needs coexistence
-decision: C-a/C-b/C-c], D=H4+H5b [needs delegation-trigger + concurrency decision].
+H-series sequence (scoped): A=H3 [DONE de8b1d0], B=H5a [DONE], C=H2+H1 [NEXT — needs coexistence
+decision: C-a task-assigned workflow runs deterministically (lean) / C-b reasoner invokes
+workflow as macro-action / C-c reasoner free-picks but phase ordering+branching+supervision
+apply], D=H4+H5b [needs delegation-trigger decision (reserved `delegate` action vs authoring
+declaration) + concurrency decision (concurrent vs interleaved 2 subtasks); includes H5b queue
+drain]. C reconciliation cost: workflow path (run-phase/run-workflow) lacks escalation +
+trust/risk persistence that runSendLoop has — must be added when wiring. Commits so far:
+a7c86dd (critical C1-C4), de8b1d0 (Package A/H3), Package B pending commit.
 
 **Medium:** M1 `pauseTask` lacks terminal-status guard (can resurrect completed task).
 M2 `resumeTask` accepts `"pending"` but error says `(expected "paused")`. M3 duration budget
