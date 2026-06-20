@@ -33,13 +33,35 @@ export type ActionRequest = {
 };
 
 /**
- * A reasoner decision is explicit: either commit to one action, or declare the
- * task done. Completion is no longer inferred from the reasoner failing or
- * running out — those are distinct, observable outcomes (a clean `done` versus
- * an `Err` model/API failure). This keeps `status: "completed"` trustworthy.
+ * What the reasoner returns when it wants to hand a scoped sub-goal to another
+ * agent. Delegation is bounded (spec §Delegation Is Bounded): the engine creates
+ * a child task whose budget is clamped to the parent's remaining headroom
+ * (invariant 18) and whose execution is governed by the binary supervision tree
+ * (at most two active subtasks, invariant 15; the rest queue, invariant 16).
+ */
+export type DelegationRequest = {
+  /** The scoped objective handed to the child agent. */
+  goal: string;
+  /** Name of a registered agent that will own the child task. */
+  agentName: string;
+  /**
+   * Requested child budget. Clamped to the parent's remaining budget before the
+   * child runs — a subtask never gains authority beyond its parent scope. When
+   * omitted, the child inherits the parent's entire remaining budget.
+   */
+  budget?: Cost;
+};
+
+/**
+ * A reasoner decision is explicit: commit to one action, delegate a scoped
+ * sub-goal, or declare the task done. Completion is never inferred from the
+ * reasoner failing or running out — those are distinct, observable outcomes
+ * (a clean `done` versus an `Err` model/API failure). This keeps
+ * `status: "completed"` trustworthy.
  */
 export type ReasonerDecision =
   | { kind: "act"; request: ActionRequest }
+  | { kind: "delegate"; delegation: DelegationRequest }
   | { kind: "done"; reason?: string };
 
 export type ReasonerInput = {

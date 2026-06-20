@@ -17,13 +17,21 @@
  */
 
 import { Ok, Err } from "slang-ts";
-import type { ReasonerPort, ActionRequest } from "./reasoner-port";
+import type { ReasonerPort, ActionRequest, DelegationRequest } from "./reasoner-port";
 
-export type MockResponse = {
-  actionName: string;
-  input: Record<string, string | number | boolean | null>;
-  reasoning?: string;
-};
+/**
+ * A scripted reasoner turn. The three shapes mirror the three ReasonerDecision
+ * kinds: request an action, delegate a scoped sub-goal, or declare done early.
+ * The plain `{ actionName, input }` shape stays the common case (back-compat).
+ */
+export type MockResponse =
+  | {
+      actionName: string;
+      input: Record<string, string | number | boolean | null>;
+      reasoning?: string;
+    }
+  | { delegate: DelegationRequest }
+  | { done: true; reason?: string };
 
 export type MockReasonerOptions = {
   /**
@@ -49,6 +57,13 @@ export const createMockReasoner = ({
       if (next === undefined) {
         // Script exhausted — the planned work is finished, not failed.
         return Ok({ kind: "done", reason: "mock reasoner: script exhausted" });
+      }
+
+      if ("delegate" in next) {
+        return Ok({ kind: "delegate", delegation: next.delegate });
+      }
+      if ("done" in next) {
+        return Ok({ kind: "done", ...(next.reason !== undefined ? { reason: next.reason } : {}) });
       }
 
       // Validate that the scripted action is actually available — prevents tests

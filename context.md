@@ -60,8 +60,25 @@ in a fraction of them. Two layers that don't meet. Findings, by severity:
   `isTrustDegraded` — not yet wired; surprise→trust ("surprise" TrustUpdateOutcome) also not yet
   used (gateway still success/failure only). Tests: engine.spec "governance math drives the live
   loop (H3)" + `tests/unit/governance/step-signals.spec.ts` (8 unit).
-- **H4** Delegation/subtasks absent: nothing sets `parentId` or touches `TaskTree`;
-  `parentBudget`/`parentSpent` never populated so parent-budget legality guard is dead.
+- **H4 [FIXED 2026-06-20 — Package D] Delegation drives a bounded supervision tree.**
+  New `ReasonerDecision` kind `"delegate"` (`{ goal, agentName, budget? }`) — the reasoner signals
+  delegation explicitly (NOT a magic action through the gateway). The send loop was refactored into
+  a step-able loop + a deterministic round-robin scheduler (`src/engine/scheduler.ts`): `stepTask`
+  advances one task one reasoner→gateway step; `runScheduler` advances every runnable task once per
+  pass ("spawn + poll later" — a delegation registers a child and returns, parent keeps stepping;
+  up to two children run interleaved). `runSendLoop` is now a thin wrapper building the root runner.
+  Boundedness is structural: `requestSlot` caps active children at 2 (inv 15), extras queue FIFO and
+  `releaseSlot`-promote on a slot free (inv 16), `enforceSubtaskScope` clamps child budget to parent
+  remaining (inv 18), child snapshot carries `parentBudget`/`parentSpent` (legality guard now live),
+  root failure/block cascades `abortEntireTree` (inv 17). Child `spent` folds back into parent on
+  settle. Tests: engine.spec "delegation drives a bounded supervision tree (H4)" (parentId+rootId,
+  budget clamp, 3rd delegation queues+promotes, unknown-agent→parent fails).
+  **H4-remaining (deferred):** OpenAI adapter has no `delegate` tool yet (needs an `availableAgents`
+  contract on `ReasonerInput` to constrain targets — small follow-up; mock fully exercises it); child
+  budget is folded on settle, not *reserved* at delegation (two live children could momentarily each
+  see full parent remaining — bounded by max-2); a pure-supervisor agent with zero actions hits the
+  discovery gate (available=0 → natural-done) before it can delegate, so a supervisor needs ≥1 action
+  today; resume does not reload mid-flight children from an existing tree.
 - **H5a [FIXED 2026-06-19 — Package B] Busy-agent `send` now queues instead of rejecting.**
   Per spec §No New Task When Work Is Pending: when an agent already has a running/pending task,
   `send` saves a `Message` (sender:"caller", payload:goal) attributable to the existing task
@@ -72,19 +89,28 @@ in a fraction of them. Two layers that don't meet. Findings, by severity:
   goal onto the existing task". NOTE: messages are persisted+attributable but NOT yet consumed —
   nothing drains the queue when the agent frees up; the reasoner doesn't see queued messages.
   That consumption/drain path is **H5b**, deferred with H4 (supervisor/agent comms).
-- **H5b** Supervisor/agent comms + queue consumption still unbuilt: `Queue` type + `saveQueue`/
-  `getQueue` unused; queued messages never drained into a resumed/freed task; `Channel` authoring
-  type unused. Rides with H4 (delegation introduces the supervisor↔child comms that need this).
+- **H5b [PARTIAL 2026-06-20 — Package D] Queued caller messages are now drained.** When a runner
+  reaches natural-done, `drainMessages` folds any unconsumed `sender:"caller"` Messages into the
+  task goal (`[queued] ...`) and keeps the task running to handle them; consumed ids persist on the
+  snapshot (`TaskStateSnapshot.consumedMessages`) so the drain is idempotent across pause/resume
+  (inv 9). The subtask queue drains via `releaseSlot` promotion (see H4). Test: engine.spec "queued
+  caller messages are drained into the task (H5b)". **Still deferred:** the `Channel` authoring type
+  (whatsapp/email/etc.) is unused — outbound agent↔supervisor comms over real channels is unbuilt;
+  the `Queue` entity (`saveQueue`/`getQueue`) is still unused (the FIFO bookkeeping lives in
+  `TaskTree.queuedChildren` + Messages, not the `Queue` type).
 
 Storage note: all 8 entities already have working store methods in BOTH adapters (in-memory +
 Drizzle), so no remaining H-item needs new DB schema. New persisted state (H1 retry counters,
 done) rides inside the checkpoint `TaskStateSnapshot` JsonRecord.
 
-H-series sequence (scoped): A=H3 [DONE de8b1d0], B=H5a [DONE e94124b], C=H2+H1 [DONE — C-a
+H-series sequence (scoped): A=H3 [DONE de8b1d0], B=H5a [DONE e94124b], C=H2+H1 [DONE 1b4fc15 — C-a
 coexistence: task-assigned workflow runs deterministically/reasoner-less; workflow-less task uses
-the free loop], D=H4+H5b [NEXT — needs delegation-trigger decision (reserved `delegate` action vs
-authoring declaration) + concurrency decision (concurrent vs interleaved 2 subtasks); includes
-H5b queue drain]. C reconciliation (DONE): shared `applyPostStepGovernance` helper
+the free loop], D=H4+H5b [DONE — owner chose: trigger=new `ReasonerDecision` kind `"delegate"`;
+concurrency=spawn+poll-later interleaving scheduler (`src/engine/scheduler.ts`); drain=both subtask
+promotion + caller-message consumption]. **All H-series items now wired.** Remaining work is the
+deferrals catalogued under each H-item above (OpenAI delegate tool, Channel comms, budget
+reservation, per-action reasoner inputs, value.ts Bellman/MPC, isTrustDegraded, surprise→trust).
+C reconciliation (DONE): shared `applyPostStepGovernance` helper
 (`src/oversight/post-step.ts`) gives BOTH the free loop and the workflow path identical escalation
 + trust/risk persistence; placed in oversight to avoid an engine↔workflow import cycle.
 **C-remaining (deferred):** per-action reasoner-filled inputs (only a single shared `input` bag
@@ -103,9 +129,9 @@ L3 task+checkpoint persisted every step (2 writes/step). L4 lingering `Record<st
 `as unknown as` casts vs. the "no unknown" rule. L5 OpenAI adapter pins `max_tokens`/`temperature`
 (newer gpt-5.x models prefer `max_completion_tokens`, ignore temperature).
 
-Critical set C1–C4 + Packages A/B/C DONE (567 tests pass under vitest; bun shows same 4
-pre-existing `vi.runAllTimersAsync` timer failures only). Remaining H-series work: Package D
-(H4 delegation + H5b queue drain/comms) plus the C-remaining deferrals listed above.
+Critical set C1–C4 + Packages A/B/C/D DONE — all H-series subsystems are now wired into the live
+path (572 tests pass under vitest; bun shows same 4 pre-existing `vi.runAllTimersAsync` timer
+failures only). Remaining work is the per-H-item deferrals catalogued above, not whole subsystems.
 
 ## Overview
 Delta Agents is a deterministic autonomous control plane for AI agents. It provides the execution layer that constrains, validates, supervises, and audits agent behavior. The model reasons; the engine governs. The full specification is in `delta-agents.spec.md` (1185 lines) — that is the canonical blueprint for implementation.

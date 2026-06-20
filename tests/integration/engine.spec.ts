@@ -813,6 +813,180 @@ describe("workflow approval pre-flight (C-a)", () => {
   });
 });
 
+// ── Delegation + bounded supervision tree (Package D / H4) ────────────────────
+
+// A reasoner that scripts decisions per agent role, so one engine-level reasoner
+// can drive a parent and its delegated children deterministically. Each role's
+// queue yields act/delegate decisions in order; an exhausted queue means done.
+type RoleScript =
+  | { actionName: string; input?: Record<string, string | number | boolean | null> }
+  | { delegate: { goal: string; agentName: string; budget?: { tokens: number; durationMs: number } } };
+
+const routingReasoner = (scripts: Record<string, RoleScript[]>): ReasonerPort => {
+  const queues: Record<string, RoleScript[]> = {};
+  for (const role of Object.keys(scripts)) queues[role] = [...scripts[role]!];
+  return {
+    reason: async ({ agentRole, availableActions }) => {
+      const queue = queues[agentRole] ?? [];
+      const next = queue.shift();
+      if (next === undefined) return Ok({ kind: "done" });
+      if ("delegate" in next) return Ok({ kind: "delegate", delegation: next.delegate });
+      if (!availableActions.includes(next.actionName)) return Err(`unavailable: ${next.actionName}`);
+      return Ok({ kind: "act", request: { actionName: next.actionName, input: next.input ?? {} } });
+    },
+  };
+};
+
+describe("delegation drives a bounded supervision tree (H4)", () => {
+  it("a delegate decision spawns a child task (parentId set) and both complete", async () => {
+    const store = createInMemoryStore();
+    const ran: string[] = [];
+    const reasoner = routingReasoner({
+      Parent: [{ delegate: { goal: "do the sub-work", agentName: "child-agent" } }],
+      Child: [{ actionName: "work" }],
+    });
+    const delta = createDeltaEngine({ store, reasoner });
+
+    const plan = delta.action({ name: "plan", description: "test action", schema: z.object({}), fn: async () => { ran.push("plan"); return Ok("ok"); } });
+    const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: async () => { ran.push("work"); return Ok("ok"); } });
+
+    delta.deploy(delta.agent({ name: "child-agent", description: "d", role: "Child", rolePrompt: ".", actions: [work] }));
+    delta.deploy(delta.agent({ name: "parent-agent", description: "d", role: "Parent", rolePrompt: ".", actions: [plan] }));
+
+    const result = await delta.send({ goal: "delegate then finish", agentName: "parent-agent" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("completed");
+    expect(ran).toContain("work");
+
+    // The child is a real, separate task attributed to the child agent, rooted at the parent.
+    const child = await delta.lastTask("child-agent");
+    expect(child.isOk).toBe(true);
+    if (child.isOk && child.value !== null) {
+      expect(child.value.parentId).toBe(result.value.taskId);
+      expect(child.value.rootId).toBe(result.value.taskId);
+      expect(child.value.status).toBe("completed");
+    }
+  });
+
+  it("a child's budget is clamped to the parent's remaining scope (invariant 18)", async () => {
+    const store = createInMemoryStore();
+    const reasoner = routingReasoner({
+      // Request far more than the parent owns — the engine must clamp it down.
+      Parent: [{ delegate: { goal: "sub", agentName: "child-agent", budget: { tokens: 1_000_000, durationMs: 1_000_000 } } }],
+      Child: [{ actionName: "work" }],
+    });
+    const delta = createDeltaEngine({ store, reasoner });
+
+    const plan = delta.action({ name: "plan", description: "test action", schema: z.object({}), fn: noop });
+    const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: noop });
+    delta.deploy(delta.agent({ name: "child-agent", description: "d", role: "Child", rolePrompt: ".", actions: [work] }));
+    delta.deploy(delta.agent({ name: "parent-agent", description: "d", role: "Parent", rolePrompt: ".", actions: [plan] }));
+
+    const parentBudget = { tokens: 100, durationMs: 5_000 };
+    const result = await delta.send({ goal: "delegate", agentName: "parent-agent", budget: parentBudget });
+    expect(result.isOk).toBe(true);
+
+    const child = await delta.lastTask("child-agent");
+    if (child.isOk && child.value !== null) {
+      // Parent had spent nothing at delegation time, so the child is clamped to the full parent budget — never more.
+      expect(child.value.budget.tokens).toBeLessThanOrEqual(parentBudget.tokens);
+      expect(child.value.budget.durationMs).toBeLessThanOrEqual(parentBudget.durationMs);
+      expect(child.value.budget.tokens).toBe(100);
+    }
+  });
+
+  it("a third concurrent delegation queues and is promoted on slot release (invariants 15, 16)", async () => {
+    const store = createInMemoryStore();
+    let workCount = 0;
+    // Parent delegates three children (same role); each child must do work once.
+    // Keyed per task id so the three children don't share one scripted queue.
+    const parentQueue = ["A", "B", "C"];
+    const worked = new Set<string>();
+    const reasoner: ReasonerPort = {
+      reason: async ({ task, agentRole, availableActions }) => {
+        if (agentRole === "Parent") {
+          const goal = parentQueue.shift();
+          if (goal === undefined) return Ok({ kind: "done" });
+          return Ok({ kind: "delegate", delegation: { goal, agentName: "child-agent" } });
+        }
+        if (availableActions.includes("work") && !worked.has(task.id)) {
+          worked.add(task.id);
+          return Ok({ kind: "act", request: { actionName: "work", input: {} } });
+        }
+        return Ok({ kind: "done" });
+      },
+    };
+    const delta = createDeltaEngine({ store, reasoner });
+
+    const plan = delta.action({ name: "plan", description: "test action", schema: z.object({}), fn: noop });
+    const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: async () => { workCount++; return Ok("ok"); } });
+    delta.deploy(delta.agent({ name: "child-agent", description: "d", role: "Child", rolePrompt: ".", actions: [work] }));
+    delta.deploy(delta.agent({ name: "parent-agent", description: "d", role: "Parent", rolePrompt: ".", actions: [plan] }));
+
+    const result = await delta.send({ goal: "delegate three", agentName: "parent-agent" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("completed");
+    // All three children ran even though only two may be active at once — the
+    // third was queued and promoted when a slot freed (FIFO).
+    expect(workCount).toBe(3);
+
+    // The supervision tree exists for the root and is empty once everything settled.
+    const tree = await store.getTaskTree(result.value.taskId);
+    if (tree.isOk) {
+      expect(tree.value.activeChildren).toEqual([]);
+      expect(tree.value.queuedChildren).toEqual([]);
+    }
+  });
+
+  it("delegating to an unknown agent fails the parent task", async () => {
+    const store = createInMemoryStore();
+    const reasoner = routingReasoner({
+      Parent: [{ delegate: { goal: "sub", agentName: "ghost-agent" } }],
+    });
+    const delta = createDeltaEngine({ store, reasoner });
+    const plan = delta.action({ name: "plan", description: "test action", schema: z.object({}), fn: noop });
+    delta.deploy(delta.agent({ name: "parent-agent", description: "d", role: "Parent", rolePrompt: ".", actions: [plan] }));
+
+    const result = await delta.send({ goal: "delegate to ghost", agentName: "parent-agent" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("failed");
+    expect(result.value.reason).toMatch(/agent "ghost-agent" not found/);
+  });
+});
+
+// ── Queue drain — caller messages are consumed (Package D / H5b) ──────────────
+
+describe("queued caller messages are drained into the task (H5b)", () => {
+  it("a message queued on a busy agent's task is consumed when the task next settles", async () => {
+    const store = createInMemoryStore();
+    const delta = createDeltaEngine({ store, reasoner: createMockReasoner() });
+    const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: noop });
+    delta.deploy(delta.agent({ name: "comms-agent", description: "d", role: "r", rolePrompt: ".", actions: [work] }));
+
+    // Seed a paused task and a caller message queued against it (the H5a path).
+    const id = taskId();
+    const now = new Date();
+    await store.saveTask({
+      id, rootId: id, status: "paused", goal: "original goal", assignedAgent: "comms-agent",
+      budget: { tokens: 10_000, durationMs: 300_000 }, risk: initialRiskState(), trust: initialTrust(),
+      createdAt: now, updatedAt: now,
+    });
+    const { messageId } = await import("../../src/shared/id");
+    const msgId = messageId();
+    await store.saveMessage({ id: msgId, taskId: id, sender: "caller", receiver: "comms-agent", payload: "extra work please", createdAt: now });
+
+    const resumed = await delta.resume(id);
+    expect(resumed.isOk).toBe(true);
+    if (!resumed.isOk) return;
+    expect(resumed.value.status).toBe("completed");
+    // The queued message was folded into the task exactly once (idempotent drain).
+    expect(resumed.value.snapshot.consumedMessages).toContain(msgId);
+  });
+});
+
 // ── Decoupling check ──────────────────────────────────────────────────────────
 
 describe("decoupling — modules individually importable", () => {

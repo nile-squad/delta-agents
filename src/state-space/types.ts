@@ -44,6 +44,12 @@ export type TaskStateSnapshot = {
   // A subtask never gains authority beyond its parent scope (invariant 18).
   parentBudget?: Cost;
   parentSpent?: Cost;
+
+  // Ids of caller Messages already folded into the goal by the queue drain
+  // (H5b). Carried on the snapshot so draining stays idempotent across
+  // pause/resume — a message is consumed exactly once (spec §Queueing Model,
+  // invariant 9). Persisted inside the checkpoint JsonRecord, not a DB column.
+  consumedMessages?: string[];
 };
 
 // Result of a legality check. Includes a reason when illegal so the caller

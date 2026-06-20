@@ -29,13 +29,11 @@ import type { TaskStateSnapshot } from "../state-space/types";
 import type { ApprovalStatus } from "../execution/types";
 import type { SendResult, InspectResult } from "./types";
 import { snapshotFromTask } from "../state-space/task-state";
-import { isOverBudget } from "../shared/cost";
-import { discoverActions } from "../state-space/discover-actions";
-import { runGateway } from "../execution/execution-gateway";
 import { runWorkflow } from "../workflow";
-import { applyPostStepGovernance, getApprovalStatusForAction, requestApproval } from "../oversight";
+import { getApprovalStatusForAction, requestApproval } from "../oversight";
 import { resolveApproval } from "../oversight";
 import { checkpointId } from "../shared/id";
+import { makeRunner, runScheduler } from "./scheduler";
 
 const MAX_STEPS_DEFAULT = 100;
 
@@ -50,11 +48,13 @@ const snapshotFromJson = (json: JsonRecord): TaskStateSnapshot =>
 // ── Core send loop ────────────────────────────────────────────────────────────
 
 /**
- * Drives the reasoner → gateway cycle until the task is done, blocked, or
- * the step limit is hit.
+ * Drive a task — and any subtasks it delegates — to a terminal state.
  *
- * A checkpoint is written to the store after every successful action so that
- * pause/resume always has a recent recoverable state.
+ * The per-step reasoner → gateway cycle and the multi-task orchestration both
+ * live in the scheduler (./scheduler.ts). This wrapper just builds the root
+ * runner and hands it over. A `kind: "delegate"` decision spawns a bounded child
+ * task that runs interleaved with the parent (at most two active per tree); a
+ * checkpoint is written after every successful action for pause/resume.
  */
 export const runSendLoop = async ({
   task,
@@ -73,157 +73,13 @@ export const runSendLoop = async ({
   maxSteps?: number;
   startingSnapshot?: TaskStateSnapshot;
 }): Promise<SendResult> => {
-  let snapshot: TaskStateSnapshot = startingSnapshot ?? snapshotFromTask(task);
-  let naturalExit = false;
-
-  for (let step = 0; step < maxSteps; step++) {
-    // ── 1. Discover legal actions for the agent in the current state ──────
-    const agentActionsResult = registry.getActionsForAgent(agent.name);
-    if (agentActionsResult.isErr) {
-      return { taskId: task.id, status: "failed", snapshot, reason: agentActionsResult.error };
-    }
-    const discovery = discoverActions({ agentActions: agentActionsResult.value, state: snapshot });
-
-    // No discoverable actions — all work is done (or blocked by prerequisites the
-    // reasoner cannot advance). Treat as natural completion.
-    if (discovery.available.length === 0) {
-      naturalExit = true;
-      break;
-    }
-
-    // ── 2. Ask the reasoner what to do next ──────────────────────────────
-    const reasonResult = await reasoner.reason({
-      task: { ...task, risk: snapshot.risk, trust: snapshot.trust, updatedAt: new Date() },
-      availableActions: discovery.available.map((a) => a.name),
-      agentRole: agent.role,
-      rolePrompt: agent.rolePrompt,
-    });
-
-    // An Err is a genuine model/API failure or safety refusal — never completion.
-    // A failed reasoner is not a finished task (spec §Execution Outcomes).
-    if (reasonResult.isErr) {
-      await store.updateTask(task.id, { status: "failed", updatedAt: new Date() });
-      return {
-        taskId: task.id,
-        status: "failed",
-        snapshot,
-        reason: `reasoner failed: ${reasonResult.error}`,
-      };
-    }
-
-    const decision = reasonResult.value;
-
-    // Explicit completion signal — the goal is satisfied, no further action.
-    if (decision.kind === "done") {
-      naturalExit = true;
-      break;
-    }
-
-    const { actionName, input, reasoningCost } = decision.request;
-
-    // ── 3. Look up the action definition ────────────────────────────────
-    const actionResult = registry.getAction(actionName);
-    if (actionResult.isErr) {
-      await store.updateTask(task.id, { status: "failed", updatedAt: new Date() });
-      return {
-        taskId: task.id,
-        status: "failed",
-        snapshot,
-        reason: `reasoner requested unknown action "${actionName}"`,
-      };
-    }
-    const action = actionResult.value;
-
-    // ── 4. Resolve approval status ───────────────────────────────────────
-    const approvalStatusResult = await getApprovalStatusForAction({
-      taskId: task.id,
-      action: actionName,
-      store,
-    });
-    let approvalStatus = approvalStatusResult.isOk ? approvalStatusResult.value : "none";
-
-    // Auto-request approval when the action requires it and no request exists yet.
-    // The task then blocks so the human can resolve before the loop continues.
-    if (action.requiresApproval === true && approvalStatus === "none") {
-      const reqResult = await requestApproval({
-        taskId: task.id,
-        action: actionName,
-        reason: `action "${actionName}" requires human approval before execution`,
-        store,
-      });
-      const approvalIdStr = reqResult.isOk ? reqResult.value.id : "(unavailable)";
-      await store.updateTask(task.id, { status: "paused", updatedAt: new Date() });
-      return {
-        taskId: task.id,
-        status: "blocked",
-        snapshot,
-        reason: `approval-required: action "${actionName}" needs human sign-off — approval id: ${approvalIdStr}`,
-      };
-    }
-
-    // ── 5. Run through the execution gateway ────────────────────────────
-    const gwResult = await runGateway({ action, rawInput: input, state: snapshot, approvalStatus, store, reasoningCost, stepIndex: step });
-
-    if (gwResult.isErr) {
-      const isApprovalBlock = gwResult.error.startsWith("approval-required:");
-      if (isApprovalBlock) {
-        await store.updateTask(task.id, { status: "paused", updatedAt: new Date() });
-        return { taskId: task.id, status: "blocked", snapshot, reason: gwResult.error };
-      }
-      await store.updateTask(task.id, { status: "failed", updatedAt: new Date() });
-      return { taskId: task.id, status: "failed", snapshot, reason: gwResult.error };
-    }
-
-    const { fnResult, updatedSnapshot, surpriseMagnitude } = gwResult.value;
-    snapshot = updatedSnapshot;
-
-    // ── 6. Post-step governance (escalation + persistence) ──────────────
-    // Shared with the workflow path so both executors govern identically. On
-    // escalation the task is paused and surfaced as blocked — never completed
-    // (spec §Human Oversight, invariant 13, §Bayesian Surprise).
-    const gov = await applyPostStepGovernance({ taskId: task.id, snapshot, surpriseMagnitude, store });
-    snapshot = gov.snapshot;
-    if (gov.kind === "escalated") {
-      return { taskId: task.id, status: "blocked", snapshot, reason: gov.reason };
-    }
-
-    // ── 7. Checkpoint after successful action ────────────────────────────
-    // Written unconditionally so pause/resume always has a recent recovery point.
-    if (fnResult.isOk) {
-      const ckpt: Checkpoint = {
-        id: checkpointId(),
-        taskId: task.id,
-        state: snapshotToJson(snapshot),
-        createdAt: new Date(),
-      };
-      await store.saveCheckpoint(ckpt);
-    }
-  }
-
-  if (!naturalExit) {
-    await store.updateTask(task.id, { status: "failed", updatedAt: new Date() });
-    return {
-      taskId: task.id,
-      status: "failed",
-      snapshot,
-      reason: `task exceeded ${maxSteps}-step limit`,
-    };
-  }
-
-  // A task that stopped while over budget did not finish cleanly — completion
-  // would misreport an exhausted run as success (spec §Cost Friction Detection).
-  if (isOverBudget(snapshot.spent, snapshot.budget)) {
-    await store.updateTask(task.id, { status: "failed", updatedAt: new Date() });
-    return {
-      taskId: task.id,
-      status: "failed",
-      snapshot,
-      reason: "task halted with budget exhausted",
-    };
-  }
-
-  await store.updateTask(task.id, { status: "completed", updatedAt: new Date() });
-  return { taskId: task.id, status: "completed", snapshot };
+  const root = makeRunner({
+    task,
+    agent,
+    snapshot: startingSnapshot ?? snapshotFromTask(task),
+    maxSteps,
+  });
+  return runScheduler({ root, reasoner, registry, store, maxSteps });
 };
 
 // ── Workflow task driver (C-a) ──────────────────────────────────────────────
