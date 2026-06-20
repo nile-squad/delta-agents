@@ -73,12 +73,28 @@ in a fraction of them. Two layers that don't meet. Findings, by severity:
   root failure/block cascades `abortEntireTree` (inv 17). Child `spent` folds back into parent on
   settle. Tests: engine.spec "delegation drives a bounded supervision tree (H4)" (parentId+rootId,
   budget clamp, 3rd delegation queues+promotes, unknown-agent→parent fails).
+  **Audit-round-2 fixes (2026-06-20):** D1 — the scheduler now aggregates the subtree outcome into
+  the root result and root task record: a delegated child that settled failed→root failed, blocked→
+  root blocked (was: parent reported `completed` while a child was blocked/failed; free-loop
+  delegation had no failure handling). Tests: H4 "delegated subtask that fails surfaces parent as
+  failed (D1)" + "blocked on approval surfaces parent as blocked (D1)". D2 — a child's
+  `parentBudget`/`parentSpent` is refreshed from the parent's *live* spend each pass (invariant 18
+  now enforced under interleaving, not a stale delegation-time copy), and a subtask starved by an
+  exhausted parent budget settles failed, not completed. D4 — `drainMessages` now checkpoints the
+  `consumedMessages` snapshot so the caller-message drain is idempotent across resume (test asserts
+  the latest checkpoint carries the consumed id).
   **H4-remaining (deferred):** OpenAI adapter has no `delegate` tool yet (needs an `availableAgents`
   contract on `ReasonerInput` to constrain targets — small follow-up; mock fully exercises it); child
   budget is folded on settle, not *reserved* at delegation (two live children could momentarily each
   see full parent remaining — bounded by max-2); a pure-supervisor agent with zero actions hits the
   discovery gate (available=0 → natural-done) before it can delegate, so a supervisor needs ≥1 action
   today; resume does not reload mid-flight children from an existing tree.
+  **D3 — OPEN, awaiting owner ruling:** delegation can create multiple concurrent active tasks for
+  the *same* agent (the binary tree bounds to 2 active subtasks but does not require distinct
+  agents), which a strict reading of invariant 26 / prohibition 21 ("no new task for an agent that
+  already has an active or queued task") forbids — but those are framed around `delta.send`. Need a
+  decision: is inv 26 `send`-only (delegation exempt), or tree-wide (delegation must also enforce
+  one-active-task-per-agent)? `handleDelegate` currently does NOT enforce it.
 - **H5a [FIXED 2026-06-19 — Package B] Busy-agent `send` now queues instead of rejecting.**
   Per spec §No New Task When Work Is Pending: when an agent already has a running/pending task,
   `send` saves a `Message` (sender:"caller", payload:goal) attributable to the existing task

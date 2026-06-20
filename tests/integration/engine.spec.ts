@@ -940,6 +940,59 @@ describe("delegation drives a bounded supervision tree (H4)", () => {
     }
   });
 
+  it("a delegated subtask that fails surfaces the parent as failed, not completed (D1)", async () => {
+    const store = createInMemoryStore();
+    const parentQueue: Array<{ delegate: { goal: string; agentName: string } } | "done"> = [
+      { delegate: { goal: "sub", agentName: "child-agent" } },
+      "done",
+    ];
+    // The child's model fails outright (an Err is never a completion).
+    const reasoner: ReasonerPort = {
+      reason: async ({ agentRole }) => {
+        if (agentRole === "Parent") {
+          const next = parentQueue.shift();
+          if (next === undefined || next === "done") return Ok({ kind: "done" });
+          return Ok({ kind: "delegate", delegation: next.delegate });
+        }
+        return Err("child model exploded");
+      },
+    };
+    const delta = createDeltaEngine({ store, reasoner });
+    const plan = delta.action({ name: "plan", description: "test action", schema: z.object({}), fn: noop });
+    const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: noop });
+    delta.deploy(delta.agent({ name: "child-agent", description: "d", role: "Child", rolePrompt: ".", actions: [work] }));
+    delta.deploy(delta.agent({ name: "parent-agent", description: "d", role: "Parent", rolePrompt: ".", actions: [plan] }));
+
+    const result = await delta.send({ goal: "delegate to a failing child", agentName: "parent-agent" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("failed");
+    expect(result.value.reason).toMatch(/delegated subtask .* failed/);
+
+    // The root task record reflects the subtree failure too (auditable consistency).
+    const inspected = await delta.inspect(result.value.taskId);
+    if (inspected.isOk) expect(inspected.value.task.status).toBe("failed");
+  });
+
+  it("a delegated subtask blocked on approval surfaces the parent as blocked (D1)", async () => {
+    const store = createInMemoryStore();
+    const reasoner = routingReasoner({
+      Parent: [{ delegate: { goal: "sub", agentName: "child-agent" } }],
+      Child: [{ actionName: "pay" }],
+    });
+    const delta = createDeltaEngine({ store, reasoner });
+    const plan = delta.action({ name: "plan", description: "test action", schema: z.object({}), fn: noop });
+    const pay = delta.action({ name: "pay", description: "needs sign-off", schema: z.object({}), requiresApproval: true, fn: noop });
+    delta.deploy(delta.agent({ name: "child-agent", description: "d", role: "Child", rolePrompt: ".", actions: [pay] }));
+    delta.deploy(delta.agent({ name: "parent-agent", description: "d", role: "Parent", rolePrompt: ".", actions: [plan] }));
+
+    const result = await delta.send({ goal: "delegate work needing approval", agentName: "parent-agent" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("blocked");
+    expect(result.value.reason).toMatch(/blocked awaiting human oversight/);
+  });
+
   it("delegating to an unknown agent fails the parent task", async () => {
     const store = createInMemoryStore();
     const reasoner = routingReasoner({
@@ -984,6 +1037,13 @@ describe("queued caller messages are drained into the task (H5b)", () => {
     expect(resumed.value.status).toBe("completed");
     // The queued message was folded into the task exactly once (idempotent drain).
     expect(resumed.value.snapshot.consumedMessages).toContain(msgId);
+
+    // The consumed id is checkpointed durably, so a later resume would not
+    // re-drain the same message (D4 idempotency across resume).
+    const ckpt = await store.getLatestCheckpoint(id);
+    if (ckpt.isOk && ckpt.value !== null) {
+      expect((ckpt.value.state as { consumedMessages?: string[] }).consumedMessages).toContain(msgId);
+    }
   });
 });
 

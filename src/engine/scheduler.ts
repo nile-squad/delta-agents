@@ -414,6 +414,15 @@ export const runScheduler = async ({
       ...runner.snapshot,
       consumedMessages: [...(runner.snapshot.consumedMessages ?? []), ...fresh.map((m) => m.id)],
     };
+    // Checkpoint the consumed ids now so the drain is idempotent across a later
+    // resume — otherwise, if no action runs after this drain, the consumed set is
+    // never persisted and the same messages would be folded in again (D4).
+    await store.saveCheckpoint({
+      id: checkpointId(),
+      taskId: runner.task.id,
+      state: snapshotToJson(runner.snapshot),
+      createdAt: new Date(),
+    });
     return true;
   };
 
@@ -433,6 +442,21 @@ export const runScheduler = async ({
           reason: `task exceeded ${runner.maxSteps}-step limit`,
         });
         continue;
+      }
+
+      // Refresh a child's view of the parent budget from the parent's *current*
+      // spend, so the legality guard (invariant 18) reflects live interleaving
+      // rather than a stale delegation-time copy (D2). When the parent exhausts
+      // its budget, the child's actions become illegal on the very next step.
+      if (runner.task.parentId !== undefined) {
+        const parent = findRunner(runner.task.parentId);
+        if (parent !== undefined) {
+          runner.snapshot = {
+            ...runner.snapshot,
+            parentBudget: parent.snapshot.budget,
+            parentSpent: parent.snapshot.spent,
+          };
+        }
       }
 
       const outcome = await stepTask({
@@ -481,10 +505,63 @@ export const runScheduler = async ({
         continue;
       }
 
+      // A subtask whose only reason it has nothing left to do is an exhausted
+      // parent budget did NOT finish its work — it was starved out of scope
+      // (invariant 18). Reporting it completed would hide unfinished work (D2).
+      if (
+        runner.snapshot.parentBudget !== undefined &&
+        runner.snapshot.parentSpent !== undefined &&
+        isOverBudget(runner.snapshot.parentSpent, runner.snapshot.parentBudget)
+      ) {
+        await settle(runner, {
+          taskId: runner.task.id,
+          status: "failed",
+          snapshot: runner.snapshot,
+          reason: "subtask halted: parent budget exhausted — cannot exceed parent scope (invariant 18)",
+        });
+        continue;
+      }
+
       await settle(runner, { taskId: runner.task.id, status: "completed", snapshot: runner.snapshot });
     }
   }
 
-  // The root always settles (the loop only ends when every runner has).
-  return root.result ?? { taskId: root.task.id, status: "failed", snapshot: root.snapshot, reason: "scheduler ended without a root result" };
+  // ── Aggregate the subtree's outcome into the root result (D1) ─────────────
+  // The root's own loop may reach "completed" while a delegated child settled
+  // failed or blocked. A parent is not done until its subtree is: a delegated
+  // failure must never be reported up as success, and a child blocked on human
+  // oversight must surface as blocked. (The free loop has no per-child
+  // supervision policy; this propagation is its minimal failure handling.)
+  const rootResult: SendResult =
+    root.result ?? {
+      taskId: root.task.id,
+      status: "failed",
+      snapshot: root.snapshot,
+      reason: "scheduler ended without a root result",
+    };
+  if (rootResult.status !== "completed") return rootResult;
+
+  const childResults = runners.filter((r) => r.task.id !== rootId).map((r) => r.result);
+
+  const failedChild = childResults.find((r) => r !== null && r.status === "failed");
+  if (failedChild != null) {
+    await store.updateTask(rootId, { status: "failed", updatedAt: new Date() });
+    return {
+      ...rootResult,
+      status: "failed",
+      reason: `delegated subtask "${failedChild.taskId}" failed: ${failedChild.reason ?? "(no reason)"}`,
+    };
+  }
+
+  const blockedChild = childResults.find((r) => r !== null && r.status === "blocked");
+  if (blockedChild != null) {
+    await store.updateTask(rootId, { status: "paused", updatedAt: new Date() });
+    return {
+      ...rootResult,
+      status: "blocked",
+      reason: `delegated subtask "${blockedChild.taskId}" is blocked awaiting human oversight: ${blockedChild.reason ?? "(no reason)"}`,
+    };
+  }
+
+  return rootResult;
 };
