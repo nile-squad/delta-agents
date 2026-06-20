@@ -67,15 +67,23 @@ export const createDeltaEngine = ({
   };
 
   const send: DeltaEngine["send"] = async ({ goal, agentName, budget = DEFAULT_BUDGET, workflow: workflowName, input }) => {
-    // ── Invariant 26: no new task if agent already has active/queued work ──
-    // Per spec §No New Task When Work Is Pending, a busy agent does not get a
-    // second task. The inbound goal is queued as a message attributable to the
-    // existing task (invariant 9) and the engine returns that task and its
-    // current status — it does not reject the caller.
+    // ── Invariant 26: one MAJOR task per agent ─────────────────────────────
+    // Per spec §No New Task When Work Is Pending, an agent that already has an
+    // active/pending *major* (top-level) task does not get a second one — the
+    // inbound goal is queued as a message attributable to the existing task
+    // (invariant 9) and the engine returns that task, not a rejection.
+    //
+    // The concurrency model is per pool (owner ruling): an agent owns at most
+    // one major task at a time, separately at most two active subtasks
+    // (delegations, bounded by the binary supervision tree), and an unlimited
+    // queue. A running *subtask* (parentId set) therefore does NOT count as the
+    // agent's major task — it must not block a new major send or have a major
+    // goal mis-attached to it.
     const latestResult = await store.getLatestTaskByAgent(agentName);
     if (latestResult.isOk && latestResult.value !== null) {
       const existing = latestResult.value;
-      if (existing.status === "running" || existing.status === "pending") {
+      const isMajor = existing.parentId === undefined;
+      if (isMajor && (existing.status === "running" || existing.status === "pending")) {
         const message: Message = {
           id: messageId(),
           taskId: existing.id,

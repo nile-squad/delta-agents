@@ -89,12 +89,16 @@ in a fraction of them. Two layers that don't meet. Findings, by severity:
   see full parent remaining — bounded by max-2); a pure-supervisor agent with zero actions hits the
   discovery gate (available=0 → natural-done) before it can delegate, so a supervisor needs ≥1 action
   today; resume does not reload mid-flight children from an existing tree.
-  **D3 — OPEN, awaiting owner ruling:** delegation can create multiple concurrent active tasks for
-  the *same* agent (the binary tree bounds to 2 active subtasks but does not require distinct
-  agents), which a strict reading of invariant 26 / prohibition 21 ("no new task for an agent that
-  already has an active or queued task") forbids — but those are framed around `delta.send`. Need a
-  decision: is inv 26 `send`-only (delegation exempt), or tree-wide (delegation must also enforce
-  one-active-task-per-agent)? `handleDelegate` currently does NOT enforce it.
+  **D3 — RESOLVED 2026-06-20 (owner ruling):** the per-agent concurrency model is per pool — an
+  agent owns at most **1 major (top-level `send`) task**, separately at most **2 active subtasks**
+  (delegations, bounded by the binary supervision tree), and an **unlimited queue**. So invariant 26
+  is `send`/major-task-only; delegation is exempt from it and bounded by the 2-active-subtask rule
+  instead (current `handleDelegate` behaviour is correct, no per-agent guard needed). Fix applied:
+  the `send` busy-guard now fires only when the agent's latest task is a *major* task
+  (`parentId === undefined`) — a running subtask no longer makes the agent look busy or get a major
+  goal mis-attached. Test: engine.spec invariant-26 "a running SUBTASK does not block a new major
+  task". (Note: the 2-active bound is enforced per-tree today, which coincides with per-agent under
+  the synchronous one-tree-per-send model.)
 - **H5a [FIXED 2026-06-19 — Package B] Busy-agent `send` now queues instead of rejecting.**
   Per spec §No New Task When Work Is Pending: when an agent already has a running/pending task,
   `send` saves a `Message` (sender:"caller", payload:goal) attributable to the existing task

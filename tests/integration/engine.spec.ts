@@ -493,6 +493,30 @@ describe("invariant 26 — no new task when agent already has active work", () =
       expect(msgs.value[0]?.payload).toBe("new goal");
     }
   });
+
+  it("a running SUBTASK does not block a new major task for the same agent (D3 ruling)", async () => {
+    const store = createInMemoryStore();
+    // A leftover running subtask (parentId set) for the agent — a separate pool
+    // from major tasks, so it must not make the agent look busy to delta.send.
+    const now = new Date();
+    const subId = taskId();
+    await store.saveTask({
+      id: subId, rootId: "tsk_root_other", parentId: "tsk_root_other", status: "running",
+      goal: "a subtask", assignedAgent: "dual-agent", budget: { tokens: 1_000, durationMs: 30_000 },
+      risk: initialRiskState(), trust: initialTrust(), createdAt: now, updatedAt: now,
+    });
+
+    const delta = createDeltaEngine({ store, reasoner: createMockReasoner() });
+    const act = delta.action({ name: "act", description: "test action", schema: z.object({}), fn: noop });
+    delta.deploy(delta.agent({ name: "dual-agent", description: "d", role: "r", rolePrompt: ".", actions: [act] }));
+
+    const result = await delta.send({ goal: "a fresh major task", agentName: "dual-agent" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    // A new major task is created and runs — not queued onto the subtask.
+    expect(result.value.status).toBe("completed");
+    expect(result.value.taskId).not.toBe(subId);
+  });
 });
 
 // ── Critical-set corrections (C1–C4) ──────────────────────────────────────────
