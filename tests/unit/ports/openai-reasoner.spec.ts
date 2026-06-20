@@ -270,7 +270,7 @@ describe("createOpenAIReasoner — model skips tool call", () => {
 
     expect(result.isErr).toBe(true);
     if (!result.isErr) return;
-    expect(result.error).toMatch(/did not call request_action/);
+    expect(result.error).toMatch(/did not call a tool/);
   });
 
   it("returns Err when choices array is empty", async () => {
@@ -525,5 +525,118 @@ describe("createOpenAIReasoner — message content inspection", () => {
     const toolNames = tools.map((t) => t.function.name);
     expect(toolNames).toContain("request_action");
     expect(toolNames).toContain("finish_task");
+  });
+});
+
+// ── Delegation tool ─────────────────────────────────────────────────────────
+
+// A response where the model called delegate_task to hand off a sub-goal.
+const mockDelegateResponse = (
+  goal: string,
+  agentName: string,
+  budget?: { tokens: number; durationMs: number },
+): Record<string, unknown> => ({
+  id: "chatcmpl-delegate",
+  object: "chat.completion",
+  created: 1_700_000_000,
+  model: "gpt-4o-mini",
+  choices: [
+    {
+      index: 0,
+      message: {
+        role: "assistant",
+        content: null,
+        refusal: null,
+        tool_calls: [
+          {
+            id: "call_delegate",
+            type: "function",
+            function: {
+              name: "delegate_task",
+              arguments: JSON.stringify({ goal, agent_name: agentName, ...(budget !== undefined ? { budget } : {}) }),
+            },
+          },
+        ],
+      },
+      finish_reason: "tool_calls",
+      logprobs: null,
+    },
+  ],
+  usage: { prompt_tokens: 80, completion_tokens: 20, total_tokens: 100 },
+});
+
+describe("createOpenAIReasoner — delegation", () => {
+  it("parses a delegate_task call into a delegate decision", async () => {
+    const reasoner = createOpenAIReasoner({
+      apiKey: "test-key",
+      fetch: fetchReturning(mockDelegateResponse("research the account", "research-agent")),
+    });
+
+    const result = await reasoner.reason(makeInput({ availableAgents: ["research-agent", "billing-agent"] }));
+    expect(result.isOk).toBe(true);
+    if (!result.isOk || result.value.kind !== "delegate") throw new Error("expected delegate decision");
+    expect(result.value.delegation.goal).toBe("research the account");
+    expect(result.value.delegation.agentName).toBe("research-agent");
+    expect(result.value.delegation.budget).toBeUndefined();
+  });
+
+  it("passes the child budget through when provided", async () => {
+    const reasoner = createOpenAIReasoner({
+      apiKey: "test-key",
+      fetch: fetchReturning(mockDelegateResponse("sub", "research-agent", { tokens: 500, durationMs: 30_000 })),
+    });
+
+    const result = await reasoner.reason(makeInput({ availableAgents: ["research-agent"] }));
+    expect(result.isOk).toBe(true);
+    if (!result.isOk || result.value.kind !== "delegate") throw new Error("expected delegate decision");
+    expect(result.value.delegation.budget).toEqual({ tokens: 500, durationMs: 30_000 });
+  });
+
+  it("returns Err when the model delegates to an agent outside availableAgents", async () => {
+    const reasoner = createOpenAIReasoner({
+      apiKey: "test-key",
+      fetch: fetchReturning(mockDelegateResponse("sub", "ghost-agent")),
+    });
+
+    const result = await reasoner.reason(makeInput({ availableAgents: ["research-agent"] }));
+    expect(result.isErr).toBe(true);
+    if (result.isErr) expect(result.error).toMatch(/not in availableAgents/);
+  });
+
+  it("offers the delegate_task tool only when other agents are available", async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const captureFetch: FetchFn = async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return new Response(JSON.stringify(mockCompletionResponse("lookup-customer", {})), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const reasoner = createOpenAIReasoner({ apiKey: "test-key", fetch: captureFetch });
+    await reasoner.reason(makeInput({ availableAgents: ["research-agent"] }));
+
+    const tools = capturedBody!["tools"] as Array<{ function: { name: string } }>;
+    expect(tools.map((t) => t.function.name)).toContain("delegate_task");
+    const messages = capturedBody!["messages"] as Array<{ role: string; content: string }>;
+    const userMsg = messages.find((m) => m.role === "user");
+    expect(userMsg?.content).toMatch(/Available agents to delegate to: research-agent/);
+  });
+
+  it("does not offer delegate_task when no other agents are available", async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const captureFetch: FetchFn = async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return new Response(JSON.stringify(mockCompletionResponse("lookup-customer", {})), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const reasoner = createOpenAIReasoner({ apiKey: "test-key", fetch: captureFetch });
+    await reasoner.reason(makeInput({ availableAgents: [] }));
+
+    const tools = capturedBody!["tools"] as Array<{ function: { name: string } }>;
+    expect(tools.map((t) => t.function.name)).not.toContain("delegate_task");
   });
 });

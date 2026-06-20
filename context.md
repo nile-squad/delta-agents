@@ -83,10 +83,15 @@ in a fraction of them. Two layers that don't meet. Findings, by severity:
   exhausted parent budget settles failed, not completed. D4 — `drainMessages` now checkpoints the
   `consumedMessages` snapshot so the caller-message drain is idempotent across resume (test asserts
   the latest checkpoint carries the consumed id).
-  **H4-remaining (deferred):** OpenAI adapter has no `delegate` tool yet (needs an `availableAgents`
-  contract on `ReasonerInput` to constrain targets — small follow-up; mock fully exercises it); child
-  budget is folded on settle, not *reserved* at delegation (two live children could momentarily each
-  see full parent remaining — bounded by max-2); a pure-supervisor agent with zero actions hits the
+  **OpenAI delegate tool [DONE 2026-06-20]:** `ReasonerInput` gained `availableAgents?: string[]`;
+  the scheduler passes every deployed agent except self. The OpenAI adapter offers a `delegate_task`
+  tool (goal + `agent_name` enum-constrained to availableAgents + optional budget) whenever there is
+  ≥1 other agent, parses it into a `delegate` decision, and steers the model via the system/user
+  prompt. Tests: openai-reasoner.spec "delegation" (parse, budget passthrough, off-list→Err, tool
+  offered only when agents available).
+  **H4-remaining (deferred):** child budget is folded on settle, not *reserved* at delegation (two
+  live children could momentarily each see full parent remaining — bounded by max-2); a
+  pure-supervisor agent with zero actions hits the
   discovery gate (available=0 → natural-done) before it can delegate, so a supervisor needs ≥1 action
   today; resume does not reload mid-flight children from an existing tree.
   **D3 — RESOLVED 2026-06-20 (owner ruling):** the per-agent concurrency model is per pool — an

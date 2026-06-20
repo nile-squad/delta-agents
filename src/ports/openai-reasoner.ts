@@ -25,6 +25,7 @@ import type { Result } from "slang-ts";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions/completions";
 import type { ReasonerPort, ReasonerInput, ReasonerDecision } from "./reasoner-port";
+import type { Cost } from "../shared/types";
 
 // Matches the Fetch type the OpenAI client constructor accepts.
 type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -116,10 +117,56 @@ const buildFinishTool = (): ChatCompletionTool => ({
   },
 });
 
+// The model calls this to hand a scoped sub-goal to another agent. The engine
+// creates a bounded child task whose budget is clamped to the parent's remaining
+// budget (invariant 18) and runs it under the binary supervision tree. Only
+// offered when there is at least one other agent to delegate to.
+const DELEGATE_TOOL_NAME = "delegate_task";
+
+const buildDelegateTool = (availableAgents: string[]): ChatCompletionTool => ({
+  type: "function",
+  function: {
+    name: DELEGATE_TOOL_NAME,
+    description:
+      "Hand a scoped sub-goal to another agent. The engine creates a bounded child task " +
+      "whose budget is clamped to your remaining budget. Use this to decompose work that " +
+      "belongs to a different specialist — not to avoid finishing your own task.",
+    parameters: {
+      type: "object",
+      properties: {
+        goal: {
+          type: "string",
+          description: "The scoped objective handed to the child agent.",
+        },
+        agent_name: {
+          type: "string",
+          description: "Exact name of the agent to delegate to. Must be one of the available agents.",
+          enum: availableAgents,
+        },
+        budget: {
+          type: "object",
+          description:
+            "Optional budget ceiling for the child task. Clamped to your remaining budget. " +
+            "Omit to grant the child your full remaining budget.",
+          properties: {
+            tokens: { type: "number" },
+            durationMs: { type: "number" },
+          },
+          required: ["tokens", "durationMs"],
+          additionalProperties: false,
+        },
+      },
+      required: ["goal", "agent_name"],
+      additionalProperties: false,
+    },
+  },
+});
+
 // ── Message builder ───────────────────────────────────────────────────────────
 
 const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
-  const { task, availableActions, agentRole, rolePrompt, context } = input;
+  const { task, availableActions, availableAgents, agentRole, rolePrompt, context } = input;
+  const canDelegate = availableAgents !== undefined && availableAgents.length > 0;
 
   const system: ChatCompletionMessageParam = {
     role: "system",
@@ -129,6 +176,9 @@ const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
       "You are driving a governed execution task. Each turn you must call exactly one tool.",
       "Call request_action with the action name and the parameters that action needs.",
       "Only call actions listed in the user message — all others are outside your authority.",
+      ...(canDelegate
+        ? ["Call delegate_task to hand a scoped sub-goal to one of the available agents."]
+        : []),
       "When the goal is fully satisfied and no further action is needed, call finish_task instead.",
     ].join("\n"),
   };
@@ -138,6 +188,9 @@ const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
     `Task ID: ${task.id}`,
     `Available actions: ${availableActions.join(", ")}`,
   ];
+  if (canDelegate) {
+    userLines.push(`Available agents to delegate to: ${availableAgents.join(", ")}`);
+  }
   if (context !== undefined && context.length > 0) {
     userLines.push("", "Context:", context);
   }
@@ -164,9 +217,20 @@ const reasoningCostFrom = (
   durationMs: 0,
 });
 
+/** Parse an optional budget object from delegate_task arguments. */
+const parseBudget = (raw: unknown): Cost | undefined => {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const tokens = obj["tokens"];
+  const durationMs = obj["durationMs"];
+  if (typeof tokens !== "number" || typeof durationMs !== "number") return undefined;
+  return { tokens, durationMs };
+};
+
 const parseToolCall = (
   response: OpenAI.Chat.Completions.ChatCompletion,
   availableActions: string[],
+  availableAgents: string[],
 ): Result<ReasonerDecision, string> => {
   const choice = response.choices[0];
   if (choice === undefined) {
@@ -176,7 +240,7 @@ const parseToolCall = (
   const toolCalls = choice.message.tool_calls;
   if (!toolCalls || toolCalls.length === 0) {
     return Err(
-      `openai-reasoner: model did not call request_action or finish_task (finish_reason: "${choice.finish_reason}")`,
+      `openai-reasoner: model did not call a tool (finish_reason: "${choice.finish_reason}")`,
     );
   }
 
@@ -203,9 +267,31 @@ const parseToolCall = (
     return Ok({ kind: "done", ...(reason !== undefined ? { reason } : {}) });
   }
 
+  // Delegation — hand a scoped sub-goal to another agent.
+  if (call.function.name === DELEGATE_TOOL_NAME) {
+    const goal = args["goal"];
+    if (typeof goal !== "string" || goal.length === 0) {
+      return Err(`openai-reasoner: delegate goal is missing or not a string in arguments: ${JSON.stringify(args)}`);
+    }
+    const agentName = args["agent_name"];
+    if (typeof agentName !== "string" || agentName.length === 0) {
+      return Err(`openai-reasoner: delegate agent_name is missing or not a string in arguments: ${JSON.stringify(args)}`);
+    }
+    if (!availableAgents.includes(agentName)) {
+      return Err(
+        `openai-reasoner: model chose to delegate to "${agentName}" which is not in availableAgents ${JSON.stringify(availableAgents)}`,
+      );
+    }
+    const budget = parseBudget(args["budget"]);
+    return Ok({
+      kind: "delegate",
+      delegation: { goal, agentName, ...(budget !== undefined ? { budget } : {}) },
+    });
+  }
+
   if (call.function.name !== "request_action") {
     return Err(
-      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action" or "finish_task"`,
+      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action", "delegate_task", or "finish_task"`,
     );
   }
 
@@ -266,10 +352,16 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
   return {
     reason: async (input: ReasonerInput): Promise<Result<ReasonerDecision, string>> => {
       const { availableActions } = input;
+      const availableAgents = input.availableAgents ?? [];
 
       if (availableActions.length === 0) {
         return Err("openai-reasoner: no available actions — nothing to propose");
       }
+
+      // The delegate tool is only offered when there is at least one other agent
+      // to hand work to — otherwise the model has no valid delegation target.
+      const tools: ChatCompletionTool[] = [buildTool(availableActions), buildFinishTool()];
+      if (availableAgents.length > 0) tools.push(buildDelegateTool(availableAgents));
 
       let response: OpenAI.Chat.Completions.ChatCompletion;
       try {
@@ -278,14 +370,14 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
           temperature,
           max_tokens: maxTokens,
           messages: buildMessages(input),
-          tools: [buildTool(availableActions), buildFinishTool()],
+          tools,
           tool_choice: "required",
         });
       } catch (e) {
         return Err(`openai-reasoner: API request failed — ${String(e)}`);
       }
 
-      return parseToolCall(response, availableActions);
+      return parseToolCall(response, availableActions, availableAgents);
     },
   };
 };

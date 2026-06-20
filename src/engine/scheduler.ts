@@ -139,10 +139,13 @@ const stepTask = async ({
     return { kind: "natural-done", snapshot };
   }
 
-  // 2. Ask the reasoner what to do next.
+  // 2. Ask the reasoner what to do next. Delegation targets are every other
+  // deployed agent (an agent does not delegate to itself; the supervision tree
+  // and budget scoping bound the rest).
   const reasonResult = await reasoner.reason({
     task: { ...task, risk: snapshot.risk, trust: snapshot.trust, updatedAt: new Date() },
     availableActions: discovery.available.map((a) => a.name),
+    availableAgents: registry.listAgents().filter((name) => name !== agent.name),
     agentRole: agent.role,
     rolePrompt: agent.rolePrompt,
   });

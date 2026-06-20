@@ -68,6 +68,13 @@ export type ReasonerInput = {
   task: Task;
   /** Names of actions currently discoverable given the task state-space. */
   availableActions: string[];
+  /**
+   * Names of agents this agent may delegate a scoped sub-goal to. Constrains the
+   * `delegate` decision the way `availableActions` constrains `act`: the model
+   * cannot delegate to an agent outside this set. Empty (or absent) means
+   * delegation is not offered this turn.
+   */
+  availableAgents?: string[];
   agentRole: string;
   rolePrompt: string;
   /** Retrieved memory/context injected by the memory retrieval step. */
