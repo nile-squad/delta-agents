@@ -89,9 +89,17 @@ in a fraction of them. Two layers that don't meet. Findings, by severity:
   ≥1 other agent, parses it into a `delegate` decision, and steers the model via the system/user
   prompt. Tests: openai-reasoner.spec "delegation" (parse, budget passthrough, off-list→Err, tool
   offered only when agents available).
-  **H4-remaining (deferred):** child budget is folded on settle, not *reserved* at delegation (two
-  live children could momentarily each see full parent remaining — bounded by max-2); a
-  pure-supervisor agent with zero actions hits the
+  **Child budget reservation [DONE 2026-06-21]:** `handleDelegate` now debits the parent's `spent`
+  by the granted child budget up front (reservation), and `settle` refunds the unused remainder
+  (`remainingCost(child.budget, child.spent)`) when the child finishes. Net parent spend across
+  delegate+settle equals the child's real spend, but during the child's life the parent's headroom
+  is reduced — so concurrent delegations draw from a shrinking pool and two children can never each
+  be granted the parent's full remaining. Invariant 18 is now *structural* at delegation time, not
+  just enforced after the fact (the D2 live parentSpent-refresh + starved-subtask check remain as
+  defensive belt-and-suspenders). Test: engine.spec "reserves each child's budget so concurrent
+  delegations cannot collectively exceed parent scope" (parent 100, two children request 80 each →
+  granted 80 + 20).
+  **H4-remaining (deferred):** a pure-supervisor agent with zero actions hits the
   discovery gate (available=0 → natural-done) before it can delegate, so a supervisor needs ≥1 action
   today; resume does not reload mid-flight children from an existing tree.
   **D3 — RESOLVED 2026-06-20 (owner ruling):** the per-agent concurrency model is per pool — an

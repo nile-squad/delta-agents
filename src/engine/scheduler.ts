@@ -298,12 +298,16 @@ export const runScheduler = async ({
     runner.result = result;
     await store.updateTask(runner.task.id, { status: taskStatusFor(result.status), updatedAt: new Date() });
 
-    // Child finished → fold its spend back into the parent and free its slot.
+    // Child finished → refund its unused reservation to the parent and free its
+    // slot. The parent reserved the child's full budget at delegation; the child
+    // only actually consumed `spent`, so return the difference. Net parent spend
+    // across delegate + settle is exactly the child's real spend.
     const parentId = runner.task.parentId;
     if (parentId !== undefined && treeInitialized) {
       const parent = findRunner(parentId);
       if (parent !== undefined) {
-        parent.snapshot = { ...parent.snapshot, spent: addCosts(parent.snapshot.spent, runner.snapshot.spent) };
+        const refund = remainingCost(runner.snapshot.budget, runner.snapshot.spent);
+        parent.snapshot = { ...parent.snapshot, spent: remainingCost(parent.snapshot.spent, refund) };
         if (parent.result !== null) parent.result = { ...parent.result, snapshot: parent.snapshot };
       }
       const treeResult = await store.getTaskTree(rootId);
@@ -353,6 +357,13 @@ export const runScheduler = async ({
       parentBudget: parent.snapshot.budget,
       parentSpent: parent.snapshot.spent,
     });
+
+    // Reserve the child's budget against the parent up front (debit parent spend
+    // by the granted budget). This makes invariant 18 structural: concurrent
+    // delegations draw from a shrinking pool, so two children can never each be
+    // granted the parent's full remaining. The unused remainder is refunded when
+    // the child settles, so the parent ultimately spends only what the child did.
+    parent.snapshot = { ...parent.snapshot, spent: addCosts(parent.snapshot.spent, childBudget) };
 
     const id = taskId();
     const now = new Date();

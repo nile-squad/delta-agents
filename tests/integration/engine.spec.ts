@@ -964,6 +964,41 @@ describe("delegation drives a bounded supervision tree (H4)", () => {
     }
   });
 
+  it("reserves each child's budget so concurrent delegations cannot collectively exceed parent scope (invariant 18)", async () => {
+    const store = createInMemoryStore();
+    // Parent budget 100 tokens. Each child requests 80 — individually fine, but
+    // together (160) they exceed the parent. Reservation must clamp the second.
+    const reasoner = routingReasoner({
+      Parent: [
+        { delegate: { goal: "A", agentName: "child-a", budget: { tokens: 80, durationMs: 1_000 } } },
+        { delegate: { goal: "B", agentName: "child-b", budget: { tokens: 80, durationMs: 1_000 } } },
+      ],
+      ChildA: [{ actionName: "work" }],
+      ChildB: [{ actionName: "work" }],
+    });
+    const delta = createDeltaEngine({ store, reasoner });
+    const plan = delta.action({ name: "plan", description: "test action", schema: z.object({}), fn: noop });
+    const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: noop });
+    delta.deploy(delta.agent({ name: "child-a", description: "d", role: "ChildA", rolePrompt: ".", actions: [work] }));
+    delta.deploy(delta.agent({ name: "child-b", description: "d", role: "ChildB", rolePrompt: ".", actions: [work] }));
+    delta.deploy(delta.agent({ name: "parent-agent", description: "d", role: "Parent", rolePrompt: ".", actions: [plan] }));
+
+    const result = await delta.send({ goal: "delegate two", agentName: "parent-agent", budget: { tokens: 100, durationMs: 300_000 } });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("completed");
+
+    const childA = await delta.lastTask("child-a");
+    const childB = await delta.lastTask("child-b");
+    if (childA.isOk && childA.value !== null && childB.isOk && childB.value !== null) {
+      // First child got its full request; the second was clamped to what was left
+      // after reservation (100 − 80 = 20), not its requested 80.
+      expect(childA.value.budget.tokens).toBe(80);
+      expect(childB.value.budget.tokens).toBe(20);
+      expect(childA.value.budget.tokens + childB.value.budget.tokens).toBeLessThanOrEqual(100);
+    }
+  });
+
   it("a delegated subtask that fails surfaces the parent as failed, not completed (D1)", async () => {
     const store = createInMemoryStore();
     const parentQueue: Array<{ delegate: { goal: string; agentName: string } } | "done"> = [
