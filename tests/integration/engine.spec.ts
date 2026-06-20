@@ -633,6 +633,186 @@ describe("governance math drives the live loop (H3)", () => {
   });
 });
 
+// ── Workflow-driven tasks (Package C / H2 + H1, C-a) ──────────────────────────
+
+describe("workflow tasks run deterministically through the engine (H2)", () => {
+  it("runs phases and actions in declared order, reasoner-less, to completion", async () => {
+    const store = createInMemoryStore();
+    const order: string[] = [];
+    // No reasoner responses scripted — a workflow task must not consult the reasoner.
+    const delta = createDeltaEngine({ store, reasoner: createMockReasoner({ alwaysFail: "reasoner must not run" }) });
+
+    const a1 = delta.action({ name: "a1", description: "test action", schema: z.object({}), fn: async () => { order.push("a1"); return Ok("ok"); } });
+    const a2 = delta.action({ name: "a2", description: "test action", schema: z.object({}), fn: async () => { order.push("a2"); return Ok("ok"); } });
+    const b1 = delta.action({ name: "b1", description: "test action", schema: z.object({}), fn: async () => { order.push("b1"); return Ok("ok"); } });
+
+    const phase1 = delta.phase({ name: "phase-1", description: "first", actions: ["a1", "a2"], checkpoint: true });
+    const phase2 = delta.phase({ name: "phase-2", description: "second", actions: ["b1"], checkpoint: false });
+    const wf = delta.workflow({ name: "two-phase", description: "ordered", version: "1.0.0", phases: [phase1, phase2] });
+
+    const ag = delta.agent({ name: "wf-agent", description: "d", role: "r", rolePrompt: ".", actions: [a1, a2, b1], workflows: [wf] });
+    delta.deploy(ag);
+
+    const result = await delta.send({ goal: "run workflow", agentName: "wf-agent", workflow: "two-phase" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("completed");
+    expect(order).toEqual(["a1", "a2", "b1"]);
+    // The completed workflow is recorded on the snapshot for prerequisite gating.
+    expect(result.value.snapshot.completedWorkflows).toContain("two-phase");
+
+    const state = await delta.inspect(result.value.taskId);
+    if (state.isOk) expect(state.value.task.workflow).toBe("two-phase");
+  });
+
+  it("branch routes to onSuccess target and skips the other path", async () => {
+    const store = createInMemoryStore();
+    const ran: string[] = [];
+    const delta = createDeltaEngine({ store });
+
+    const check = delta.action({ name: "check", description: "test action", schema: z.object({}), fn: async () => { ran.push("check"); return Ok("ok"); } });
+    const approve = delta.action({ name: "approve", description: "test action", schema: z.object({}), fn: async () => { ran.push("approve"); return Ok("ok"); } });
+    const reject = delta.action({ name: "reject", description: "test action", schema: z.object({}), fn: async () => { ran.push("reject"); return Ok("ok"); } });
+
+    const decide = delta.phase({
+      name: "decide",
+      description: "branch",
+      actions: [{ action: "check", onSuccess: "approve", onFailure: "reject" }, "approve", "reject"],
+      checkpoint: false,
+    });
+    const wf = delta.workflow({ name: "branching", description: "routes", version: "1.0.0", phases: [decide] });
+    const ag = delta.agent({ name: "branch-agent", description: "d", role: "r", rolePrompt: ".", actions: [check, approve, reject], workflows: [wf] });
+    delta.deploy(ag);
+
+    const result = await delta.send({ goal: "branch", agentName: "branch-agent", workflow: "branching" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("completed");
+    expect(ran).toEqual(["check", "approve"]);
+    expect(ran).not.toContain("reject");
+  });
+
+  it("returns failed when the agent does not declare the workflow", async () => {
+    const store = createInMemoryStore();
+    const delta = createDeltaEngine({ store });
+    const act = delta.action({ name: "act", description: "test action", schema: z.object({}), fn: noop });
+    const other = delta.action({ name: "other", description: "test action", schema: z.object({}), fn: noop });
+    const ph = delta.phase({ name: "p", description: "p", actions: ["other"], checkpoint: false });
+    delta.workflow({ name: "undeclared", description: "x", version: "1.0.0", phases: [ph] });
+    // Agent declares no workflows.
+    const ag = delta.agent({ name: "no-wf-agent", description: "d", role: "r", rolePrompt: ".", actions: [act, other] });
+    delta.deploy(ag);
+
+    const result = await delta.send({ goal: "run", agentName: "no-wf-agent", workflow: "undeclared" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("failed");
+    expect(result.value.reason).toMatch(/does not declare workflow/);
+  });
+});
+
+describe("workflow supervision recovers or surfaces failure (H1)", () => {
+  it("retry strategy re-runs the phase and surfaces failure once retries are exhausted", async () => {
+    const store = createInMemoryStore();
+    let attempts = 0;
+    const delta = createDeltaEngine({ store });
+
+    const flaky = delta.action({
+      name: "flaky",
+      description: "always fails",
+      schema: z.object({}),
+      fn: async () => { attempts++; return Err("transient") as unknown as ReturnType<typeof noop>; },
+    });
+    const ph = delta.phase({
+      name: "flaky-phase",
+      description: "retried",
+      actions: ["flaky"],
+      checkpoint: false,
+      supervision: { strategy: "retry", maxRetries: 2 },
+    });
+    const wf = delta.workflow({ name: "retry-wf", description: "retries", version: "1.0.0", phases: [ph] });
+    const ag = delta.agent({ name: "retry-agent", description: "d", role: "r", rolePrompt: ".", actions: [flaky], workflows: [wf] });
+    delta.deploy(ag);
+
+    const result = await delta.send({ goal: "retry", agentName: "retry-agent", workflow: "retry-wf" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("failed");
+    expect(result.value.reason).toMatch(/exhausted/);
+    // First run + 2 retries = 3 attempts.
+    expect(attempts).toBe(3);
+
+    const state = await delta.inspect(result.value.taskId);
+    if (state.isOk) expect(state.value.task.status).toBe("failed");
+  });
+
+  it("escalate strategy pauses the task and records a workflow-failure escalation", async () => {
+    const store = createInMemoryStore();
+    const delta = createDeltaEngine({ store });
+
+    // A failed action routes to the phase's supervision policy (escalate),
+    // not to post-step governance — so the policy reliably decides the outcome.
+    const boom = delta.action({
+      name: "boom",
+      description: "fails",
+      schema: z.object({}),
+      fn: async () => Err("kaboom") as unknown as ReturnType<typeof noop>,
+    });
+    const ph = delta.phase({
+      name: "boom-phase",
+      description: "escalates",
+      actions: ["boom"],
+      checkpoint: false,
+      supervision: { strategy: "escalate", maxRetries: 0 },
+    });
+    const wf = delta.workflow({ name: "escalate-wf", description: "escalates", version: "1.0.0", phases: [ph] });
+    const ag = delta.agent({ name: "escalate-agent", description: "d", role: "r", rolePrompt: ".", actions: [boom], workflows: [wf] });
+    delta.deploy(ag);
+
+    const result = await delta.send({ goal: "escalate", agentName: "escalate-agent", workflow: "escalate-wf" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("blocked");
+    expect(result.value.reason).toMatch(/escalated/);
+
+    const state = await delta.inspect(result.value.taskId);
+    if (state.isOk) {
+      expect(state.value.task.status).toBe("paused");
+      expect(state.value.escalations.length).toBeGreaterThan(0);
+      expect(state.value.escalations[0]?.trigger).toBe("workflow-failure");
+    }
+  });
+});
+
+describe("workflow approval pre-flight (C-a)", () => {
+  it("blocks the whole workflow when a requiresApproval action is not yet approved", async () => {
+    const store = createInMemoryStore();
+    const ran: string[] = [];
+    const delta = createDeltaEngine({ store });
+
+    const prep = delta.action({ name: "prep", description: "test action", schema: z.object({}), fn: async () => { ran.push("prep"); return Ok("ok"); } });
+    const pay = delta.action({ name: "pay", description: "needs sign-off", schema: z.object({}), requiresApproval: true, fn: async () => { ran.push("pay"); return Ok("ok"); } });
+    const ph = delta.phase({ name: "pay-phase", description: "p", actions: ["prep", "pay"], checkpoint: false });
+    const wf = delta.workflow({ name: "pay-wf", description: "pays", version: "1.0.0", phases: [ph] });
+    const ag = delta.agent({ name: "pay-agent", description: "d", role: "r", rolePrompt: ".", actions: [prep, pay], workflows: [wf] });
+    delta.deploy(ag);
+
+    const result = await delta.send({ goal: "pay", agentName: "pay-agent", workflow: "pay-wf" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("blocked");
+    expect(result.value.reason).toMatch(/approval-required/);
+    // Pre-flight blocks before any action runs — no partial execution.
+    expect(ran).toEqual([]);
+
+    const state = await delta.inspect(result.value.taskId);
+    if (state.isOk) {
+      expect(state.value.task.status).toBe("paused");
+      expect(state.value.pendingApprovals.some((a) => a.action === "pay")).toBe(true);
+    }
+  });
+});
+
 // ── Decoupling check ──────────────────────────────────────────────────────────
 
 describe("decoupling — modules individually importable", () => {

@@ -8,4 +8,6 @@
 
 export { requestApproval, resolveApproval, getApproval, getApprovalStatusForAction } from "./approvals";
 export { checkEscalation, raiseEscalation, getEscalations } from "./escalation";
+export { applyPostStepGovernance } from "./post-step";
+export type { PostStepGovernance } from "./post-step";
 export type { EscalationContext, EscalationCheck } from "./types";

@@ -24,10 +24,31 @@ in a fraction of them. Two layers that don't meet. Findings, by severity:
   Note: a `done`-turn's own model tokens are still unaccounted (no execution to attach to) — minor leak.
 
 **High (subsystems built+tested, never called by live path — confirmed by import trace):**
-- **H1** Supervision unenforced: `applyStrategy`/`task-tree`/`abortEntireTree`/`retryWithJitter`
-  have no live callers. Gateway error → plain `status:"failed"`. Prohibition 10 not applied.
-- **H2** Workflows/phases/branching never drive execution: `run-workflow`/`run-phase`/`resolve-next`
-  uncalled. Loop is pure reasoner-picks-action. Invariants 7, 21 unexercised.
+- **H1 [FIXED 2026-06-20 — Package C] Supervision now enforced at phase granularity.**
+  `run-workflow.ts` `runPhaseSupervised` wraps each phase: a failed phase with a declared
+  `supervision` policy applies `applyStrategy({policy, retryCount:0})` deterministically
+  (prohibition 10): retry/restart/resume re-run the phase up to `maxRetries` via `retryWithJitter`
+  (AGENTS.md: never raw sleep+backoff; baseDelayMs:5, maxDelayMs:50); escalate → `raiseEscalation`
+  (trigger `workflow-failure`) + pause + `blocked`; abort-* → `abortTask` + failed; give-up →
+  failed. Recovery boundary is the phase (re-run whole phase), not per-action — matches spec
+  §Supervision Model. Tests: engine.spec "workflow supervision recovers or surfaces failure (H1)"
+  (retry-exhausted→failed, escalate→blocked+workflow-failure escalation).
+- **H2 [FIXED 2026-06-20 — Package C] Workflows/phases/branching now drive execution (C-a model).**
+  `SendInput` gained `workflow?` + `input?`; a task with an assigned workflow runs deterministically
+  (reasoner-less) via `runWorkflowTask` (engine/runtime.ts) → `runWorkflow`; a workflow-less task
+  still uses the free reasoner loop (C-a coexistence). `runWorkflowTask` validates the agent
+  declares the workflow, builds the action registry from `agent.actions`, pre-flights approvals
+  for the whole workflow (any unapproved requiresApproval action → block + auto-request, mirrors
+  the loop's per-action gate), feeds a single shared `input` bag to every action via `inputFor`,
+  and maps WorkflowResult→SendResult (completed/blocked/failed). `create-delta-engine.ts` branches
+  on `workflow !== undefined`; `Task.workflow` is set. **Key H1/H3 reconciliation (design):** in
+  `run-phase.ts`, post-step governance is split by outcome — a *successful* step runs full
+  post-step governance (escalate on drift, shared with the free loop) but a *failed* step only
+  persists trust/risk and routes to supervision. Escalating on failure from post-step would
+  pre-empt the supervision policy (H1) and the branch `onFailure` route, and was timing-flaky
+  (cold-start optimism 1.0 vs observed 0.0 → surprise 1.0 only when durationMs rounds ≥1ms).
+  Tests: engine.spec "workflow tasks run deterministically (H2)" (phase order, branch routing,
+  undeclared-workflow→failed) + "workflow approval pre-flight (C-a)".
 - **H3 [FIXED 2026-06-19 — Package A] Governance math wired into the live loop.** New pure
   module `src/governance/step-signals.ts` (`assembleStepSignals`) composes friction + Kalman
   health + Bayesian surprise; gateway feeds the result to `updateRisk` (was hardcoded zeros) and
@@ -59,14 +80,18 @@ Storage note: all 8 entities already have working store methods in BOTH adapters
 Drizzle), so no remaining H-item needs new DB schema. New persisted state (H1 retry counters,
 done) rides inside the checkpoint `TaskStateSnapshot` JsonRecord.
 
-H-series sequence (scoped): A=H3 [DONE de8b1d0], B=H5a [DONE], C=H2+H1 [NEXT — needs coexistence
-decision: C-a task-assigned workflow runs deterministically (lean) / C-b reasoner invokes
-workflow as macro-action / C-c reasoner free-picks but phase ordering+branching+supervision
-apply], D=H4+H5b [needs delegation-trigger decision (reserved `delegate` action vs authoring
-declaration) + concurrency decision (concurrent vs interleaved 2 subtasks); includes H5b queue
-drain]. C reconciliation cost: workflow path (run-phase/run-workflow) lacks escalation +
-trust/risk persistence that runSendLoop has — must be added when wiring. Commits so far:
-a7c86dd (critical C1-C4), de8b1d0 (Package A/H3), Package B pending commit.
+H-series sequence (scoped): A=H3 [DONE de8b1d0], B=H5a [DONE e94124b], C=H2+H1 [DONE — C-a
+coexistence: task-assigned workflow runs deterministically/reasoner-less; workflow-less task uses
+the free loop], D=H4+H5b [NEXT — needs delegation-trigger decision (reserved `delegate` action vs
+authoring declaration) + concurrency decision (concurrent vs interleaved 2 subtasks); includes
+H5b queue drain]. C reconciliation (DONE): shared `applyPostStepGovernance` helper
+(`src/oversight/post-step.ts`) gives BOTH the free loop and the workflow path identical escalation
++ trust/risk persistence; placed in oversight to avoid an engine↔workflow import cycle.
+**C-remaining (deferred):** per-action reasoner-filled inputs (only a single shared `input` bag
+today); workflow approval round-trip resume (a blocked-on-approval workflow re-runs from the start
+on resume — no mid-workflow checkpoint resume yet); workflow pause/resume correctness. Commits so
+far: a7c86dd (critical C1-C4), de8b1d0 (Package A/H3), e94124b (Package B/H5a), Package C pending
+commit.
 
 **Medium:** M1 `pauseTask` lacks terminal-status guard (can resurrect completed task).
 M2 `resumeTask` accepts `"pending"` but error says `(expected "paused")`. M3 duration budget
@@ -78,12 +103,9 @@ L3 task+checkpoint persisted every step (2 writes/step). L4 lingering `Record<st
 `as unknown as` casts vs. the "no unknown" rule. L5 OpenAI adapter pins `max_tokens`/`temperature`
 (newer gpt-5.x models prefer `max_completion_tokens`, ignore temperature).
 
-Critical set C1–C4 DONE (552 tests pass under vitest; bun shows same 4 pre-existing
-`vi.runAllTimersAsync` timer failures only). Files touched: `ports/reasoner-port.ts`,
-`ports/mock-reasoner.ts`, `ports/openai-reasoner.ts`, `execution/types.ts`,
-`execution/execution-gateway.ts`, `engine/runtime.ts`, + tests in `engine.spec.ts` and
-`openai-reasoner.spec.ts`. H-series (unwired supervision/workflow/governance-math/delegation/
-messaging) is phase-sized, still pending, scoped separately.
+Critical set C1–C4 + Packages A/B/C DONE (567 tests pass under vitest; bun shows same 4
+pre-existing `vi.runAllTimersAsync` timer failures only). Remaining H-series work: Package D
+(H4 delegation + H5b queue drain/comms) plus the C-remaining deferrals listed above.
 
 ## Overview
 Delta Agents is a deterministic autonomous control plane for AI agents. It provides the execution layer that constrains, validates, supervises, and audits agent behavior. The model reasons; the engine governs. The full specification is in `delta-agents.spec.md` (1185 lines) — that is the canonical blueprint for implementation.

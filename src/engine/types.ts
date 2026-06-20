@@ -35,6 +35,21 @@ export type SendInput = {
   agentName: string;
   /** Budget ceiling for this task. Defaults to { tokens: 10_000, durationMs: 300_000 }. */
   budget?: Cost;
+  /**
+   * Name of a workflow the agent declares. When set, the task runs
+   * deterministically through the workflow engine (phases in declared order)
+   * instead of the free reasoner loop (the C-a coexistence model: a task with an
+   * assigned workflow is reasoner-less; workflow-less tasks use the reasoner).
+   * The agent must declare the workflow or the send fails.
+   */
+  workflow?: string;
+  /**
+   * Shared input bag handed to every action in the workflow run. Each action's
+   * schema validates the subset it needs (the gateway rejects anything invalid).
+   * Per-action reasoner-filled inputs are a future refinement; for now a single
+   * bag covers the deterministic-workflow case. Ignored for the reasoner loop.
+   */
+  input?: Record<string, string | number | boolean | null>;
 };
 
 export type SendResult = {

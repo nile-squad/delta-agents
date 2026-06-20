@@ -38,7 +38,9 @@ export type PhaseResult =
       snapshot: TaskStateSnapshot;
       failedAction?: string;
       failedReason: string;
-    };
+    }
+  // An action escalated mid-phase; the task is paused awaiting human oversight.
+  | { status: "blocked"; snapshot: TaskStateSnapshot; reason: string };
 
 export type WorkflowResult =
   | { status: "completed"; snapshot: TaskStateSnapshot }
@@ -47,7 +49,9 @@ export type WorkflowResult =
       snapshot: TaskStateSnapshot;
       failedPhase?: string;
       failedReason: string;
-    };
+    }
+  // A phase escalated (or its supervision strategy escalated); task is paused.
+  | { status: "blocked"; snapshot: TaskStateSnapshot; failedPhase?: string; reason: string };
 
 export type RunPhaseInput = {
   phase: Phase;

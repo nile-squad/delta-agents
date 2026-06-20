@@ -27,6 +27,7 @@ import type { JsonRecord } from "../shared/types";
 import type { PhaseResult, RunPhaseInput } from "./types";
 import { runGateway } from "../execution/execution-gateway";
 import { runHook } from "../execution/run-hooks";
+import { applyPostStepGovernance } from "../oversight";
 import { resolveNextStep } from "./resolve-next";
 import { executionId, checkpointId } from "../shared/id";
 
@@ -115,8 +116,41 @@ export const runPhase = async ({
       };
     }
 
-    const { fnResult, updatedSnapshot } = gwResult.value;
+    const { fnResult, updatedSnapshot, surpriseMagnitude } = gwResult.value;
     currentState = updatedSnapshot;
+
+    // Post-step governance differs by outcome, by design:
+    //
+    //   Success → full post-step governance (shared with the free reasoner loop):
+    //     persist trust/risk and escalate if execution is drifting (high cost /
+    //     low progress / Bayesian surprise). This catches a "succeeding but
+    //     runaway" step that supervision would never see (supervision keys off
+    //     phase *failure*).
+    //
+    //   Failure → persist the gateway's trust/risk update, but do NOT escalate
+    //     here. A failed action is the supervision layer's domain (H1): its
+    //     declared policy decides retry / restart / escalate / abort. Escalating
+    //     from post-step would pre-empt that policy and make it unreachable, and
+    //     a branch onFailure recovery route would never fire.
+    if (fnResult.isOk) {
+      const gov = await applyPostStepGovernance({
+        taskId: currentState.taskId,
+        snapshot: currentState,
+        surpriseMagnitude,
+        store,
+      });
+      currentState = gov.snapshot;
+      if (gov.kind === "escalated") {
+        await runHook(phase.hooks?.onError, phaseCtx);
+        return { status: "blocked", snapshot: currentState, reason: gov.reason };
+      }
+    } else {
+      await store.updateTask(currentState.taskId, {
+        risk: currentState.risk,
+        trust: currentState.trust,
+        updatedAt: new Date(),
+      });
+    }
 
     // Jump targets that are plain string refs terminate the phase immediately.
     // This enforces decision-tree semantics: a branch routes to exactly one

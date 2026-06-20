@@ -24,15 +24,16 @@ import type { JsonRecord } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort } from "../ports/reasoner-port";
 import type { Registry } from "../authoring/registry";
-import type { Agent } from "../authoring/types";
+import type { Agent, Action, Workflow } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
+import type { ApprovalStatus } from "../execution/types";
 import type { SendResult, InspectResult } from "./types";
 import { snapshotFromTask } from "../state-space/task-state";
-import { withEscalation } from "../state-space/task-state";
 import { isOverBudget } from "../shared/cost";
 import { discoverActions } from "../state-space/discover-actions";
 import { runGateway } from "../execution/execution-gateway";
-import { checkEscalation, raiseEscalation, getApprovalStatusForAction, requestApproval } from "../oversight";
+import { runWorkflow } from "../workflow";
+import { applyPostStepGovernance, getApprovalStatusForAction, requestApproval } from "../oversight";
 import { resolveApproval } from "../oversight";
 import { checkpointId } from "../shared/id";
 
@@ -176,39 +177,14 @@ export const runSendLoop = async ({
     const { fnResult, updatedSnapshot, surpriseMagnitude } = gwResult.value;
     snapshot = updatedSnapshot;
 
-    // ── 6. Escalation check ─────────────────────────────────────────────
-    // surpriseMagnitude is now a real signal — a large divergence between
-    // predicted and observed health can trigger oversight (spec §Bayesian Surprise).
-    const escCheck = checkEscalation({
-      risk: snapshot.risk,
-      spent: snapshot.spent,
-      budget: snapshot.budget,
-      surpriseMagnitude,
-    });
-    if (escCheck.escalate) {
-      await raiseEscalation({
-        taskId: task.id,
-        trigger: escCheck.trigger,
-        reason: escCheck.reason,
-        store,
-      });
-      snapshot = withEscalation({ snapshot, escalated: true });
-
-      // An escalated task awaits human oversight. It must stop here — never
-      // continue, and never be reported as completed (spec §Human Oversight,
-      // invariant 13). It lands as "paused" so a human can resolve and resume.
-      await store.updateTask(task.id, {
-        risk: snapshot.risk,
-        trust: snapshot.trust,
-        status: "paused",
-        updatedAt: new Date(),
-      });
-      return {
-        taskId: task.id,
-        status: "blocked",
-        snapshot,
-        reason: `escalated: ${escCheck.reason}`,
-      };
+    // ── 6. Post-step governance (escalation + persistence) ──────────────
+    // Shared with the workflow path so both executors govern identically. On
+    // escalation the task is paused and surfaced as blocked — never completed
+    // (spec §Human Oversight, invariant 13, §Bayesian Surprise).
+    const gov = await applyPostStepGovernance({ taskId: task.id, snapshot, surpriseMagnitude, store });
+    snapshot = gov.snapshot;
+    if (gov.kind === "escalated") {
+      return { taskId: task.id, status: "blocked", snapshot, reason: gov.reason };
     }
 
     // ── 7. Checkpoint after successful action ────────────────────────────
@@ -222,13 +198,6 @@ export const runSendLoop = async ({
       };
       await store.saveCheckpoint(ckpt);
     }
-
-    // ── 8. Persist updated governance state ─────────────────────────────
-    await store.updateTask(task.id, {
-      risk: snapshot.risk,
-      trust: snapshot.trust,
-      updatedAt: new Date(),
-    });
   }
 
   if (!naturalExit) {
@@ -255,6 +224,140 @@ export const runSendLoop = async ({
 
   await store.updateTask(task.id, { status: "completed", updatedAt: new Date() });
   return { taskId: task.id, status: "completed", snapshot };
+};
+
+// ── Workflow task driver (C-a) ──────────────────────────────────────────────
+
+/** Collect every action name referenced by a workflow's phases (string refs and
+ * branch targets). Used to pre-flight approvals before the workflow runs. */
+const collectWorkflowActionNames = (workflow: Workflow): string[] => {
+  const names = new Set<string>();
+  for (const phase of workflow.phases) {
+    for (const ref of phase.actions) {
+      if (typeof ref === "string") {
+        names.add(ref);
+      } else {
+        names.add(ref.action);
+        if (ref.onSuccess !== undefined) names.add(ref.onSuccess);
+        if (ref.onFailure !== undefined) names.add(ref.onFailure);
+      }
+    }
+  }
+  return [...names];
+};
+
+/**
+ * Drive a task that has an assigned workflow through the deterministic workflow
+ * engine (C-a coexistence model). The reasoner is not consulted: the phases run
+ * in declared order and governance (escalation, trust/risk persistence,
+ * supervision) is applied by the shared workflow path.
+ *
+ * Approvals are resolved up front: any requiresApproval action in the workflow
+ * must already be approved, otherwise the task blocks with pending requests
+ * created — the same gate the reasoner loop applies per action, lifted to the
+ * whole workflow because the deterministic run cannot pause to ask mid-phase
+ * (spec §Human Oversight). A single shared input bag feeds every action; each
+ * action's schema validates the subset it needs.
+ */
+export const runWorkflowTask = async ({
+  task,
+  agent,
+  workflowName,
+  input,
+  registry,
+  store,
+}: {
+  task: Task;
+  agent: Agent;
+  workflowName: string;
+  input?: Record<string, unknown>;
+  registry: Registry;
+  store: StoragePort;
+}): Promise<SendResult> => {
+  const snapshot = snapshotFromTask(task);
+
+  // The agent must declare the workflow — nothing outside its definition is
+  // reachable (spec §Bounded State-Space Model).
+  const declares = (agent.workflows ?? []).some((w) => w.name === workflowName);
+  if (!declares) {
+    await store.updateTask(task.id, { status: "failed", updatedAt: new Date() });
+    return {
+      taskId: task.id,
+      status: "failed",
+      snapshot,
+      reason: `agent "${agent.name}" does not declare workflow "${workflowName}"`,
+    };
+  }
+
+  const workflowResult = registry.getWorkflow(workflowName);
+  if (workflowResult.isErr) {
+    await store.updateTask(task.id, { status: "failed", updatedAt: new Date() });
+    return { taskId: task.id, status: "failed", snapshot, reason: workflowResult.error };
+  }
+  const workflow = workflowResult.value;
+
+  const actionRegistry = new Map<string, Action>(agent.actions.map((a) => [a.name, a]));
+
+  // ── Approval pre-flight ─────────────────────────────────────────────────
+  // Resolve every referenced action's approval status before running. A
+  // requiresApproval action that is not yet approved blocks the whole task and
+  // auto-requests sign-off (mirrors the reasoner loop's per-action gate).
+  const approvalStatuses = new Map<string, ApprovalStatus>();
+  const awaitingApproval: string[] = [];
+  for (const name of collectWorkflowActionNames(workflow)) {
+    const action = actionRegistry.get(name);
+    if (action === undefined) continue; // runGateway surfaces the missing-action error.
+
+    const statusResult = await getApprovalStatusForAction({ taskId: task.id, action: name, store });
+    let status: ApprovalStatus = statusResult.isOk ? statusResult.value : "none";
+
+    if (action.requiresApproval === true && status === "none") {
+      await requestApproval({
+        taskId: task.id,
+        action: name,
+        reason: `action "${name}" requires human approval before workflow "${workflowName}" runs`,
+        store,
+      });
+      status = "pending";
+    }
+
+    approvalStatuses.set(name, status);
+    if (action.requiresApproval === true && status !== "approved") awaitingApproval.push(name);
+  }
+
+  if (awaitingApproval.length > 0) {
+    await store.updateTask(task.id, { status: "paused", updatedAt: new Date() });
+    return {
+      taskId: task.id,
+      status: "blocked",
+      snapshot,
+      reason: `approval-required: workflow "${workflowName}" needs human sign-off for action(s): ${awaitingApproval.join(", ")}`,
+    };
+  }
+
+  // ── Run the workflow ────────────────────────────────────────────────────
+  const result = await runWorkflow({
+    workflow,
+    actionRegistry,
+    state: snapshot,
+    getApprovalStatus: (name) => approvalStatuses.get(name) ?? "none",
+    inputFor: () => input ?? {},
+    store,
+  });
+
+  if (result.status === "completed") {
+    await store.updateTask(task.id, { status: "completed", updatedAt: new Date() });
+    return { taskId: task.id, status: "completed", snapshot: result.snapshot };
+  }
+
+  // A blocked workflow already paused the task (escalation or supervision-escalate
+  // updates the record before returning); do not overwrite that status.
+  if (result.status === "blocked") {
+    return { taskId: task.id, status: "blocked", snapshot: result.snapshot, reason: result.reason };
+  }
+
+  await store.updateTask(task.id, { status: "failed", updatedAt: new Date() });
+  return { taskId: task.id, status: "failed", snapshot: result.snapshot, reason: result.failedReason };
 };
 
 // ── Lifecycle operations ──────────────────────────────────────────────────────

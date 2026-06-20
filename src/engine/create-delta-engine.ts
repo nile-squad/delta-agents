@@ -33,7 +33,7 @@ import type { Message } from "../shared/types";
 import { taskId, messageId } from "../shared/id";
 import { initialRiskState, initialTrust } from "../governance";
 import { snapshotFromTask } from "../state-space/task-state";
-import { runSendLoop, pauseTask, resumeTask, inspectTask, resolveApproval } from "./runtime";
+import { runSendLoop, runWorkflowTask, pauseTask, resumeTask, inspectTask, resolveApproval } from "./runtime";
 
 const DEFAULT_BUDGET = { tokens: 10_000, durationMs: 300_000 };
 
@@ -66,7 +66,7 @@ export const createDeltaEngine = ({
     }
   };
 
-  const send: DeltaEngine["send"] = async ({ goal, agentName, budget = DEFAULT_BUDGET }) => {
+  const send: DeltaEngine["send"] = async ({ goal, agentName, budget = DEFAULT_BUDGET, workflow: workflowName, input }) => {
     // ── Invariant 26: no new task if agent already has active/queued work ──
     // Per spec §No New Task When Work Is Pending, a busy agent does not get a
     // second task. The inbound goal is queued as a message attributable to the
@@ -116,6 +116,7 @@ export const createDeltaEngine = ({
       status: "running" as const,
       goal,
       assignedAgent: agentName,
+      workflow: workflowName,
       budget,
       risk: initialRiskState(),
       trust: initialTrust(),
@@ -128,14 +129,12 @@ export const createDeltaEngine = ({
       return Err(`send failed: could not persist task: ${saveResult.error}`);
     }
 
-    const result = await runSendLoop({
-      task,
-      agent: agentDef,
-      reasoner,
-      registry,
-      store,
-      maxSteps: maxStepsPerTask,
-    });
+    // C-a coexistence: a task with an assigned workflow runs deterministically
+    // through the workflow engine (reasoner-less); a workflow-less task uses the
+    // free reasoner loop.
+    const result = workflowName !== undefined
+      ? await runWorkflowTask({ task, agent: agentDef, workflowName, input, registry, store })
+      : await runSendLoop({ task, agent: agentDef, reasoner, registry, store, maxSteps: maxStepsPerTask });
 
     return Ok(result);
   };
