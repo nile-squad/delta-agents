@@ -152,15 +152,25 @@ on resume — no mid-workflow checkpoint resume yet); workflow pause/resume corr
 far: a7c86dd (critical C1-C4), de8b1d0 (Package A/H3), e94124b (Package B/H5a), Package C pending
 commit.
 
-**Medium:** M1 `pauseTask` lacks terminal-status guard (can resurrect completed task).
-M2 `resumeTask` accepts `"pending"` but error says `(expected "paused")`. M3 duration budget
-excludes reasoner latency (only `fn()` timed). M4 `ReasonerInput.context` (retrieved memory)
-never populated — spec principle 4 unimplemented.
+**Medium:** **M1 [FIXED 2026-06-21]** `pauseTask` now rejects a terminal (completed/failed/aborted)
+task — pausing one could let a later resume re-enter the loop and re-run finished work, undoing the
+C1–C4 honest-status property. Tests: engine.spec "pause returns Err for a terminal (completed) task
+(M1)" + the pause/resume tests reworked to seed a non-terminal/checkpointed task instead of pausing
+a completed one. M2 `resumeTask` accepts `"pending"` but error says `(expected "paused")` (cosmetic).
+M3 duration budget excludes reasoner latency (only `fn()` timed). M4 `ReasonerInput.context`
+(retrieved memory) never populated — spec principle 4 (on-demand memory retrieval) unimplemented.
 
 **Low/DX:** L1 `deploy` is a no-op assertion. L2 gateway writes execution row twice/action.
 L3 task+checkpoint persisted every step (2 writes/step). L4 lingering `Record<string,unknown>`/
-`as unknown as` casts vs. the "no unknown" rule. L5 OpenAI adapter pins `max_tokens`/`temperature`
-(newer gpt-5.x models prefer `max_completion_tokens`, ignore temperature).
+`as unknown as` casts vs. the "no unknown" rule. **L5 [FIXED 2026-06-21]** OpenAI adapter now sends
+`max_completion_tokens` (not the deprecated `max_tokens`) and forwards `temperature` only when
+explicitly configured (newer gpt-5.x / o-series reasoning models reject a non-default temperature).
+
+**Test runner (2026-06-21):** vitest is the single canonical runner, run under Node via `pnpm test`
+(→ `vitest run`); `bun test` is no longer used (its runner lacks `vi.runAllTimersAsync`, which the
+retry-with-jitter tests need). `vitest.config.ts` pins `environment: "node"`. Source has no bare
+node-builtin imports to convert to `node:` specifiers (IDs use `nanoid`, not `node:crypto`). The
+bundle step (`bun run bun-build.ts`) still uses bun; that is the bundler, not the test path.
 
 Critical set C1–C4 + Packages A/B/C/D DONE — all H-series subsystems are now wired into the live
 path (572 tests pass under vitest; bun shows same 4 pre-existing `vi.runAllTimersAsync` timer

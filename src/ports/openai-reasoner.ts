@@ -41,11 +41,13 @@ export type OpenAIReasonerConfig = {
    */
   model?: string;
   /**
-   * Sampling temperature. Defaults to 0 for deterministic, reproducible
-   * action selection. Increase for exploratory agents.
+   * Sampling temperature. Only sent when explicitly set — newer reasoning models
+   * (gpt-5.x / o-series) reject any non-default temperature, so by default the
+   * request omits it and the model uses its own default. Set this only for
+   * models that support it (e.g. gpt-4o) and where you want exploratory output.
    */
   temperature?: number;
-  /** Maximum output tokens. Defaults to 512. */
+  /** Maximum completion tokens (sent as `max_completion_tokens`). Defaults to 512. */
   maxTokens?: number;
   /**
    * Custom fetch implementation. Useful for tests that need to return
@@ -55,7 +57,6 @@ export type OpenAIReasonerConfig = {
 };
 
 const DEFAULT_MODEL = "gpt-4o-mini";
-const DEFAULT_TEMPERATURE = 0;
 const DEFAULT_MAX_TOKENS = 512;
 
 // ── Tool definition ───────────────────────────────────────────────────────────
@@ -346,7 +347,6 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
   });
 
   const model = config.model ?? DEFAULT_MODEL;
-  const temperature = config.temperature ?? DEFAULT_TEMPERATURE;
   const maxTokens = config.maxTokens ?? DEFAULT_MAX_TOKENS;
 
   return {
@@ -367,8 +367,12 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
       try {
         response = await client.chat.completions.create({
           model,
-          temperature,
-          max_tokens: maxTokens,
+          // `max_completion_tokens` is the current field; `max_tokens` is
+          // deprecated and rejected by newer models. Temperature is forwarded
+          // only when explicitly configured (newer reasoning models reject a
+          // non-default value).
+          max_completion_tokens: maxTokens,
+          ...(config.temperature !== undefined ? { temperature: config.temperature } : {}),
           messages: buildMessages(input),
           tools,
           tool_choice: "required",

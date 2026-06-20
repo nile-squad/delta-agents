@@ -13,11 +13,10 @@
     "dist"
   ],
   "scripts": {
-    "test": "bun test tests/",
-    "test:watch": "bun test tests/ --watch",
-    "test:vitest": "vitest run",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "build": "bun run test && bun run typecheck && bun run bun-build.ts && tsc -p tsconfig.build.json"
+    "build": "vitest run && tsc --noEmit && bun run bun-build.ts && tsc -p tsconfig.build.json"
   },
   "homepage": "https://github.com/hussein-kizz/delta-agents#readme",
   "repository": {

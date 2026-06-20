@@ -230,82 +230,94 @@ describe("inspect — read full governance state", () => {
 // ── pause + resume ────────────────────────────────────────────────────────────
 
 describe("pause + resume — checkpoint round-trip", () => {
-  it("pause sets task status to 'paused'", async () => {
-    const store = createInMemoryStore();
-    // Send first to create a task
-    const delta = createDeltaEngine({
-      store,
-      reasoner: createMockReasoner({ responses: [{ actionName: "work", input: {} }] }),
+  // Helper: seed a non-terminal task directly in the store (send always runs to
+  // completion, so a "running" task is otherwise not observable to pause).
+  const seedRunningTask = async (store: ReturnType<typeof createInMemoryStore>, agentName: string): Promise<string> => {
+    const id = taskId();
+    const now = new Date();
+    await store.saveTask({
+      id, rootId: id, status: "running", goal: "in progress", assignedAgent: agentName,
+      budget: { tokens: 10_000, durationMs: 300_000 }, risk: initialRiskState(), trust: initialTrust(),
+      createdAt: now, updatedAt: now,
     });
-    const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: noop });
-    const ag = delta.agent({ name: "pausable", description: "test action", role: "r", rolePrompt: ".", actions: [work] });
-    delta.deploy(ag);
+    return id;
+  };
 
-    const sent = await delta.send({ goal: "work once", agentName: "pausable" });
-    if (!sent.isOk) return;
-    const taskId = sent.value.taskId;
+  it("pause sets a non-terminal task's status to 'paused'", async () => {
+    const store = createInMemoryStore();
+    const delta = createDeltaEngine({ store });
+    const id = await seedRunningTask(store, "pausable");
 
-    // Pause the (now completed) task — pause is always safe to call
-    const pauseResult = await delta.pause(taskId);
+    const pauseResult = await delta.pause(id);
     expect(pauseResult.isOk).toBe(true);
 
-    const state = await delta.inspect(taskId);
+    const state = await delta.inspect(id);
     if (state.isOk) expect(state.value.task.status).toBe("paused");
   });
 
   it("pause saves a checkpoint", async () => {
     const store = createInMemoryStore();
+    const delta = createDeltaEngine({ store });
+    const id = await seedRunningTask(store, "p2");
+
+    await delta.pause(id);
+
+    const state = await delta.inspect(id);
+    if (state.isOk) expect(state.value.latestCheckpoint).not.toBeNull();
+  });
+
+  it("pause returns Err for a terminal (completed) task — no resurrection (M1)", async () => {
+    const store = createInMemoryStore();
     const delta = createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "work", input: {} }] }),
     });
     const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: noop });
-    const ag = delta.agent({ name: "p2", description: "test action", role: "r", rolePrompt: ".", actions: [work] });
-    delta.deploy(ag);
+    delta.deploy(delta.agent({ name: "done-agent", description: "d", role: "r", rolePrompt: ".", actions: [work] }));
 
-    const sent = await delta.send({ goal: "work", agentName: "p2" });
+    const sent = await delta.send({ goal: "work once", agentName: "done-agent" });
     if (!sent.isOk) return;
+    expect(sent.value.status).toBe("completed");
 
-    await delta.pause(sent.value.taskId);
+    const pauseResult = await delta.pause(sent.value.taskId);
+    expect(pauseResult.isErr).toBe(true);
+    if (pauseResult.isErr) expect(pauseResult.error).toMatch(/terminal|completed/);
 
+    // The task stays completed — pause did not resurrect it.
     const state = await delta.inspect(sent.value.taskId);
-    if (state.isOk) expect(state.value.latestCheckpoint).not.toBeNull();
+    if (state.isOk) expect(state.value.task.status).toBe("completed");
   });
 
   it("resume continues from checkpoint and runs remaining actions", async () => {
-    // Scenario: pause after first action, then resume for second action
+    // Seed a paused task whose checkpoint records the first action already done;
+    // resume should run only the second. (Avoids pausing a completed task, which
+    // is now correctly rejected — M1.)
     const store = createInMemoryStore();
     const executed: string[] = [];
+    const id = taskId();
+    const now = new Date();
+    const budget = { tokens: 10_000, durationMs: 300_000 };
+    await store.saveTask({
+      id, rootId: id, status: "paused", goal: "two steps", assignedAgent: "resumable",
+      budget, risk: initialRiskState(), trust: initialTrust(), createdAt: now, updatedAt: now,
+    });
+    const checkpointSnapshot: JsonRecord = {
+      taskId: id, rootId: id, agentName: "resumable", status: "paused",
+      completedActions: ["first"], completedWorkflows: [],
+      budget, spent: { tokens: 0, durationMs: 0 },
+      risk: initialRiskState() as unknown as JsonRecord, trust: initialTrust() as unknown as JsonRecord,
+    };
+    await store.saveCheckpoint({ id: checkpointId(), taskId: id, state: checkpointSnapshot, createdAt: now });
 
-    // First send — only run the first action
     const delta = createDeltaEngine({
       store,
-      reasoner: createMockReasoner({ responses: [{ actionName: "first", input: {} }] }),
-    });
-    const first = delta.action({ name: "first", description: "test action", schema: z.object({}), fn: async () => { executed.push("first"); return Ok("ok"); } });
-    const second = delta.action({ name: "second", description: "test action", schema: z.object({}), fn: async () => { executed.push("second"); return Ok("ok"); } });
-    const ag = delta.agent({ name: "resumable", description: "test action", role: "r", rolePrompt: ".", actions: [first, second] });
-    delta.deploy(ag);
-
-    const sent = await delta.send({ goal: "two steps", agentName: "resumable" });
-    if (!sent.isOk) return;
-    const taskId = sent.value.taskId;
-
-    // Pause
-    await delta.pause(taskId);
-
-    // Resume with a fresh reasoner that scripts the second action
-    const delta2 = createDeltaEngine({
-      store, // shared store — same task
       reasoner: createMockReasoner({ responses: [{ actionName: "second", input: {} }] }),
     });
-    // Re-register the same agent (fresh registry for delta2)
-    const first2 = delta2.action({ name: "first", description: "test action", schema: z.object({}), fn: async () => Ok("ok") });
-    const second2 = delta2.action({ name: "second", description: "test action", schema: z.object({}), fn: async () => { executed.push("second-resumed"); return Ok("ok"); } });
-    const ag2 = delta2.agent({ name: "resumable", description: "test action", role: "r", rolePrompt: ".", actions: [first2, second2] });
-    delta2.deploy(ag2);
+    const first = delta.action({ name: "first", description: "test action", schema: z.object({}), fn: async () => Ok("ok") });
+    const second = delta.action({ name: "second", description: "test action", schema: z.object({}), fn: async () => { executed.push("second-resumed"); return Ok("ok"); } });
+    delta.deploy(delta.agent({ name: "resumable", description: "test action", role: "r", rolePrompt: ".", actions: [first, second] }));
 
-    const resumeResult = await delta2.resume(taskId);
+    const resumeResult = await delta.resume(id);
     expect(resumeResult.isOk).toBe(true);
     if (resumeResult.isOk) expect(resumeResult.value.status).toBe("completed");
     expect(executed).toContain("second-resumed");

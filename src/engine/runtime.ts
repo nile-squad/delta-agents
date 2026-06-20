@@ -233,6 +233,13 @@ export const pauseTask = async ({
   if (taskResult.isErr) return Err(`cannot pause: task "${taskId}" not found`);
   const task = taskResult.value;
 
+  // A terminal task is finished — pausing it would let a later resume re-enter
+  // the loop and re-run completed work, resurrecting a done task (M1). Reject so
+  // a terminal status stays terminal (keeps the C1–C4 "honest status" property).
+  if (task.status === "completed" || task.status === "failed" || task.status === "aborted") {
+    return Err(`cannot pause task "${taskId}" — it is already "${task.status}" (terminal)`);
+  }
+
   // Build the best available snapshot from the task record.
   // completedActions / spent live in the latest checkpoint if one exists.
   const latestCkpt = await store.getLatestCheckpoint(taskId);
