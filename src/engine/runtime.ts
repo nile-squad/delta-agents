@@ -144,6 +144,7 @@ export const runWorkflowTask = async ({
   agent,
   workflowName,
   input,
+  actionInputs,
   registry,
   store,
 }: {
@@ -151,6 +152,8 @@ export const runWorkflowTask = async ({
   agent: Agent;
   workflowName: string;
   input?: Record<string, unknown>;
+  /** Per-action input overrides; when present for an action, replaces the shared `input` bag. */
+  actionInputs?: Record<string, Record<string, string | number | boolean | null>>;
   registry: Registry;
   store: StoragePort;
 }): Promise<SendResult> => {
@@ -244,7 +247,7 @@ export const runWorkflowTask = async ({
     actionRegistry,
     state: snapshot,
     getApprovalStatus: (name) => approvalStatuses.get(name) ?? "none",
-    inputFor: () => input ?? {},
+    inputFor: (name) => actionInputs?.[name] ?? input ?? {},
     store,
     communicate: makeContextCommunicate({ agent, taskId: task.id, agentName: agent.name, store }),
     remember: makeContextRemember({ store, taskId: task.id, agentName: agent.name }),

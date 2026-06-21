@@ -346,6 +346,34 @@ export const runScheduler = async ({
     );
   };
 
+  // ── H2: Rehydrate active child runners on resume ────────────────────────────
+  // When a task is resumed after a pause, its supervision tree may already
+  // contain active children that were running before the pause. Without
+  // rehydration, those children are silently dropped and their work is lost.
+  // We load each non-terminal activeChild from the persisted tree and push a
+  // runner via startRunner so they are driven to completion alongside the root.
+  //
+  // Guards: (a) skip ids already in runners (duplicate guard — the root runner
+  //   is already present); (b) skip children whose status is terminal
+  //   (completed/failed/aborted — they settled before the pause); (c) skip
+  //   on a missing/Err task record or unknown agent — do not abort the whole
+  //   resume for one bad child.
+  const existingTree = await store.getTaskTree(rootId);
+  if (existingTree.isOk) {
+    treeInitialized = true;
+    const terminalStatuses = new Set<string>(["completed", "failed", "aborted"]);
+    for (const childId of existingTree.value.activeChildren) {
+      if (findRunner(childId) !== undefined) continue; // (a) already a runner
+      const childTaskResult = await store.getTask(childId);
+      if (childTaskResult.isErr) continue; // (c) missing task
+      const childTask = childTaskResult.value;
+      if (terminalStatuses.has(childTask.status)) continue; // (b) already terminal
+      const agentCheck = registry.getAgent(childTask.assignedAgent);
+      if (agentCheck.isErr) continue; // (c) unknown agent
+      await startRunner(childId);
+    }
+  }
+
   /** Settle a runner: record its result, persist status, and do tree bookkeeping. */
   const settle = async (runner: Runner, result: SendResult): Promise<void> => {
     runner.settled = true;

@@ -46,6 +46,7 @@ export const runPhase = async ({
   store,
   communicate,
   remember,
+  startIndex,
 }: RunPhaseInput): Promise<PhaseResult> => {
   const phaseCtx: ActionContext = {
     taskId: state.taskId,
@@ -67,14 +68,23 @@ export const runPhase = async ({
   }
 
   let currentState: typeof state = { ...state, currentPhase: phase.name };
-  let currentIndex = 0;
+  let currentIndex = startIndex ?? 0;
   let stepCount = 0;
+  const { actions } = phase;
+
+  // Guard: if startIndex is at or past the action list, the phase is already
+  // complete from a prior successful run up to that point — return completed
+  // rather than silently skipping actions (prevents a stale failedIndex from a
+  // shorter previous run path from corrupting re-runs).
+  if (currentIndex >= actions.length) {
+    return await completePhase(phase, phaseCtx, currentState, store);
+  }
+
   // Set to true after a Branch routes to a named target via jump.
   // When the jump target (a plain string action) completes, the phase terminates
   // rather than continuing sequentially into the rest of the list.
   // If the target is itself a Branch, it may further route (and set this flag again).
   let afterJump = false;
-  const { actions } = phase;
 
   while (currentIndex < actions.length && stepCount < MAX_STEPS_PER_PHASE) {
     stepCount++;
@@ -97,6 +107,7 @@ export const runPhase = async ({
         status: "failed",
         snapshot: currentState,
         failedAction: actionName,
+        failedIndex: currentIndex,
         failedReason: `action "${actionName}" not found in action registry`,
       };
     }
@@ -118,6 +129,7 @@ export const runPhase = async ({
         status: "failed",
         snapshot: currentState,
         failedAction: actionName,
+        failedIndex: currentIndex,
         failedReason: gwResult.error,
       };
     }
@@ -170,6 +182,7 @@ export const runPhase = async ({
         status: "failed",
         snapshot: currentState,
         failedAction: actionName,
+        failedIndex: currentIndex,
         failedReason: fnResult.error,
       };
     }
@@ -191,6 +204,7 @@ export const runPhase = async ({
         status: "failed",
         snapshot: currentState,
         failedAction: actionName,
+        failedIndex: currentIndex,
         failedReason: next.reason,
       };
     }

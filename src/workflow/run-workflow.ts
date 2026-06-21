@@ -25,6 +25,20 @@ import { raiseEscalation } from "../oversight";
 import { retryWithJitter } from "../infra";
 import { executionId } from "../shared/id";
 import type { ActionContext } from "../authoring/types";
+import type { JsonRecord } from "../shared/types";
+import type { TaskStateSnapshot } from "../state-space/types";
+
+/**
+ * Deserialise a checkpoint JsonRecord back into a TaskStateSnapshot.
+ *
+ * WHY: checkpoints are persisted as plain JSON (JsonRecord) for storage
+ * portability. At recovery time the shape is structurally identical to
+ * TaskStateSnapshot but the type system cannot verify that at compile time —
+ * this is the single documented serialization boundary shim (see L4 in the
+ * task blueprint). Do NOT add new casts elsewhere; route through this helper.
+ */
+const snapshotFromJson = (json: JsonRecord): TaskStateSnapshot =>
+  json as unknown as TaskStateSnapshot;
 
 /**
  * Run a phase, then apply its declared supervision policy if it fails (H1).
@@ -41,15 +55,20 @@ import type { ActionContext } from "../authoring/types";
  * §Supervision Model). Action-level retry is a future refinement.
  */
 const runPhaseSupervised = async (input: RunPhaseInput): Promise<PhaseResult> => {
-  const runOnce = (): Promise<PhaseResult> => runPhase(input);
-
-  const first = await runOnce();
+  const first = await runPhase(input);
   if (first.status !== "failed") return first;
   if (input.phase.supervision === undefined) return first;
 
   const policy = input.phase.supervision;
   const taskId = input.state.taskId;
-  const decision = applyStrategy({ policy, retryCount: 0 });
+
+  // Fetch the latest checkpoint once so the `resume` decision has a checkpointId.
+  // applyStrategy maps resume-with-no-checkpoint → restart automatically, so the
+  // downstream switch only needs to handle what the decision actually says.
+  const latestCkpt = await input.store.getLatestCheckpoint(taskId);
+  const checkpointId =
+    latestCkpt.isOk && latestCkpt.value !== null ? latestCkpt.value.id : undefined;
+  const decision = applyStrategy({ policy, retryCount: 0, checkpointId });
 
   switch (decision.action) {
     case "escalate": {
@@ -82,12 +101,33 @@ const runPhaseSupervised = async (input: RunPhaseInput): Promise<PhaseResult> =>
     case "retry":
     case "restart":
     case "resume": {
-      // Re-run from the phase entry state, up to maxRetries, with jittered backoff
-      // (AGENTS.md: never raw sleep + manual backoff). Stop early on completion or
-      // escalation; only a plain failure consumes a retry.
+      // Build the per-strategy re-run input:
+      //   retry  → resume from the failed action index, preserving prior phase progress
+      //            (keeps first.snapshot so completedActions from earlier steps survive).
+      //   restart→ re-run from phase entry state (input.state), index 0.
+      //   resume → re-run from the latest checkpoint state, index 0
+      //            (applyStrategy already downgraded resume→restart when no checkpoint exists,
+      //            so the latestCkpt guard here is a belt-and-suspenders check only).
+      const reRunInput = (): RunPhaseInput => {
+        if (decision.action === "retry") {
+          return { ...input, state: first.snapshot, startIndex: first.failedIndex ?? 0 };
+        }
+        if (decision.action === "resume" && latestCkpt.isOk && latestCkpt.value !== null) {
+          return {
+            ...input,
+            state: { ...snapshotFromJson(latestCkpt.value.state), status: "running" },
+            startIndex: 0,
+          };
+        }
+        // restart (or resume-fell-back-to-restart): re-run from phase entry state, index 0.
+        return { ...input, state: input.state, startIndex: 0 };
+      };
+
+      // Re-run with jittered backoff (AGENTS.md: never raw sleep+backoff).
+      // Stop early on completion or escalation; only a plain failure consumes a retry.
       const retried = await retryWithJitter<PhaseResult>({
         fn: async () => {
-          const r = await runOnce();
+          const r = await runPhase(reRunInput());
           return r.status === "failed" ? Err(r.failedReason) : Ok(r);
         },
         options: { maxAttempts: policy.maxRetries, baseDelayMs: 5, maxDelayMs: 50, jitterFactor: 0.5 },

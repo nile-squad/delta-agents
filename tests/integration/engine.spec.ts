@@ -849,6 +849,66 @@ describe("workflow approval pre-flight (C-a)", () => {
   });
 });
 
+// ── Per-action workflow inputs (H3) ───────────────────────────────────────────
+
+describe("per-action workflow inputs (H3)", () => {
+  it("each action receives its own actionInputs entry when present", async () => {
+    const store = createInMemoryStore();
+    // Actions record the input they received so we can assert distinctness.
+    const receivedInputs: Record<string, Record<string, unknown>> = {};
+
+    const delta = createDeltaEngine({ store, reasoner: createMockReasoner({ alwaysFail: "must not run" }) });
+
+    const act1 = delta.action({
+      name: "act-one",
+      description: "first action",
+      schema: z.object({ value: z.string() }),
+      fn: async ({ value }) => { receivedInputs["act-one"] = { value }; return Ok("ok"); },
+    });
+    const act2 = delta.action({
+      name: "act-two",
+      description: "second action",
+      schema: z.object({ value: z.string() }),
+      fn: async ({ value }) => { receivedInputs["act-two"] = { value }; return Ok("ok"); },
+    });
+    const act3 = delta.action({
+      name: "act-three",
+      description: "third action — no actionInputs entry; uses shared input fallback",
+      schema: z.object({ shared: z.string() }),
+      fn: async ({ shared }) => { receivedInputs["act-three"] = { shared }; return Ok("ok"); },
+    });
+
+    const ph = delta.phase({ name: "p", description: "p", actions: ["act-one", "act-two", "act-three"], checkpoint: false });
+    const wf = delta.workflow({ name: "multi-input-wf", description: "per-action inputs", version: "1.0.0", phases: [ph] });
+    const ag = delta.agent({ name: "input-agent", description: "d", role: "r", rolePrompt: ".", actions: [act1, act2, act3], workflows: [wf] });
+    delta.deploy(ag);
+
+    const result = await delta.send({
+      goal: "test per-action inputs",
+      agentName: "input-agent",
+      workflow: "multi-input-wf",
+      // Shared fallback input for actions without a per-action override.
+      input: { shared: "shared-value" },
+      // Per-action overrides: act-one and act-two each get distinct values.
+      actionInputs: {
+        "act-one": { value: "input-for-one" },
+        "act-two": { value: "input-for-two" },
+      },
+    });
+
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("completed");
+
+    // act-one got its own distinct input.
+    expect(receivedInputs["act-one"]).toEqual({ value: "input-for-one" });
+    // act-two got its own distinct input.
+    expect(receivedInputs["act-two"]).toEqual({ value: "input-for-two" });
+    // act-three has no actionInputs entry → fell back to the shared `input` bag.
+    expect(receivedInputs["act-three"]).toEqual({ shared: "shared-value" });
+  });
+});
+
 // ── Delegation + bounded supervision tree (Package D / H4) ────────────────────
 
 // A reasoner that scripts decisions per agent role, so one engine-level reasoner

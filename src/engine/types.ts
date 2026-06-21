@@ -50,6 +50,13 @@ export type SendInput = {
    * bag covers the deterministic-workflow case. Ignored for the reasoner loop.
    */
   input?: Record<string, string | number | boolean | null>;
+  /**
+   * Per-action input overrides for a deterministic workflow run, keyed by action
+   * name. When an action name is present here, its bag is used instead of the
+   * shared `input` bag; absent action names fall back to `input`. Ignored for the
+   * reasoner loop. (Reasoner-filled inputs remain a separate, future path.)
+   */
+  actionInputs?: Record<string, Record<string, string | number | boolean | null>>;
 };
 
 export type SendResult = {

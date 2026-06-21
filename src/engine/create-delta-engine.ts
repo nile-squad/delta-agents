@@ -66,7 +66,7 @@ export const createDeltaEngine = ({
     }
   };
 
-  const send: DeltaEngine["send"] = async ({ goal, agentName, budget = DEFAULT_BUDGET, workflow: workflowName, input }) => {
+  const send: DeltaEngine["send"] = async ({ goal, agentName, budget = DEFAULT_BUDGET, workflow: workflowName, input, actionInputs }) => {
     // ── Invariant 26: one MAJOR task per agent ─────────────────────────────
     // Per spec §No New Task When Work Is Pending, an agent that already has an
     // active/pending *major* (top-level) task does not get a second one — the
@@ -141,7 +141,7 @@ export const createDeltaEngine = ({
     // through the workflow engine (reasoner-less); a workflow-less task uses the
     // free reasoner loop.
     const result = workflowName !== undefined
-      ? await runWorkflowTask({ task, agent: agentDef, workflowName, input, registry, store })
+      ? await runWorkflowTask({ task, agent: agentDef, workflowName, input, actionInputs, registry, store })
       : await runSendLoop({ task, agent: agentDef, reasoner, registry, store, maxSteps: maxStepsPerTask });
 
     return Ok(result);

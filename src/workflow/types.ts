@@ -38,6 +38,8 @@ export type PhaseResult =
       snapshot: TaskStateSnapshot;
       failedAction?: string;
       failedReason: string;
+      /** Index of the action that failed — lets supervision `retry` resume from it. */
+      failedIndex?: number;
     }
   // An action escalated mid-phase; the task is paused awaiting human oversight.
   | { status: "blocked"; snapshot: TaskStateSnapshot; reason: string };
@@ -66,6 +68,10 @@ export type RunPhaseInput = {
   communicate?: ActionContext["communicate"];
   /** Memory-write helper exposed to phase/action hooks via ctx.remember. */
   remember?: ActionContext["remember"];
+  /** Index in the phase action list to begin at. Lets supervision `retry`
+   *  resume from the failed action instead of re-running from the top.
+   *  Defaults to 0 (run the whole phase). */
+  startIndex?: number;
 };
 
 export type RunWorkflowInput = {

@@ -276,6 +276,21 @@ check funnels through `src/shared/cost.ts`:
   respected via declared `estimatedCost.memory` (MPC/budget) and adapter-reported costs; cost-friction
   (`costRatio`) still scores only tokens+time.
 
+## Package H — Supervision fidelity and per-action inputs (2026-06-22)
+Closes the three gaps in workflow supervision and input routing identified in the handoff blueprint.
+
+- **H1 — retry/restart/resume are now observably distinct.** `RunPhaseInput` gained `startIndex` (defaults 0, lets retry resume from the failed action). `run-phase.ts` uses `startIndex ?? 0` for `currentIndex`, guards against `startIndex >= actions.length` (returns completed immediately — prevents silent no-op skips), and emits `failedIndex: currentIndex` on all four action-level failure paths (not on step-limit or before-hook failures — those are not positional). `run-workflow.ts` `runPhaseSupervised` now fetches the latest checkpoint before calling `applyStrategy` (so `checkpointId` is live, not undefined), then builds a per-strategy `reRunInput()` closure:
+  - **retry** — `state: first.snapshot, startIndex: first.failedIndex ?? 0` (resumes from the failed action; prior completedActions survive).
+  - **resume** — checkpoint state + `startIndex: 0` (or fallback to restart when no checkpoint — `applyStrategy` already handles this).
+  - **restart** — `state: input.state, startIndex: 0` (re-runs from phase entry).
+  A local `snapshotFromJson` helper (documented serialization shim — the L4-allowed cast) was added to `run-workflow.ts`. Tests: `tests/unit/workflow/supervision-strategies.spec.ts` (3 tests: retry/restart/resume-no-ckpt all prove their `aCount` invariant and final `status: "completed"`).
+
+- **H2 — Active child runners rehydrated on resume.** `runScheduler` (`src/engine/scheduler.ts`) now attempts `store.getTaskTree(rootId)` immediately after its inner helpers are defined (before the main loop). When a tree exists, it iterates `tree.activeChildren`: skips ids already in runners, skips terminal tasks (completed/failed/aborted), skips children with missing tasks or unknown agents, and calls `startRunner(childId)` for any remaining non-terminal child. `treeInitialized = true` is set so settle/slot bookkeeping uses the loaded tree. Tests: `tests/integration/resume-tree.spec.ts` (2 tests: child in activeChildren is driven to completion; already-terminal child is NOT re-run).
+
+- **H3 — Per-action workflow inputs.** `SendInput` (`src/engine/types.ts`) gained `actionInputs?: Record<string, Record<string, string | number | boolean | null>>`. `runWorkflowTask` (`src/engine/runtime.ts`) accepts and threads `actionInputs`; `inputFor` is now `(name) => actionInputs?.[name] ?? input ?? {}` instead of ignoring the name. `send` (`src/engine/create-delta-engine.ts`) destructures and forwards `actionInputs` to `runWorkflowTask`. Tests: `tests/integration/engine.spec.ts` "per-action workflow inputs (H3)" (1 test: 2 actions get distinct per-action values, 1 action falls back to shared input).
+
+634 tests pass under vitest. Typecheck clean.
+
 ## Overview
 Delta Agents is a deterministic autonomous control plane for AI agents. It provides the execution layer that constrains, validates, supervises, and audits agent behavior. The model reasons; the engine governs. The full specification is in `delta-agents.spec.md` (1185 lines) — that is the canonical blueprint for implementation.
 
