@@ -148,6 +148,7 @@ const stepTask = async ({
     availableActions: discovery.available.map((a) => a.name),
     availableAgents: registry.listAgents().filter((name) => name !== agent.name),
     availableChannels: (agent.channels ?? []).filter((c) => c.enabled).map((c) => c.type),
+    availableSkills: (agent.skills ?? []).filter((s) => s.active).map((s) => ({ name: s.name, description: s.description })),
     agentRole: agent.role,
     rolePrompt: agent.rolePrompt,
   });

@@ -96,6 +96,13 @@ export type ReasonerInput = {
    * decision; empty (or absent) means communication is not offered this turn.
    */
   availableChannels?: string[];
+  /**
+   * Active skills (name + description) available to this agent, surfaced so the
+   * model knows its specialized capabilities. Inactive skills are omitted.
+   * (Loading skill *content* from a Skill.path is a future refinement — it needs
+   * a platform-specific file loader the library does not assume.)
+   */
+  availableSkills?: Array<{ name: string; description: string }>;
   agentRole: string;
   rolePrompt: string;
   /** Retrieved memory/context injected by the memory retrieval step. */

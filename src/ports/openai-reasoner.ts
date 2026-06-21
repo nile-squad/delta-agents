@@ -198,9 +198,10 @@ const buildCommunicateTool = (availableChannels: string[]): ChatCompletionTool =
 // ── Message builder ───────────────────────────────────────────────────────────
 
 const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
-  const { task, availableActions, availableAgents, availableChannels, agentRole, rolePrompt, context } = input;
+  const { task, availableActions, availableAgents, availableChannels, availableSkills, agentRole, rolePrompt, context } = input;
   const canDelegate = availableAgents !== undefined && availableAgents.length > 0;
   const canCommunicate = availableChannels !== undefined && availableChannels.length > 0;
+  const hasSkills = availableSkills !== undefined && availableSkills.length > 0;
 
   const system: ChatCompletionMessageParam = {
     role: "system",
@@ -230,6 +231,9 @@ const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
   }
   if (canCommunicate) {
     userLines.push(`Available channels to send through: ${availableChannels.join(", ")}`);
+  }
+  if (hasSkills) {
+    userLines.push(`Skills (specialized capabilities to apply): ${availableSkills.map((s) => `${s.name} — ${s.description}`).join("; ")}`);
   }
   if (context !== undefined && context.length > 0) {
     userLines.push("", "Context:", context);

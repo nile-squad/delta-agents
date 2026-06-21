@@ -708,3 +708,39 @@ describe("createOpenAIReasoner — communication", () => {
     expect(tools.map((t) => t.function.name)).not.toContain("send_message");
   });
 });
+
+// ── Skills in the prompt ─────────────────────────────────────────────────────
+
+describe("createOpenAIReasoner — skills", () => {
+  it("includes active skills in the user message", async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const captureFetch: FetchFn = async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return new Response(JSON.stringify(mockCompletionResponse("lookup-customer", {})), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    };
+    const reasoner = createOpenAIReasoner({ apiKey: "test-key", fetch: captureFetch });
+    await reasoner.reason(makeInput({ availableSkills: [{ name: "refunds", description: "process refunds" }] }));
+
+    const messages = capturedBody!["messages"] as Array<{ role: string; content: string }>;
+    const userMsg = messages.find((m) => m.role === "user");
+    expect(userMsg?.content).toMatch(/Skills.*refunds — process refunds/);
+  });
+
+  it("omits the skills line when there are none", async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const captureFetch: FetchFn = async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return new Response(JSON.stringify(mockCompletionResponse("lookup-customer", {})), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    };
+    const reasoner = createOpenAIReasoner({ apiKey: "test-key", fetch: captureFetch });
+    await reasoner.reason(makeInput());
+
+    const messages = capturedBody!["messages"] as Array<{ role: string; content: string }>;
+    const userMsg = messages.find((m) => m.role === "user");
+    expect(userMsg?.content).not.toMatch(/Skills/);
+  });
+});

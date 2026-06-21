@@ -172,9 +172,34 @@ retry-with-jitter tests need). `vitest.config.ts` pins `environment: "node"`. So
 node-builtin imports to convert to `node:` specifiers (IDs use `nanoid`, not `node:crypto`). The
 bundle step (`bun run bun-build.ts`) still uses bun; that is the bundler, not the test path.
 
-Critical set C1–C4 + Packages A/B/C/D DONE — all H-series subsystems are now wired into the live
-path (572 tests pass under vitest; bun shows same 4 pre-existing `vi.runAllTimersAsync` timer
-failures only). Remaining work is the per-H-item deferrals catalogued above, not whole subsystems.
+Critical set C1–C4 + Packages A/B/C/D DONE — all H-series subsystems are wired into the live path.
+Remaining work is the per-H-item deferrals catalogued above, not whole subsystems.
+
+## Package E — Comms & Skills (DONE 2026-06-21)
+Closes the "net-new spec features" gap for channels + skills (memory retrieval is Package F).
+- **E1 — reasoner-driven channel comms.** New `ReasonerDecision` kind `communicate` ({channel,
+  body}), parallel to `delegate`. Single dispatch core `src/comms/dispatch.ts`: resolve the agent's
+  enabled channel of that type → optional human-approval gate (`channel.requiresApproval`, reusing
+  the action approval store keyed `channel:<type>`) → `channel.sendMessage` → record a
+  TaskID-attributable Message (inv 9). Scheduler routes the decision (sent→continue,
+  approval→blocked, transport-fail→failed). Mock can script `communicate`; OpenAI gains a
+  `send_message` tool (channel enum), offered only when the agent has a channel.
+- **Chat SDK = message layer, bridged structurally (NO `chat` dependency).**
+  `createChatSdkChannel({ thread })` (`src/comms/chat-sdk-channel.ts`) wraps any object with a
+  `.post(text)` method — every Chat SDK `Thread` — into a delta `Channel`. delta-agents stays
+  transport-agnostic; the bot app installs `chat` and passes its live thread (from an
+  onNewMention/onDirectMessage handler) in. Inbound (platform msg → task) is the bot's Chat SDK
+  handler calling `delta.send`; ties into the H5b caller-message drain.
+- **E2 — declarative comms.** `ActionContext.communicate(channel, body)` lets an action fn, hook, or
+  workflow phase send through the same governed dispatch. Hooks never authorize (inv 22), so a
+  `requiresApproval` channel is NOT sendable via ctx.communicate (returns Err → use the reasoner
+  path). Threaded engine→runGateway→ctx and runWorkflowTask→runWorkflow→runPhase→ctx.
+- **E3 — skills.** `agent.skills` was fully dormant; active skills (name+description) are now
+  surfaced to the reasoner (`ReasonerInput.availableSkills`) and listed in the OpenAI prompt.
+  **E-remaining (deferred):** loading skill *content* from `Skill.path` (needs a platform-specific
+  file loader the library should not assume — could be an optional engine `skillLoader` config);
+  `Channel.retrieveMessages`/`replyMessage` not yet driven; root `index.ts` still exports only
+  slang-ts (full public-API export pass is Package J). 601 tests pass under vitest.
 
 ## Overview
 Delta Agents is a deterministic autonomous control plane for AI agents. It provides the execution layer that constrains, validates, supervises, and audits agent behavior. The model reasons; the engine governs. The full specification is in `delta-agents.spec.md` (1185 lines) — that is the canonical blueprint for implementation.

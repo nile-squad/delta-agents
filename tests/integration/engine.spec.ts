@@ -1253,6 +1253,36 @@ describe("agents communicate through bound channels (Package E)", () => {
   });
 });
 
+// ── Skills surfaced to the reasoner (Package E3) ──────────────────────────────
+
+describe("active skills are surfaced to the reasoner (Package E3)", () => {
+  it("passes active skills (name + description) and omits inactive ones", async () => {
+    const store = createInMemoryStore();
+    let seenSkills: Array<{ name: string; description: string }> | undefined;
+    const reasoner: ReasonerPort = {
+      reason: async (input) => { seenSkills = input.availableSkills; return Ok({ kind: "done" }); },
+    };
+    const delta = createDeltaEngine({ store, reasoner });
+
+    const act = delta.action({ name: "act", description: "test action", schema: z.object({}), fn: noop });
+    delta.deploy(delta.agent({
+      name: "skilled-agent",
+      description: "d",
+      role: "r",
+      rolePrompt: ".",
+      actions: [act],
+      skills: [
+        { name: "refunds", description: "process customer refunds", path: "/skills/refunds.md", active: true },
+        { name: "legacy", description: "deprecated capability", path: "/skills/legacy.md", active: false },
+      ],
+    }));
+
+    const result = await delta.send({ goal: "go", agentName: "skilled-agent" });
+    expect(result.isOk).toBe(true);
+    expect(seenSkills).toEqual([{ name: "refunds", description: "process customer refunds" }]);
+  });
+});
+
 // ── Decoupling check ──────────────────────────────────────────────────────────
 
 describe("decoupling — modules individually importable", () => {
