@@ -679,3 +679,42 @@ describe("runGateway — snapshot updates", () => {
     }
   });
 });
+
+// ── Surprise → trust (G1) ────────────────────────────────────────────────────
+
+describe("runGateway — surprise erodes trust (G1)", () => {
+  it("a significantly surprising step records a surprise event and decays trust", async () => {
+    // Spend 10x the budget in one step → observed health collapses vs the cold
+    // prediction → significant surprise → trust outcome "surprise".
+    const state = makeState({ budget: { tokens: 100, durationMs: 60_000 } });
+    const result = await runGateway({
+      action: makeAction({ fn: async () => Ok("ok") }),
+      rawInput: validInput,
+      state,
+      approvalStatus: "none",
+      store: createInMemoryStore(),
+      reasoningCost: { tokens: 1000, durationMs: 0 },
+    });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.surpriseMagnitude).toBeGreaterThanOrEqual(0.4);
+    expect(result.value.updatedSnapshot.trust.surpriseEvents).toBe(1);
+    expect(result.value.updatedSnapshot.trust.score).toBeLessThan(state.trust.score);
+  });
+
+  it("an unsurprising successful step accrues trust normally (no surprise event)", async () => {
+    const state = makeState();
+    const result = await runGateway({
+      action: makeAction({ fn: async () => Ok("ok") }),
+      rawInput: validInput,
+      state,
+      approvalStatus: "none",
+      store: createInMemoryStore(),
+      reasoningCost: { tokens: 1, durationMs: 0 },
+    });
+    if (result.isOk) {
+      expect(result.value.updatedSnapshot.trust.surpriseEvents).toBe(0);
+      expect(result.value.updatedSnapshot.trust.successfulExecutions).toBe(state.trust.successfulExecutions + 1);
+    }
+  });
+});

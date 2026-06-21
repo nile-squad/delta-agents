@@ -32,8 +32,11 @@ import { snapshotFromTask } from "../state-space/task-state";
 import { runWorkflow } from "../workflow";
 import { makeContextCommunicate } from "../comms";
 import { makeContextRemember } from "../memory";
-import { getApprovalStatusForAction, requestApproval } from "../oversight";
+import { getApprovalStatusForAction, requestApproval, raiseEscalation } from "../oversight";
 import { resolveApproval } from "../oversight";
+import { projectHorizon } from "../governance";
+import type { HorizonStep } from "../governance";
+import { isOverBudget } from "../shared/cost";
 import { checkpointId } from "../shared/id";
 import { makeRunner, runScheduler } from "./scheduler";
 
@@ -102,6 +105,25 @@ const collectWorkflowActionNames = (workflow: Workflow): string[] => {
     }
   }
   return [...names];
+};
+
+/** Build the MPC horizon for a workflow: its actions in declared order, with the
+ * declared estimatedCost per step. An action with no declared cost is an epistemic
+ * boundary — projection cannot see past an unknown cost (prohibition 14). */
+const buildHorizonSteps = (workflow: Workflow, actionRegistry: Map<string, Action>): HorizonStep[] => {
+  const steps: HorizonStep[] = [];
+  for (const phase of workflow.phases) {
+    for (const ref of phase.actions) {
+      const name = typeof ref === "string" ? ref : ref.action;
+      const action = actionRegistry.get(name);
+      steps.push({
+        actionName: name,
+        estimatedCost: action?.estimatedCost ?? { tokens: 0, durationMs: 0 },
+        isEpistemicBoundary: action?.estimatedCost === undefined,
+      });
+    }
+  }
+  return steps;
 };
 
 /**
@@ -190,6 +212,29 @@ export const runWorkflowTask = async ({
       status: "blocked",
       snapshot,
       reason: `approval-required: workflow "${workflowName}" needs human sign-off for action(s): ${awaitingApproval.join(", ")}`,
+    };
+  }
+
+  // ── Predictive (MPC) budget check ───────────────────────────────────────
+  // Project the declared cost of the upcoming actions (stopping at the first
+  // epistemic boundary — an action with no declared cost) and refuse to start a
+  // workflow whose *known* projected cost already exceeds the budget. Preventing
+  // failure is cheaper than recovering from it (spec §Model Predictive Control:
+  // evaluate the finite future trajectory before allowing execution).
+  const horizon = projectHorizon({ steps: buildHorizonSteps(workflow, actionRegistry) });
+  if (isOverBudget(horizon.totalProjectedCost, task.budget)) {
+    await raiseEscalation({
+      taskId: task.id,
+      trigger: "budget-violation",
+      reason: `projected workflow cost (${horizon.totalProjectedCost.tokens} tokens / ${horizon.totalProjectedCost.durationMs}ms over ${horizon.stepsTaken} step(s)) exceeds budget before execution (MPC)`,
+      store,
+    });
+    await store.updateTask(task.id, { status: "paused", updatedAt: new Date() });
+    return {
+      taskId: task.id,
+      status: "blocked",
+      snapshot,
+      reason: `escalated: workflow "${workflowName}" is projected to exceed its budget before execution (MPC)`,
     };
   }
 

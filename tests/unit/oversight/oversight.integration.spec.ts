@@ -296,3 +296,24 @@ describe("escalation audit trail — every escalation is TaskID-attributable (in
     }
   });
 });
+
+// ── Trust degradation escalation (G2) ────────────────────────────────────────
+
+describe("checkEscalation — degraded trust escalates (G2)", () => {
+  const baseBudget = { spent: { tokens: 0, durationMs: 0 }, budget: { tokens: 1_000, durationMs: 30_000 } };
+
+  it("escalates with trigger 'trust-degradation' when trust is below threshold", () => {
+    const result = checkEscalation({
+      risk: initialRiskState(),
+      ...baseBudget,
+      trust: { score: 0.2, successfulExecutions: 0, failedExecutions: 5, surpriseEvents: 1 },
+    });
+    expect(result.escalate).toBe(true);
+    if (result.escalate) expect(result.trigger).toBe("trust-degradation");
+  });
+
+  it("does not escalate on healthy trust", () => {
+    const result = checkEscalation({ risk: initialRiskState(), ...baseBudget, trust: initialTrust() });
+    expect(result.escalate).toBe(false);
+  });
+});

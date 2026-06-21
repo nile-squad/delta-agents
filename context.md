@@ -227,6 +227,35 @@ adapter covers it too.
   logged); auto-capture of execution outcomes as memories (today writes are explicit via
   ctx.remember).
 
+## Package G — Optimization & trust (DONE 2026-06-21)
+Wires the last dormant governance math into the live path.
+- **G1 — surprise erodes trust.** The gateway previously only ever called `updateTrust` with
+  success/failure, so the `"surprise"` TrustUpdateOutcome and `trust.surpriseEvents` were dead. Now
+  a *significantly* surprising step (`signals.surprise.isSignificant`, threshold 0.4 — below the 0.7
+  escalation bar, so trust erodes before full escalation) uses the `"surprise"` outcome: steeper
+  decay + a recorded surprise event, even when fn returned Ok (unexpected behaviour is a caution
+  signal). Test: gateway "surprise erodes trust (G1)".
+- **G2 — degraded trust escalates.** `isTrustDegraded` (score < 0.3) was exported but gated nothing.
+  New `EscalationTrigger` value `"trust-degradation"`; `EscalationContext` gained `trust?`;
+  `checkEscalation` escalates on degraded trust (priority just below bayesian-surprise);
+  `applyPostStepGovernance` passes `snapshot.trust`. A statistically untrusted agent now gets human
+  review (principle 7/8). Test: oversight "degraded trust escalates (G2)".
+- **G3 — Bellman value + MPC (`value.ts` was uncalled).** `projectHorizon` now drives a *preventive*
+  MPC budget check in `runWorkflowTask`: project the declared `estimatedCost` of the workflow's
+  actions in order (stopping at the first epistemic boundary — an action with no declared cost,
+  prohibition 14) and block+escalate (`budget-violation`) before running if the known projected cost
+  already exceeds budget. `computeActionValue` ranks discoverable actions cheapest-first for the
+  reasoner in the free loop (path selection); unknown-cost actions rank last (conservative). Tests:
+  engine.spec "value-guided execution (G3)" (MPC pre-block, action ordering).
+- **G4 — Queue: documented decision (no code).** The `Queue` entity + `saveQueue`/`getQueue`/
+  `updateQueue` stay as a spec-aligned, persisted, app-available entity, but are intentionally NOT
+  engine-driven: the engine's FIFO is realized via `TaskTree.queuedChildren` (subtasks) and
+  `Message`s (comms), which is sufficient and avoids a redundant parallel queue subsystem.
+  **G-remaining (deferred):** richer per-action future-cost estimation for `computeActionValue` (the
+  expected-future term is uniform per step today, so free-loop ranking reduces to immediate cost);
+  MPC horizon in the free reasoner loop (only the workflow path has a declared horizon to project).
+  619 tests pass under vitest.
+
 ## Overview
 Delta Agents is a deterministic autonomous control plane for AI agents. It provides the execution layer that constrains, validates, supervises, and audits agent behavior. The model reasons; the engine governs. The full specification is in `delta-agents.spec.md` (1185 lines) — that is the canonical blueprint for implementation.
 

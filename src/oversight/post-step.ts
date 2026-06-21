@@ -49,6 +49,7 @@ export const applyPostStepGovernance = async ({
     spent: snapshot.spent,
     budget: snapshot.budget,
     surpriseMagnitude,
+    trust: snapshot.trust,
   });
 
   if (escCheck.escalate) {

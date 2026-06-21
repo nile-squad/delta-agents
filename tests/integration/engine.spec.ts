@@ -1340,6 +1340,55 @@ describe("memory is retrieved on demand, not carried (Package F)", () => {
   });
 });
 
+// ── Bellman value + MPC (Package G) ──────────────────────────────────────────
+
+describe("value-guided execution (Package G)", () => {
+  it("blocks a workflow projected to exceed budget before any action runs (MPC, G3)", async () => {
+    const store = createInMemoryStore();
+    let ran = false;
+    const delta = createDeltaEngine({ store });
+
+    const expensive = delta.action({
+      name: "expensive",
+      description: "test action",
+      schema: z.object({}),
+      estimatedCost: { tokens: 5_000, durationMs: 0 },
+      fn: async () => { ran = true; return Ok("ok"); },
+    });
+    const ph = delta.phase({ name: "p", description: "p", actions: ["expensive"], checkpoint: false });
+    const wf = delta.workflow({ name: "pricey-wf", description: "w", version: "1.0.0", phases: [ph] });
+    delta.deploy(delta.agent({ name: "mpc-agent", description: "d", role: "r", rolePrompt: ".", actions: [expensive], workflows: [wf] }));
+
+    const result = await delta.send({ goal: "run", agentName: "mpc-agent", workflow: "pricey-wf", budget: { tokens: 1_000, durationMs: 300_000 } });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("blocked");
+    expect(result.value.reason).toMatch(/MPC|projected to exceed/);
+    expect(ran).toBe(false); // preventive: the action never executed
+
+    const state = await delta.inspect(result.value.taskId);
+    if (state.isOk) expect(state.value.escalations.some((e) => e.trigger === "budget-violation")).toBe(true);
+  });
+
+  it("orders discoverable actions cheapest-first for the reasoner (Bellman, G3)", async () => {
+    const store = createInMemoryStore();
+    let seen: string[] = [];
+    const reasoner: ReasonerPort = {
+      reason: async (input) => { seen = input.availableActions; return Ok({ kind: "done" }); },
+    };
+    const delta = createDeltaEngine({ store, reasoner });
+
+    const cheap = delta.action({ name: "cheap", description: "test action", schema: z.object({}), estimatedCost: { tokens: 10, durationMs: 0 }, fn: noop });
+    const pricey = delta.action({ name: "pricey", description: "test action", schema: z.object({}), estimatedCost: { tokens: 900, durationMs: 0 }, fn: noop });
+    const unknown = delta.action({ name: "unknown", description: "test action", schema: z.object({}), fn: noop });
+    // Declared out of value order; the engine should re-order by Bellman value.
+    delta.deploy(delta.agent({ name: "rank-agent", description: "d", role: "r", rolePrompt: ".", actions: [pricey, unknown, cheap] }));
+
+    await delta.send({ goal: "go", agentName: "rank-agent", budget: { tokens: 10_000, durationMs: 300_000 } });
+    expect(seen).toEqual(["cheap", "pricey", "unknown"]);
+  });
+});
+
 // ── Decoupling check ──────────────────────────────────────────────────────────
 
 describe("decoupling — modules individually importable", () => {

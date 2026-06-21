@@ -10,7 +10,7 @@
  * must flow through checkEscalation before proceeding (spec §Human Oversight).
  */
 
-import type { Cost, RiskState } from "../shared/types";
+import type { Cost, RiskState, TrustState } from "../shared/types";
 import type { EscalationTrigger } from "../shared/types";
 
 /**
@@ -30,6 +30,12 @@ export type EscalationContext = {
    * At or above 0.7 triggers bayesian-surprise escalation.
    */
   surpriseMagnitude?: number;
+  /**
+   * Current trust state. When trust has degraded below the oversight threshold
+   * (isTrustDegraded), the engine escalates — a statistically untrusted agent
+   * warrants human review (spec principle 7/8).
+   */
+  trust?: TrustState;
   /** True when a configured policy was violated in the current execution step. */
   hasPolicyViolation?: boolean;
   /** True when a workflow reached a failed terminal state. */

@@ -27,6 +27,7 @@ import type { TaskStateSnapshot } from "../state-space/types";
 import { checkLegality } from "../state-space/check-legality";
 import { withCompletedAction, withSpent } from "../state-space/task-state";
 import { updateTrust } from "../governance/trust";
+import type { TrustUpdateOutcome } from "../governance/types";
 import { updateRisk } from "../governance/risk";
 import { assembleStepSignals } from "../governance/step-signals";
 import { executionId } from "../shared/id";
@@ -177,9 +178,18 @@ export const runGateway = async ({
 
   // ── 11. Update trust (asymmetric decay) ────────────────────────────────
   // Success accrues slowly; failure decays fast (spec §Asymmetric Reputation Decay).
+  // A significantly surprising step (observed health diverged from prediction)
+  // erodes trust harder still and records a surprise event — unexpected behaviour
+  // is a caution signal even when fn returned Ok (spec §Bayesian Surprise).
+  const trustOutcome: TrustUpdateOutcome = signals.surprise.isSignificant
+    ? "surprise"
+    : fnSucceeded
+      ? "success"
+      : "failure";
   const updatedTrust = updateTrust({
     current: state.trust,
-    outcome: fnSucceeded ? "success" : "failure",
+    outcome: trustOutcome,
+    surpriseMagnitude: signals.surprise.magnitude,
   });
 
   // ── 12. Update risk from evidence ─────────────────────────────────────

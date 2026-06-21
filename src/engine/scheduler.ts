@@ -29,7 +29,7 @@ import type { JsonRecord } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort, DelegationRequest } from "../ports/reasoner-port";
 import type { Registry } from "../authoring/registry";
-import type { Agent } from "../authoring/types";
+import type { Agent, Action } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 import type { SendResult } from "./types";
 import { snapshotFromTask } from "../state-space/task-state";
@@ -39,6 +39,7 @@ import { runGateway } from "../execution/execution-gateway";
 import { applyPostStepGovernance, getApprovalStatusForAction, requestApproval } from "../oversight";
 import { dispatchCommunication, makeContextCommunicate } from "../comms";
 import { retrieveContext, makeContextRemember } from "../memory";
+import { computeActionValue } from "../governance";
 import { enforceSubtaskScope, requestSlot, releaseSlot, abortEntireTree } from "../supervision";
 import { initialRiskState, initialTrust } from "../governance";
 import { taskId, checkpointId } from "../shared/id";
@@ -141,6 +142,25 @@ const stepTask = async ({
     return { kind: "natural-done", snapshot };
   }
 
+  // Order discoverable actions by Bellman value (immediate + discounted expected
+  // future cost) so the reasoner sees cheaper paths first (spec §Bellman
+  // Optimization: path selection). Actions with no declared estimatedCost have an
+  // unknown cost and rank last — the engine prefers known-cheap paths and defers
+  // the unpredictable ones. Tokens are the value scalar.
+  const remaining = remainingCost(snapshot.budget, snapshot.spent);
+  const valueOf = (action: Action): number | null =>
+    action.estimatedCost === undefined
+      ? null
+      : computeActionValue({ immediateCost: action.estimatedCost, expectedFutureCost: remaining }).totalValue;
+  const rankedActions = [...discovery.available].sort((a, b) => {
+    const va = valueOf(a);
+    const vb = valueOf(b);
+    if (va === null && vb === null) return 0;
+    if (va === null) return 1;
+    if (vb === null) return -1;
+    return va - vb;
+  });
+
   // Retrieve relevant memory on demand (spec principle 4) — the agent's most
   // relevant prior memories for this goal, injected as reasoner context rather
   // than carried in the loop.
@@ -151,7 +171,7 @@ const stepTask = async ({
   // and budget scoping bound the rest).
   const reasonResult = await reasoner.reason({
     task: { ...task, risk: snapshot.risk, trust: snapshot.trust, updatedAt: new Date() },
-    availableActions: discovery.available.map((a) => a.name),
+    availableActions: rankedActions.map((a) => a.name),
     availableAgents: registry.listAgents().filter((name) => name !== agent.name),
     availableChannels: (agent.channels ?? []).filter((c) => c.enabled).map((c) => c.type),
     availableSkills: (agent.skills ?? []).filter((s) => s.active).map((s) => ({ name: s.name, description: s.description })),

@@ -109,6 +109,7 @@ export type ApprovalRequest = {
 export type EscalationTrigger =
   | "risk-threshold"
   | "bayesian-surprise"
+  | "trust-degradation"
   | "policy-violation"
   | "budget-violation"
   | "workflow-failure"

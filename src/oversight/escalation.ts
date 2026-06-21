@@ -11,11 +11,11 @@
  *    making the escalation auditable and TaskID-attributable. Never silent.
  *
  * Priority order when multiple signals fire simultaneously:
- *   risk-threshold > bayesian-surprise > budget-violation >
+ *   risk-threshold > bayesian-surprise > trust-degradation > budget-violation >
  *   policy-violation > workflow-failure > explicit
  *
- * This ordering is intentional: governance-derived signals (risk, surprise, budget)
- * outrank configuration-level signals (policy, workflow, explicit) because
+ * This ordering is intentional: governance-derived signals (risk, surprise, trust,
+ * budget) outrank configuration-level signals (policy, workflow, explicit) because
  * the engine's continuous estimates carry more information than static flags.
  *
  * Covers: invariant 13 (every escalation is auditable).
@@ -27,6 +27,7 @@ import type { EscalationRecord, EscalationTrigger } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { EscalationContext, EscalationCheck } from "./types";
 import { shouldEscalate as isRiskAboveThreshold } from "../governance/risk";
+import { isTrustDegraded } from "../governance/trust";
 import { escalationId } from "../shared/id";
 
 // Surprise threshold: normalised surprise >= 0.7 warrants human attention.
@@ -59,6 +60,18 @@ export const checkEscalation = (ctx: EscalationContext): EscalationCheck => {
       reason:
         `surprise magnitude (${ctx.surpriseMagnitude.toFixed(2)}) exceeds ` +
         `threshold (${SURPRISE_THRESHOLD}) — observed behaviour diverged from prediction`,
+    };
+  }
+
+  // Trust degradation — the agent has statistically lost the engine's confidence.
+  // A degraded-trust task warrants human review before it continues (principle 7/8).
+  if (ctx.trust !== undefined && isTrustDegraded(ctx.trust)) {
+    return {
+      escalate: true,
+      trigger: "trust-degradation",
+      reason:
+        `agent trust (${ctx.trust.score.toFixed(2)}) has degraded below the oversight ` +
+        `threshold — human review required before continuing`,
     };
   }
 
