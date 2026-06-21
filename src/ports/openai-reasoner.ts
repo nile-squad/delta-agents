@@ -163,11 +163,44 @@ const buildDelegateTool = (availableAgents: string[]): ChatCompletionTool => ({
   },
 });
 
+// The model calls this to send a message through one of the agent's bound
+// channels (Slack, email, WhatsApp, …). Only offered when the agent has at least
+// one channel. The engine routes it through the channel, optionally gating it
+// behind human approval, and records the message.
+const SEND_MESSAGE_TOOL_NAME = "send_message";
+
+const buildCommunicateTool = (availableChannels: string[]): ChatCompletionTool => ({
+  type: "function",
+  function: {
+    name: SEND_MESSAGE_TOOL_NAME,
+    description:
+      "Send a message to a person or channel this task is connected to (e.g. Slack, email). " +
+      "Use this to communicate, ask, or notify — not to perform internal actions.",
+    parameters: {
+      type: "object",
+      properties: {
+        channel: {
+          type: "string",
+          description: "The channel to send through. Must be one of the available channels.",
+          enum: availableChannels,
+        },
+        body: {
+          type: "string",
+          description: "The message text to send.",
+        },
+      },
+      required: ["channel", "body"],
+      additionalProperties: false,
+    },
+  },
+});
+
 // ── Message builder ───────────────────────────────────────────────────────────
 
 const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
-  const { task, availableActions, availableAgents, agentRole, rolePrompt, context } = input;
+  const { task, availableActions, availableAgents, availableChannels, agentRole, rolePrompt, context } = input;
   const canDelegate = availableAgents !== undefined && availableAgents.length > 0;
+  const canCommunicate = availableChannels !== undefined && availableChannels.length > 0;
 
   const system: ChatCompletionMessageParam = {
     role: "system",
@@ -180,6 +213,9 @@ const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
       ...(canDelegate
         ? ["Call delegate_task to hand a scoped sub-goal to one of the available agents."]
         : []),
+      ...(canCommunicate
+        ? ["Call send_message to send a message through one of the available channels."]
+        : []),
       "When the goal is fully satisfied and no further action is needed, call finish_task instead.",
     ].join("\n"),
   };
@@ -191,6 +227,9 @@ const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
   ];
   if (canDelegate) {
     userLines.push(`Available agents to delegate to: ${availableAgents.join(", ")}`);
+  }
+  if (canCommunicate) {
+    userLines.push(`Available channels to send through: ${availableChannels.join(", ")}`);
   }
   if (context !== undefined && context.length > 0) {
     userLines.push("", "Context:", context);
@@ -232,6 +271,7 @@ const parseToolCall = (
   response: OpenAI.Chat.Completions.ChatCompletion,
   availableActions: string[],
   availableAgents: string[],
+  availableChannels: string[],
 ): Result<ReasonerDecision, string> => {
   const choice = response.choices[0];
   if (choice === undefined) {
@@ -290,9 +330,27 @@ const parseToolCall = (
     });
   }
 
+  // Communication — send a message through a bound channel.
+  if (call.function.name === SEND_MESSAGE_TOOL_NAME) {
+    const channel = args["channel"];
+    if (typeof channel !== "string" || channel.length === 0) {
+      return Err(`openai-reasoner: send_message channel is missing or not a string in arguments: ${JSON.stringify(args)}`);
+    }
+    if (!availableChannels.includes(channel)) {
+      return Err(
+        `openai-reasoner: model chose channel "${channel}" which is not in availableChannels ${JSON.stringify(availableChannels)}`,
+      );
+    }
+    const body = args["body"];
+    if (typeof body !== "string" || body.length === 0) {
+      return Err(`openai-reasoner: send_message body is missing or not a string in arguments: ${JSON.stringify(args)}`);
+    }
+    return Ok({ kind: "communicate", communication: { channel, body } });
+  }
+
   if (call.function.name !== "request_action") {
     return Err(
-      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action", "delegate_task", or "finish_task"`,
+      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action", "delegate_task", "send_message", or "finish_task"`,
     );
   }
 
@@ -353,15 +411,17 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
     reason: async (input: ReasonerInput): Promise<Result<ReasonerDecision, string>> => {
       const { availableActions } = input;
       const availableAgents = input.availableAgents ?? [];
+      const availableChannels = input.availableChannels ?? [];
 
       if (availableActions.length === 0) {
         return Err("openai-reasoner: no available actions — nothing to propose");
       }
 
-      // The delegate tool is only offered when there is at least one other agent
-      // to hand work to — otherwise the model has no valid delegation target.
+      // Optional tools are only offered when there is a valid target — a delegate
+      // tool needs another agent, a send_message tool needs a bound channel.
       const tools: ChatCompletionTool[] = [buildTool(availableActions), buildFinishTool()];
       if (availableAgents.length > 0) tools.push(buildDelegateTool(availableAgents));
+      if (availableChannels.length > 0) tools.push(buildCommunicateTool(availableChannels));
 
       let response: OpenAI.Chat.Completions.ChatCompletion;
       try {
@@ -381,7 +441,7 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
         return Err(`openai-reasoner: API request failed — ${String(e)}`);
       }
 
-      return parseToolCall(response, availableActions, availableAgents);
+      return parseToolCall(response, availableActions, availableAgents, availableChannels);
     },
   };
 };

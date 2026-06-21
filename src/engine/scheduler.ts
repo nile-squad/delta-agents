@@ -37,6 +37,7 @@ import { isOverBudget, addCosts, remainingCost } from "../shared/cost";
 import { discoverActions } from "../state-space/discover-actions";
 import { runGateway } from "../execution/execution-gateway";
 import { applyPostStepGovernance, getApprovalStatusForAction, requestApproval } from "../oversight";
+import { dispatchCommunication } from "../comms";
 import { enforceSubtaskScope, requestSlot, releaseSlot, abortEntireTree } from "../supervision";
 import { initialRiskState, initialTrust } from "../governance";
 import { taskId, checkpointId } from "../shared/id";
@@ -146,6 +147,7 @@ const stepTask = async ({
     task: { ...task, risk: snapshot.risk, trust: snapshot.trust, updatedAt: new Date() },
     availableActions: discovery.available.map((a) => a.name),
     availableAgents: registry.listAgents().filter((name) => name !== agent.name),
+    availableChannels: (agent.channels ?? []).filter((c) => c.enabled).map((c) => c.type),
     agentRole: agent.role,
     rolePrompt: agent.rolePrompt,
   });
@@ -164,6 +166,22 @@ const stepTask = async ({
   // Delegation is handled by the scheduler (it owns the tree + slots).
   if (decision.kind === "delegate") {
     return { kind: "delegate", snapshot, delegation: decision.delegation };
+  }
+
+  // Communication routes through the shared dispatch (resolve channel → approval
+  // gate → send → record Message). A send is a step: success continues the loop,
+  // a required approval blocks, a transport/channel failure fails the task.
+  if (decision.kind === "communicate") {
+    const comm = await dispatchCommunication({
+      agent,
+      channelType: decision.communication.channel,
+      body: decision.communication.body,
+      snapshot,
+      store,
+    });
+    if (comm.kind === "sent") return { kind: "stepped", snapshot };
+    if (comm.kind === "approval-required") return { kind: "blocked", snapshot, reason: comm.reason };
+    return { kind: "failed", snapshot, reason: comm.reason };
   }
 
   const { actionName, input, reasoningCost } = decision.request;

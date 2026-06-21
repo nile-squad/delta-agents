@@ -132,16 +132,32 @@ export type Skill = {
   active: boolean;
 };
 
+// Outbound/inbound transports an agent may use. Covers the spec's original set
+// plus the platforms the Chat SDK message layer bridges to. The engine treats
+// the type only as a selector label; the transport lives behind sendMessage.
 export type ChannelType =
   | "whatsapp"
   | "email"
   | "slack"
   | "sms"
-  | "webhook";
+  | "webhook"
+  | "discord"
+  | "telegram"
+  | "teams"
+  | "googlechat"
+  | "github"
+  | "linear";
 
 export type Channel = {
   type: ChannelType;
   enabled: boolean;
+  /**
+   * When true, a message through this channel requires human sign-off before it
+   * is sent — the same approval gate actions use, applied to outbound comms
+   * (e.g. an agent emailing a customer). The engine blocks and records a pending
+   * approval keyed to the channel until a human resolves it (spec §Human Oversight).
+   */
+  requiresApproval?: boolean;
   sendMessage: (message: string, ctx: ActionContext) => Promise<Result<unknown, string>>;
   retrieveMessages?: (ctx: ActionContext) => Promise<Result<unknown, string>>;
   replyMessage?: (id: string, message: string, ctx: ActionContext) => Promise<Result<unknown, string>>;

@@ -17,12 +17,13 @@
  */
 
 import { Ok, Err } from "slang-ts";
-import type { ReasonerPort, ActionRequest, DelegationRequest } from "./reasoner-port";
+import type { ReasonerPort, ActionRequest, DelegationRequest, CommunicationRequest } from "./reasoner-port";
 
 /**
- * A scripted reasoner turn. The three shapes mirror the three ReasonerDecision
- * kinds: request an action, delegate a scoped sub-goal, or declare done early.
- * The plain `{ actionName, input }` shape stays the common case (back-compat).
+ * A scripted reasoner turn. The shapes mirror the ReasonerDecision kinds:
+ * request an action, delegate a scoped sub-goal, communicate through a channel,
+ * or declare done early. The plain `{ actionName, input }` shape stays the
+ * common case (back-compat).
  */
 export type MockResponse =
   | {
@@ -31,6 +32,7 @@ export type MockResponse =
       reasoning?: string;
     }
   | { delegate: DelegationRequest }
+  | { communicate: CommunicationRequest }
   | { done: true; reason?: string };
 
 export type MockReasonerOptions = {
@@ -61,6 +63,9 @@ export const createMockReasoner = ({
 
       if ("delegate" in next) {
         return Ok({ kind: "delegate", delegation: next.delegate });
+      }
+      if ("communicate" in next) {
+        return Ok({ kind: "communicate", communication: next.communicate });
       }
       if ("done" in next) {
         return Ok({ kind: "done", ...(next.reason !== undefined ? { reason: next.reason } : {}) });

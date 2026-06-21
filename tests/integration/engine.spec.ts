@@ -1118,6 +1118,79 @@ describe("queued caller messages are drained into the task (H5b)", () => {
   });
 });
 
+// ── Channel communication (Package E / comms) ─────────────────────────────────
+
+describe("agents communicate through bound channels (Package E)", () => {
+  it("a communicate decision sends through the channel and records a Message", async () => {
+    const store = createInMemoryStore();
+    const sent: string[] = [];
+    const reasoner = createMockReasoner({ responses: [{ communicate: { channel: "slack", body: "hi there" } }] });
+    const delta = createDeltaEngine({ store, reasoner });
+
+    const noopAction = delta.action({ name: "noop", description: "test action", schema: z.object({}), fn: noop });
+    const channel = {
+      type: "slack" as const,
+      enabled: true,
+      sendMessage: async (message: string) => { sent.push(message); return Ok(undefined); },
+    };
+    delta.deploy(delta.agent({ name: "comms-agent", description: "d", role: "r", rolePrompt: ".", actions: [noopAction], channels: [channel] }));
+
+    const result = await delta.send({ goal: "say hi", agentName: "comms-agent" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("completed");
+    expect(sent).toEqual(["hi there"]);
+
+    // The outbound message is recorded and TaskID-attributable (invariant 9).
+    const msgs = await store.getMessages(result.value.taskId);
+    if (msgs.isOk) {
+      expect(msgs.value.some((m) => m.payload === "hi there" && m.sender === "comms-agent" && m.receiver === "slack")).toBe(true);
+    }
+  });
+
+  it("a message on a requiresApproval channel blocks until human sign-off", async () => {
+    const store = createInMemoryStore();
+    const sent: string[] = [];
+    const reasoner = createMockReasoner({ responses: [{ communicate: { channel: "email", body: "your invoice" } }] });
+    const delta = createDeltaEngine({ store, reasoner });
+
+    const noopAction = delta.action({ name: "noop", description: "test action", schema: z.object({}), fn: noop });
+    const channel = {
+      type: "email" as const,
+      enabled: true,
+      requiresApproval: true,
+      sendMessage: async (message: string) => { sent.push(message); return Ok(undefined); },
+    };
+    delta.deploy(delta.agent({ name: "approver-agent", description: "d", role: "r", rolePrompt: ".", actions: [noopAction], channels: [channel] }));
+
+    const result = await delta.send({ goal: "email the customer", agentName: "approver-agent" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("blocked");
+    expect(result.value.reason).toMatch(/approval-required/);
+    // The gate held — nothing was actually sent.
+    expect(sent).toEqual([]);
+
+    const state = await delta.inspect(result.value.taskId);
+    if (state.isOk) expect(state.value.pendingApprovals.some((a) => a.action === "channel:email")).toBe(true);
+  });
+
+  it("communicating on an undeclared channel fails the task", async () => {
+    const store = createInMemoryStore();
+    const reasoner = createMockReasoner({ responses: [{ communicate: { channel: "slack", body: "hi" } }] });
+    const delta = createDeltaEngine({ store, reasoner });
+    const noopAction = delta.action({ name: "noop", description: "test action", schema: z.object({}), fn: noop });
+    // Agent declares no channels.
+    delta.deploy(delta.agent({ name: "no-channel-agent", description: "d", role: "r", rolePrompt: ".", actions: [noopAction] }));
+
+    const result = await delta.send({ goal: "try to message", agentName: "no-channel-agent" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("failed");
+    expect(result.value.reason).toMatch(/no enabled channel of type "slack"/);
+  });
+});
+
 // ── Decoupling check ──────────────────────────────────────────────────────────
 
 describe("decoupling — modules individually importable", () => {

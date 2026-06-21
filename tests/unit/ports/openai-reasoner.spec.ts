@@ -640,3 +640,71 @@ describe("createOpenAIReasoner — delegation", () => {
     expect(tools.map((t) => t.function.name)).not.toContain("delegate_task");
   });
 });
+
+// ── send_message tool ────────────────────────────────────────────────────────
+
+const mockSendMessageResponse = (channel: string, body: string): Record<string, unknown> => ({
+  id: "chatcmpl-send",
+  object: "chat.completion",
+  created: 1_700_000_000,
+  model: "gpt-4o-mini",
+  choices: [
+    {
+      index: 0,
+      message: {
+        role: "assistant",
+        content: null,
+        refusal: null,
+        tool_calls: [
+          { id: "call_send", type: "function", function: { name: "send_message", arguments: JSON.stringify({ channel, body }) } },
+        ],
+      },
+      finish_reason: "tool_calls",
+      logprobs: null,
+    },
+  ],
+  usage: { prompt_tokens: 70, completion_tokens: 12, total_tokens: 82 },
+});
+
+describe("createOpenAIReasoner — communication", () => {
+  it("parses a send_message call into a communicate decision", async () => {
+    const reasoner = createOpenAIReasoner({
+      apiKey: "test-key",
+      fetch: fetchReturning(mockSendMessageResponse("slack", "deploy finished")),
+    });
+    const result = await reasoner.reason(makeInput({ availableChannels: ["slack", "email"] }));
+    expect(result.isOk).toBe(true);
+    if (!result.isOk || result.value.kind !== "communicate") throw new Error("expected communicate decision");
+    expect(result.value.communication.channel).toBe("slack");
+    expect(result.value.communication.body).toBe("deploy finished");
+  });
+
+  it("returns Err when the model sends on a channel outside availableChannels", async () => {
+    const reasoner = createOpenAIReasoner({
+      apiKey: "test-key",
+      fetch: fetchReturning(mockSendMessageResponse("discord", "hi")),
+    });
+    const result = await reasoner.reason(makeInput({ availableChannels: ["slack"] }));
+    expect(result.isErr).toBe(true);
+    if (result.isErr) expect(result.error).toMatch(/not in availableChannels/);
+  });
+
+  it("offers the send_message tool only when channels are available", async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const captureFetch: FetchFn = async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return new Response(JSON.stringify(mockCompletionResponse("lookup-customer", {})), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    };
+    const reasoner = createOpenAIReasoner({ apiKey: "test-key", fetch: captureFetch });
+
+    await reasoner.reason(makeInput({ availableChannels: ["slack"] }));
+    let tools = capturedBody!["tools"] as Array<{ function: { name: string } }>;
+    expect(tools.map((t) => t.function.name)).toContain("send_message");
+
+    await reasoner.reason(makeInput({ availableChannels: [] }));
+    tools = capturedBody!["tools"] as Array<{ function: { name: string } }>;
+    expect(tools.map((t) => t.function.name)).not.toContain("send_message");
+  });
+});

@@ -53,15 +53,31 @@ export type DelegationRequest = {
 };
 
 /**
+ * What the reasoner returns when it wants to send a message through one of the
+ * agent's bound channels (Slack, email, WhatsApp, …). The channel instance is
+ * already recipient/thread-bound (the Chat SDK thread it wraps), so only the
+ * channel selector and the message body are needed. The engine routes it to the
+ * channel, optionally gates it behind human approval, and records a
+ * TaskID-attributable Message (invariant 9).
+ */
+export type CommunicationRequest = {
+  /** Type of the bound channel to send through (must match one the agent declares). */
+  channel: string;
+  /** The message body to send. */
+  body: string;
+};
+
+/**
  * A reasoner decision is explicit: commit to one action, delegate a scoped
- * sub-goal, or declare the task done. Completion is never inferred from the
- * reasoner failing or running out — those are distinct, observable outcomes
- * (a clean `done` versus an `Err` model/API failure). This keeps
- * `status: "completed"` trustworthy.
+ * sub-goal, communicate through a channel, or declare the task done. Completion
+ * is never inferred from the reasoner failing or running out — those are
+ * distinct, observable outcomes (a clean `done` versus an `Err` model/API
+ * failure). This keeps `status: "completed"` trustworthy.
  */
 export type ReasonerDecision =
   | { kind: "act"; request: ActionRequest }
   | { kind: "delegate"; delegation: DelegationRequest }
+  | { kind: "communicate"; communication: CommunicationRequest }
   | { kind: "done"; reason?: string };
 
 export type ReasonerInput = {
@@ -75,6 +91,11 @@ export type ReasonerInput = {
    * delegation is not offered this turn.
    */
   availableAgents?: string[];
+  /**
+   * Channel types this agent may send through. Constrains the `communicate`
+   * decision; empty (or absent) means communication is not offered this turn.
+   */
+  availableChannels?: string[];
   agentRole: string;
   rolePrompt: string;
   /** Retrieved memory/context injected by the memory retrieval step. */
