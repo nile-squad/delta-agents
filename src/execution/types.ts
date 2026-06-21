@@ -15,7 +15,7 @@
 import type { Result } from "slang-ts";
 import type { Execution, Cost } from "../shared/types";
 import type { TaskStateSnapshot } from "../state-space/types";
-import type { Action } from "../authoring/types";
+import type { Action, ActionContext } from "../authoring/types";
 import type { StoragePort } from "../ports/storage-port";
 
 export type ApprovalStatus = "none" | "pending" | "approved" | "rejected";
@@ -38,6 +38,12 @@ export type GatewayInput = {
    * friction detection (distinct completions per attempted step). Defaults to 0.
    */
   stepIndex?: number;
+  /**
+   * Governed channel-send helper, threaded onto the ActionContext so an action
+   * fn or hook can send a message. Built by the engine where the agent (and its
+   * channels) is known. Absent for standalone gateway calls (e.g. unit tests).
+   */
+  communicate?: ActionContext["communicate"];
 };
 
 export type GatewaySuccess = {

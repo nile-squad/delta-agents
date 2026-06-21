@@ -12,22 +12,7 @@ import { Ok, Err } from "slang-ts";
 import { dispatchCommunication, createChatSdkChannel } from "../../../src/comms";
 import { createInMemoryStore } from "../../../src/ports";
 import { requestApproval, resolveApproval } from "../../../src/oversight";
-import { initialRiskState, initialTrust } from "../../../src/governance";
 import type { Agent, Channel } from "../../../src/authoring";
-import type { TaskStateSnapshot } from "../../../src/state-space";
-
-const snapshot = (): TaskStateSnapshot => ({
-  taskId: "tsk_comms",
-  rootId: "tsk_comms",
-  agentName: "comms-agent",
-  status: "running",
-  completedActions: [],
-  completedWorkflows: [],
-  budget: { tokens: 1_000, durationMs: 10_000 },
-  spent: { tokens: 0, durationMs: 0 },
-  risk: initialRiskState(),
-  trust: initialTrust(),
-});
 
 const agentWith = (channels: Channel[]): Agent => ({
   name: "comms-agent",
@@ -46,7 +31,7 @@ describe("dispatchCommunication", () => {
       { type: "slack", enabled: true, sendMessage: async (m) => { sent.push(m); return Ok(undefined); } },
     ]);
 
-    const outcome = await dispatchCommunication({ agent, channelType: "slack", body: "hello", snapshot: snapshot(), store });
+    const outcome = await dispatchCommunication({ agent, channelType: "slack", body: "hello", taskId: "tsk_comms", agentName: "comms-agent", store });
     expect(outcome.kind).toBe("sent");
     expect(sent).toEqual(["hello"]);
 
@@ -64,7 +49,7 @@ describe("dispatchCommunication", () => {
     const agent = agentWith([
       { type: "slack", enabled: false, sendMessage: async () => Ok(undefined) },
     ]);
-    const outcome = await dispatchCommunication({ agent, channelType: "slack", body: "x", snapshot: snapshot(), store });
+    const outcome = await dispatchCommunication({ agent, channelType: "slack", body: "x", taskId: "tsk_comms", agentName: "comms-agent", store });
     expect(outcome.kind).toBe("failed");
     if (outcome.kind === "failed") expect(outcome.reason).toMatch(/no enabled channel/);
   });
@@ -75,7 +60,7 @@ describe("dispatchCommunication", () => {
     const agent = agentWith([
       { type: "email", enabled: true, requiresApproval: true, sendMessage: async (m) => { sent.push(m); return Ok(undefined); } },
     ]);
-    const outcome = await dispatchCommunication({ agent, channelType: "email", body: "invoice", snapshot: snapshot(), store });
+    const outcome = await dispatchCommunication({ agent, channelType: "email", body: "invoice", taskId: "tsk_comms", agentName: "comms-agent", store });
     expect(outcome.kind).toBe("approval-required");
     expect(sent).toEqual([]);
 
@@ -92,7 +77,7 @@ describe("dispatchCommunication", () => {
     const req = await requestApproval({ taskId: "tsk_comms", action: "channel:email", reason: "approve", store });
     if (req.isOk) await resolveApproval({ approvalId: req.value.id, decision: "approved", store });
 
-    const outcome = await dispatchCommunication({ agent, channelType: "email", body: "invoice", snapshot: snapshot(), store });
+    const outcome = await dispatchCommunication({ agent, channelType: "email", body: "invoice", taskId: "tsk_comms", agentName: "comms-agent", store });
     expect(outcome.kind).toBe("sent");
     expect(sent).toEqual(["invoice"]);
   });
@@ -102,7 +87,7 @@ describe("dispatchCommunication", () => {
     const agent = agentWith([
       { type: "slack", enabled: true, sendMessage: async () => Err("network down") },
     ]);
-    const outcome = await dispatchCommunication({ agent, channelType: "slack", body: "x", snapshot: snapshot(), store });
+    const outcome = await dispatchCommunication({ agent, channelType: "slack", body: "x", taskId: "tsk_comms", agentName: "comms-agent", store });
     expect(outcome.kind).toBe("failed");
     if (outcome.kind === "failed") expect(outcome.reason).toMatch(/send failed: network down/);
   });

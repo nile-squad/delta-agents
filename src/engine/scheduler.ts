@@ -37,7 +37,7 @@ import { isOverBudget, addCosts, remainingCost } from "../shared/cost";
 import { discoverActions } from "../state-space/discover-actions";
 import { runGateway } from "../execution/execution-gateway";
 import { applyPostStepGovernance, getApprovalStatusForAction, requestApproval } from "../oversight";
-import { dispatchCommunication } from "../comms";
+import { dispatchCommunication, makeContextCommunicate } from "../comms";
 import { enforceSubtaskScope, requestSlot, releaseSlot, abortEntireTree } from "../supervision";
 import { initialRiskState, initialTrust } from "../governance";
 import { taskId, checkpointId } from "../shared/id";
@@ -176,7 +176,9 @@ const stepTask = async ({
       agent,
       channelType: decision.communication.channel,
       body: decision.communication.body,
-      snapshot,
+      taskId: snapshot.taskId,
+      agentName: snapshot.agentName,
+      phase: snapshot.currentPhase,
       store,
     });
     if (comm.kind === "sent") return { kind: "stepped", snapshot };
@@ -212,8 +214,10 @@ const stepTask = async ({
     };
   }
 
-  // 5. Run through the execution gateway.
-  const gwResult = await runGateway({ action, rawInput: input, state: snapshot, approvalStatus, store, reasoningCost, stepIndex: step });
+  // 5. Run through the execution gateway. The action fn / hooks get a governed
+  // channel-send helper bound to this agent + task (ctx.communicate).
+  const communicate = makeContextCommunicate({ agent, taskId: task.id, agentName: agent.name, store });
+  const gwResult = await runGateway({ action, rawInput: input, state: snapshot, approvalStatus, store, reasoningCost, stepIndex: step, communicate });
 
   if (gwResult.isErr) {
     const isApprovalBlock = gwResult.error.startsWith("approval-required:");

@@ -10,7 +10,7 @@
  * arguments are supplied (e.g. from reasoner output in Phase 8).
  */
 
-import type { Phase, Workflow, Action } from "../authoring/types";
+import type { Phase, Workflow, Action, ActionContext } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ApprovalStatus } from "../execution/types";
@@ -62,6 +62,8 @@ export type RunPhaseInput = {
   /** Returns raw (unvalidated) input for an action. Gateway validates it. */
   inputFor: (actionName: string) => Record<string, unknown>;
   store: StoragePort;
+  /** Governed channel-send helper exposed to phase/action hooks via ctx.communicate. */
+  communicate?: ActionContext["communicate"];
 };
 
 export type RunWorkflowInput = {
@@ -71,4 +73,6 @@ export type RunWorkflowInput = {
   getApprovalStatus: (actionName: string) => ApprovalStatus;
   inputFor: (actionName: string) => Record<string, unknown>;
   store: StoragePort;
+  /** Governed channel-send helper exposed to workflow/phase/action hooks via ctx.communicate. */
+  communicate?: ActionContext["communicate"];
 };

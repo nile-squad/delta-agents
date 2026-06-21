@@ -1189,6 +1189,68 @@ describe("agents communicate through bound channels (Package E)", () => {
     expect(result.value.status).toBe("failed");
     expect(result.value.reason).toMatch(/no enabled channel of type "slack"/);
   });
+
+  it("an action fn can send through ctx.communicate (declarative path E2)", async () => {
+    const store = createInMemoryStore();
+    const sent: string[] = [];
+    const reasoner = createMockReasoner({ responses: [{ actionName: "notify", input: {} }] });
+    const delta = createDeltaEngine({ store, reasoner });
+
+    const channel = {
+      type: "slack" as const,
+      enabled: true,
+      sendMessage: async (message: string) => { sent.push(message); return Ok(undefined); },
+    };
+    const notify = delta.action({
+      name: "notify",
+      description: "test action",
+      schema: z.object({}),
+      fn: async (_input, ctx) => {
+        if (ctx.communicate !== undefined) await ctx.communicate("slack", "from action");
+        return Ok("done");
+      },
+    });
+    delta.deploy(delta.agent({ name: "notifier", description: "d", role: "r", rolePrompt: ".", actions: [notify], channels: [channel] }));
+
+    const result = await delta.send({ goal: "notify", agentName: "notifier" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("completed");
+    expect(sent).toEqual(["from action"]);
+
+    const msgs = await store.getMessages(result.value.taskId);
+    if (msgs.isOk) expect(msgs.value.some((m) => m.payload === "from action")).toBe(true);
+  });
+
+  it("a workflow action can send through ctx.communicate (workflow path E2)", async () => {
+    const store = createInMemoryStore();
+    const sent: string[] = [];
+    const delta = createDeltaEngine({ store });
+
+    const channel = {
+      type: "slack" as const,
+      enabled: true,
+      sendMessage: async (message: string) => { sent.push(message); return Ok(undefined); },
+    };
+    const step = delta.action({
+      name: "wf-notify",
+      description: "test action",
+      schema: z.object({}),
+      fn: async (_input, ctx) => {
+        if (ctx.communicate !== undefined) await ctx.communicate("slack", "from workflow");
+        return Ok("ok");
+      },
+    });
+    const ph = delta.phase({ name: "notify-phase", description: "p", actions: ["wf-notify"], checkpoint: false });
+    const wf = delta.workflow({ name: "notify-wf", description: "w", version: "1.0.0", phases: [ph] });
+    delta.deploy(delta.agent({ name: "wf-notifier", description: "d", role: "r", rolePrompt: ".", actions: [step], workflows: [wf], channels: [channel] }));
+
+    const result = await delta.send({ goal: "run", agentName: "wf-notifier", workflow: "notify-wf" });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("completed");
+    expect(sent).toEqual(["from workflow"]);
+  });
 });
 
 // ── Decoupling check ──────────────────────────────────────────────────────────

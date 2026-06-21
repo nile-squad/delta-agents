@@ -20,6 +20,16 @@ export type ActionContext = {
   executionId: string;
   agentName: string;
   phase?: string;
+  /**
+   * Send a message through one of the agent's bound channels, from inside an
+   * action fn, hook, or workflow phase. Routes through the same governed dispatch
+   * as the reasoner's `communicate` decision (resolves the channel, records a
+   * TaskID-attributable Message). Returns Err for an unknown channel, a transport
+   * failure, or a channel that requires approval (hooks never authorize — gate
+   * such channels via the reasoner path instead). Absent when no agent context is
+   * available (e.g. a standalone gateway call in a unit test).
+   */
+  communicate?: (channelType: string, body: string) => Promise<Result<unknown, string>>;
 };
 
 // Every action fn and hook returns a Result. The engine never infers

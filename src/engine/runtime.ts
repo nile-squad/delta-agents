@@ -30,6 +30,7 @@ import type { ApprovalStatus } from "../execution/types";
 import type { SendResult, InspectResult } from "./types";
 import { snapshotFromTask } from "../state-space/task-state";
 import { runWorkflow } from "../workflow";
+import { makeContextCommunicate } from "../comms";
 import { getApprovalStatusForAction, requestApproval } from "../oversight";
 import { resolveApproval } from "../oversight";
 import { checkpointId } from "../shared/id";
@@ -199,6 +200,7 @@ export const runWorkflowTask = async ({
     getApprovalStatus: (name) => approvalStatuses.get(name) ?? "none",
     inputFor: () => input ?? {},
     store,
+    communicate: makeContextCommunicate({ agent, taskId: task.id, agentName: agent.name, store }),
   });
 
   if (result.status === "completed") {
