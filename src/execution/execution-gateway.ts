@@ -32,6 +32,7 @@ import { updateRisk } from "../governance/risk";
 import { assembleStepSignals } from "../governance/step-signals";
 import { executionId } from "../shared/id";
 import { zeroCost } from "../shared/cost";
+import type { Cost } from "../shared/types";
 import { runHook } from "./run-hooks";
 
 export const runGateway = async ({
@@ -129,7 +130,14 @@ export const runGateway = async ({
   // Cost = reasoning tokens (from the model adapter's usage) + fn wall-clock time.
   // Tokens are the primary governance currency; threading them here makes token
   // budget enforcement real (spec §Bellman Optimization).
-  const actualCost = { tokens: reasoningCost?.tokens ?? 0, durationMs };
+  const actualCost: Cost = {
+    tokens: reasoningCost?.tokens ?? 0,
+    durationMs,
+    // Carry memory/latency the adapter reported (e.g. API round-trip latency),
+    // so all four cost axes flow into spent and budget enforcement.
+    ...(reasoningCost?.memory !== undefined ? { memory: reasoningCost.memory } : {}),
+    ...(reasoningCost?.latency !== undefined ? { latency: reasoningCost.latency } : {}),
+  };
 
   const fnSucceeded = fnResult.isOk;
 

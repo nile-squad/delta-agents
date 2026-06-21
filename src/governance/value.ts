@@ -112,10 +112,14 @@ export const projectHorizon = ({
       };
     }
 
-    // Apply discount to each step (further steps are less certain).
+    // Apply discount to each step (further steps are less certain). All cost
+    // axes are projected — memory and latency are budgeted like tokens and time.
+    const factor = Math.pow(discountFactor, i);
     const discounted: Cost = {
-      tokens: Math.round(step.estimatedCost.tokens * Math.pow(discountFactor, i)),
-      durationMs: Math.round(step.estimatedCost.durationMs * Math.pow(discountFactor, i)),
+      tokens: Math.round(step.estimatedCost.tokens * factor),
+      durationMs: Math.round(step.estimatedCost.durationMs * factor),
+      ...(step.estimatedCost.memory !== undefined ? { memory: Math.round(step.estimatedCost.memory * factor) } : {}),
+      ...(step.estimatedCost.latency !== undefined ? { latency: Math.round(step.estimatedCost.latency * factor) } : {}),
     };
 
     accumulated = addCosts(accumulated, discounted);

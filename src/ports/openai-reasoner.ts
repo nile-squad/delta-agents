@@ -250,15 +250,17 @@ const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
 // ── Response parsing ──────────────────────────────────────────────────────────
 
 /**
- * Tokens the model spent producing this turn, read from the provider's usage
- * metadata. Folded into the action's recorded cost so token budget enforcement
- * is real. Duration is left to the gateway (it times fn execution).
+ * Cost the model spent producing this turn: tokens from the provider's usage
+ * metadata, and the measured API round-trip as `latency` (a real cost axis).
+ * Duration (fn execution time) is left to the gateway.
  */
 const reasoningCostFrom = (
   response: OpenAI.Chat.Completions.ChatCompletion,
-): { tokens: number; durationMs: number } => ({
+  latencyMs: number,
+): Cost => ({
   tokens: response.usage?.total_tokens ?? 0,
   durationMs: 0,
+  latency: latencyMs,
 });
 
 /** Parse an optional budget object from delegate_task arguments. */
@@ -276,6 +278,7 @@ const parseToolCall = (
   availableActions: string[],
   availableAgents: string[],
   availableChannels: string[],
+  latencyMs: number,
 ): Result<ReasonerDecision, string> => {
   const choice = response.choices[0];
   if (choice === undefined) {
@@ -387,7 +390,7 @@ const parseToolCall = (
     request: {
       actionName,
       input: actionInput,
-      reasoningCost: reasoningCostFrom(response),
+      reasoningCost: reasoningCostFrom(response, latencyMs),
       ...(reasoning !== undefined ? { reasoning } : {}),
     },
   });
@@ -428,6 +431,7 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
       if (availableChannels.length > 0) tools.push(buildCommunicateTool(availableChannels));
 
       let response: OpenAI.Chat.Completions.ChatCompletion;
+      const apiStart = Date.now();
       try {
         response = await client.chat.completions.create({
           model,
@@ -444,8 +448,9 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
       } catch (e) {
         return Err(`openai-reasoner: API request failed — ${String(e)}`);
       }
+      const latencyMs = Date.now() - apiStart;
 
-      return parseToolCall(response, availableActions, availableAgents, availableChannels);
+      return parseToolCall(response, availableActions, availableAgents, availableChannels, latencyMs);
     },
   };
 };

@@ -256,6 +256,26 @@ Wires the last dormant governance math into the live path.
   MPC horizon in the free reasoner loop (only the workflow path has a declared horizon to project).
   619 tests pass under vitest.
 
+## Cost is a multi-axis resource vector (2026-06-21, owner directive)
+`Cost` is no longer just `{ tokens, durationMs }` — it gained optional `memory?` and `latency?` axes
+("cost is more than tokens and time"). Respected framework-wide because every budget/MPC/scoping
+check funnels through `src/shared/cost.ts`:
+- **Backward-compatible + opt-in enforcement.** The new axes are optional; `addCosts`/`remainingCost`
+  preserve the plain `{tokens,durationMs}` shape when no operand carries them. `isOverBudget`
+  enforces an optional axis ONLY when the *budget* declares a limit for it — an undeclared
+  memory/latency budget is unlimited, not zero (so existing code stays unconstrained).
+- **Flows through the live path:** gateway `actualCost` carries `reasoningCost.memory/latency`;
+  `projectHorizon` (MPC) discounts + projects all four axes, so a workflow projected to exceed a
+  *memory* budget is pre-blocked; `enforceSubtaskScope`/reservation clamp all declared axes.
+- **Latency for comms:** `dispatchCommunication` measures the `sendMessage` round-trip and returns it
+  as a `latency` cost; the scheduler charges it to `spent`. The OpenAI adapter reports API
+  round-trip time as `reasoningCost.latency`.
+- Tests: `tests/unit/shared/cost.spec.ts` (axis arithmetic + opt-in enforcement), engine.spec MPC
+  memory pre-block, comms.spec send-latency cost. 628 tests pass.
+  **Deferred:** memory is not auto-*measured* per action (no reliable per-fn memory probe) — it is
+  respected via declared `estimatedCost.memory` (MPC/budget) and adapter-reported costs; cost-friction
+  (`costRatio`) still scores only tokens+time.
+
 ## Overview
 Delta Agents is a deterministic autonomous control plane for AI agents. It provides the execution layer that constrains, validates, supervises, and audits agent behavior. The model reasons; the engine governs. The full specification is in `delta-agents.spec.md` (1185 lines) — that is the canonical blueprint for implementation.
 

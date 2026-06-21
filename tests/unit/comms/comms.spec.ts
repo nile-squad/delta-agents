@@ -34,6 +34,8 @@ describe("dispatchCommunication", () => {
     const outcome = await dispatchCommunication({ agent, channelType: "slack", body: "hello", taskId: "tsk_comms", agentName: "comms-agent", store });
     expect(outcome.kind).toBe("sent");
     expect(sent).toEqual(["hello"]);
+    // The send carries a measured latency cost (multi-axis cost).
+    if (outcome.kind === "sent") expect(outcome.cost.latency).toBeGreaterThanOrEqual(0);
 
     const msgs = await store.getMessages("tsk_comms");
     if (msgs.isOk) {

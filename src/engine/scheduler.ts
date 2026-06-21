@@ -209,7 +209,10 @@ const stepTask = async ({
       phase: snapshot.currentPhase,
       store,
     });
-    if (comm.kind === "sent") return { kind: "stepped", snapshot };
+    if (comm.kind === "sent") {
+      // Charge the send latency to the task's spend (cost is multi-axis).
+      return { kind: "stepped", snapshot: { ...snapshot, spent: addCosts(snapshot.spent, comm.cost) } };
+    }
     if (comm.kind === "approval-required") return { kind: "blocked", snapshot, reason: comm.reason };
     return { kind: "failed", snapshot, reason: comm.reason };
   }

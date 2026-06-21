@@ -12,11 +12,21 @@
 export type Json = string | number | boolean | null | Json[] | JsonRecord;
 export type JsonRecord = { [key: string]: Json };
 
-// Resource consumption for a task or action execution.
-// Tokens represent model token usage; durationMs is wall-clock time.
+// Resource consumption for a task or action execution — a multi-axis vector.
+// Cost is more than tokens and time: memory and latency are first-class axes so
+// the engine can budget, project (MPC), and scope them like any other resource.
+//   tokens     — model token usage (the primary governance currency).
+//   durationMs — wall-clock execution time of the work itself.
+//   memory     — memory footprint (developer-chosen unit, e.g. bytes/MB). Optional.
+//   latency    — added delay beyond execution time, e.g. a comms round-trip. Optional.
+// The optional axes are only *enforced* by a budget that declares them: an
+// undeclared memory/latency budget means "unlimited on that axis", not zero — so
+// existing { tokens, durationMs } code stays unconstrained on the new axes.
 export type Cost = {
   tokens: number;
   durationMs: number;
+  memory?: number;
+  latency?: number;
 };
 
 export type ExecutionStatus =

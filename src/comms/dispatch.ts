@@ -18,7 +18,7 @@ import { Ok, Err } from "slang-ts";
 import type { Result } from "slang-ts";
 import type { Agent, ActionContext, ChannelType } from "../authoring/types";
 import type { StoragePort } from "../ports/storage-port";
-import type { Message } from "../shared/types";
+import type { Message, Cost } from "../shared/types";
 import { getApprovalStatusForAction, requestApproval } from "../oversight";
 import { executionId, messageId } from "../shared/id";
 
@@ -26,8 +26,9 @@ import { executionId, messageId } from "../shared/id";
 const channelApprovalKey = (channelType: string): string => `channel:${channelType}`;
 
 export type CommunicationOutcome =
-  // The message was sent and recorded.
-  | { kind: "sent"; message: Message }
+  // The message was sent and recorded. `cost` carries the send latency so the
+  // caller can charge it against the task's latency budget (cost is multi-axis).
+  | { kind: "sent"; message: Message; cost: Cost }
   // The channel requires human sign-off; a pending approval has been recorded.
   | { kind: "approval-required"; reason: string }
   // Could not send (no such channel, transport error, rejected approval).
@@ -90,7 +91,11 @@ export const dispatchCommunication = async ({
     agentName,
     phase,
   };
+  // Measure the round-trip so comms latency can be charged to the budget — a
+  // send is a real resource cost, not free (cost is more than tokens + time).
+  const sendStart = Date.now();
   const sendResult: Result<unknown, string> = await channel.sendMessage(body, ctx);
+  const latency = Date.now() - sendStart;
   if (sendResult.isErr) {
     return { kind: "failed", reason: `channel "${channelType}" send failed: ${sendResult.error}` };
   }
@@ -106,7 +111,7 @@ export const dispatchCommunication = async ({
   };
   await store.saveMessage(message);
 
-  return { kind: "sent", message };
+  return { kind: "sent", message, cost: { tokens: 0, durationMs: 0, latency } };
 };
 
 /**

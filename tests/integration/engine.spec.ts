@@ -1370,6 +1370,31 @@ describe("value-guided execution (Package G)", () => {
     if (state.isOk) expect(state.value.escalations.some((e) => e.trigger === "budget-violation")).toBe(true);
   });
 
+  it("blocks a workflow whose projected MEMORY exceeds budget (multi-axis cost, MPC)", async () => {
+    const store = createInMemoryStore();
+    let ran = false;
+    const delta = createDeltaEngine({ store });
+
+    const heavy = delta.action({
+      name: "heavy",
+      description: "test action",
+      schema: z.object({}),
+      estimatedCost: { tokens: 1, durationMs: 0, memory: 5_000 },
+      fn: async () => { ran = true; return Ok("ok"); },
+    });
+    const ph = delta.phase({ name: "p", description: "p", actions: ["heavy"], checkpoint: false });
+    const wf = delta.workflow({ name: "mem-wf", description: "w", version: "1.0.0", phases: [ph] });
+    delta.deploy(delta.agent({ name: "mem-budget-agent", description: "d", role: "r", rolePrompt: ".", actions: [heavy], workflows: [wf] }));
+
+    // Tokens/time are ample; the memory budget (1000) is what the action overruns (5000).
+    const result = await delta.send({ goal: "run", agentName: "mem-budget-agent", workflow: "mem-wf", budget: { tokens: 10_000, durationMs: 300_000, memory: 1_000 } });
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.status).toBe("blocked");
+    expect(result.value.reason).toMatch(/MPC|projected to exceed/);
+    expect(ran).toBe(false);
+  });
+
   it("orders discoverable actions cheapest-first for the reasoner (Bellman, G3)", async () => {
     const store = createInMemoryStore();
     let seen: string[] = [];
