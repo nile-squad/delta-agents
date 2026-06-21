@@ -308,6 +308,21 @@ Audit-driven correctness pass: L1 deploy gating, L2/L3 double-persistence audit,
 
 636 tests pass under vitest (634 + 2 new L1 tests). Typecheck clean.
 
+## Package J — Public surface and documentation (J1+J2, 2026-06-22)
+Builds the real public entry point and writes the README from the shipped API.
+
+- **J1 — `src/index.ts` public surface.** Replaced the placeholder slang-ts-only re-export with a complete grouped public API:
+  - *Authoring:* `Action`, `ActionContext`, `ActionFn`, `HookFn`, `Hooks`, `Branch`, `ActionRef`, `Phase`, `SupervisionPolicyDef`, `Workflow`, `Channel`, `ChannelType`, `Skill`, `Agent` (from `src/authoring/types`).
+  - *Runtime:* `createDeltaEngine`, `DeltaEngine`, `DeltaEngineConfig`, `SendInput`, `SendResult`, `InspectResult` (from `src/engine`); `Cost`, `Task`, `SupervisionPolicy`, `Memory` (from `src/shared/types`).
+  - *Adapters:* `createInMemoryStore`, `createDrizzleStore`, `createOpenAIReasoner` + `OpenAIReasonerConfig`, `createMockReasoner` + `MockResponse` + `MockReasonerOptions` (from `src/ports`); `createChatSdkChannel` + `ChatThread` (from `src/comms`).
+  - *Result utilities:* `export * from "slang-ts"` retained.
+  - Every name was verified against its source barrel before being added. Internal governance types (Kalman, Bellman/MPC, trust math, post-step, scheduler internals) are intentionally absent.
+  - Smoke test: `tests/integration/public-api.spec.ts` — 5 tests; imports only from `../../src`; constructs an engine, defines an action and agent, deploys, sends, and inspects; proves all type imports are reachable at compile time.
+
+- **J2 — `README.md`.** Rewrote from `delta-agents.spec.md` and `context.md` covering: thesis ("model reasons, engine governs"), real install line (`pnpm add delta-agents`), a minimal runnable example using the actual API shape, two-tier API tables (authoring vs runtime), supervision strategy table, cost model (multi-axis vector), adapter section, mathematical foundations, and status note. Follows COPYWRITING.md (no em dashes, no emojis, full words, direct prose). The previous README had aspirational/unshipped API examples; the new one reflects the current shipped state.
+
+641 tests pass under vitest (636 + 5 new smoke tests). Typecheck clean.
+
 ## Overview
 Delta Agents is a deterministic autonomous control plane for AI agents. It provides the execution layer that constrains, validates, supervises, and audits agent behavior. The model reasons; the engine governs. The full specification is in `delta-agents.spec.md` (1185 lines) — that is the canonical blueprint for implementation.
 

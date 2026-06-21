@@ -1,8 +1,8 @@
-# Delta Agents
+# delta-agents
 
 A deterministic autonomous control plane for AI agents.
 
-Delta Agents is the execution layer that sits between a reasoning model and the real world. The model plans, reasons, and proposes. The engine validates, authorizes, supervises, and audits. Every real action passes through one gateway, governed by explicit state, budget, risk, and authorization constraints, with human oversight available at every step.
+Delta Agents is the execution layer between a reasoning model and the real world. The model plans and proposes. The engine validates, authorizes, supervises, and audits. Every real action passes through one gateway, governed by explicit state, budget, risk, and authorization constraints, with human oversight available at every step.
 
 The model is responsible for reasoning. The engine is responsible for governance.
 
@@ -26,27 +26,34 @@ Safety checks, policy enforcement, budget accounting, risk scoring, authorizatio
 
 This separation means governance does not improve or degrade with the model. A weaker model is still safe. A stronger model is still bounded.
 
+## Install
+
+```
+pnpm add delta-agents
+```
+
+Requirements: TypeScript 5 or later.
+
 ## Quick Example
 
-The following shows the target authoring experience from the specification. The API is being implemented and the examples describe the intended shape, not yet shipped behavior. See **Status** below.
-
 ```ts
+import { createDeltaEngine, createOpenAIReasoner, Ok } from "delta-agents";
+import { z } from "zod";
+
+// Create the engine once. Adapters and limits are configured here.
 const delta = createDeltaEngine({
-  // model provider, persistence, logging, and defaults
-  // are configured once, here.
+  reasoner: createOpenAIReasoner({ model: "gpt-4o-mini" }),
 });
 
+// Define an action: a named, schema-validated, governed operation.
 const lookupCustomer = delta.action({
   name: "lookup-customer",
-  description: "Look up a customer account",
-  // risk and estimatedCost are optional priors. Declare them when
-  // you know something the engine would otherwise have to learn.
+  description: "Look up a customer account by ID",
   risk: 1,
-  schema: z.object({
-    customerId: z.string(),
-  }),
+  schema: z.object({ customerId: z.string() }),
   fn: async ({ customerId }) => {
-    return db.customer.find(customerId);
+    const record = await db.customer.find(customerId);
+    return Ok(record);
   },
 });
 
@@ -54,192 +61,269 @@ const notifyCustomer = delta.action({
   name: "notify-customer",
   description: "Send a notification to a customer",
   risk: 2,
-  schema: z.object({
-    phone: z.string(),
-    message: z.string(),
-  }),
+  requiresApproval: true,
+  schema: z.object({ phone: z.string(), message: z.string() }),
   fn: async ({ phone, message }) => {
-    return messaging.send(phone, message);
+    await messaging.send(phone, message);
+    return Ok("sent");
   },
 });
 
+// Define a workflow: an ordered procedure composed of phases.
 const customerSupport = delta.workflow({
   name: "customer-support",
+  description: "Standard customer support procedure",
+  version: "1",
   phases: [
     delta.phase({
       name: "investigation",
-      checkpoint: true,
+      description: "Look up the customer record",
       actions: ["lookup-customer"],
+      checkpoint: true,
+      supervision: { strategy: "retry", maxRetries: 3 },
     }),
     delta.phase({
       name: "communication",
-      checkpoint: true,
+      description: "Send a response to the customer",
       actions: ["notify-customer"],
+      checkpoint: true,
+      supervision: { strategy: "escalate", maxRetries: 0 },
     }),
   ],
 });
 
+// Define an agent: a role with the actions and workflows it may use.
 const supportAgent = delta.agent({
   name: "support-agent",
+  description: "Handles customer support requests",
   role: "Customer Support Specialist",
+  rolePrompt: "Help customers resolve their issues.",
   actions: [lookupCustomer, notifyCustomer],
   workflows: [customerSupport],
 });
 
+// Deploy activates the agent. A defined-but-not-deployed agent cannot accept tasks.
 delta.deploy(supportAgent);
+
+// Send a goal. The engine creates a task, runs the workflow, and returns when done.
+const result = await delta.send({
+  goal: "Look up customer C-42 and notify them their order shipped",
+  agentName: "support-agent",
+  workflow: "customer-support",
+  input: { customerId: "C-42", phone: "+1-555-0100", message: "Your order has shipped." },
+  budget: { tokens: 5000, durationMs: 30_000 },
+});
+
+if (result.isOk) {
+  console.log(result.value.status); // "completed" | "blocked" | "failed" | "queued"
+
+  // Read the full governance state: task record, executions, checkpoint,
+  // escalations, and pending approvals.
+  const inspection = await delta.inspect(result.value.taskId);
+  if (inspection.isOk) {
+    const { task, executions, escalations, pendingApprovals } = inspection.value;
+    console.log(task.trust.score, task.risk.currentRisk);
+  }
+}
 ```
 
-Delta is created through a factory. You call `createDeltaEngine` once and receive a plain object that is the entire surface. Authoring and runtime both hang off it as methods read as verbs: `delta.action`, `delta.workflow`, `delta.phase`, and `delta.agent` define your definitions; `delta.deploy`, `delta.send`, `delta.approve`, `delta.pause`, `delta.resume`, and `delta.inspect` drive execution. There is no `new`, no inheritance, no global singleton, and no standalone imports beyond `createDeltaEngine`.
+## Two-Tier API
 
-You author actions, workflows, and agents. After deployment, Delta owns the runtime. You never construct a `Task`, `Checkpoint`, `TrustState`, or `TaskTree` by hand.
+The developer surface is split into authoring methods and runtime methods. Authoring defines capabilities; the engine owns execution.
 
-## How Execution Works
+### Authoring methods
 
-Each incoming request becomes a task, and every action the agent requests passes through the same pipeline:
+These methods define what an agent can do. They return the definitions you pass back to the engine.
 
+| Method | Purpose |
+|--------|---------|
+| `delta.action(def)` | Define a named, schema-validated operation. Returns the definition. |
+| `delta.workflow(def)` | Define an ordered procedure composed of phases. Returns the definition. |
+| `delta.phase(def)` | Define a phase within a workflow. Returns the definition. |
+| `delta.agent(def)` | Define a role with its allowed actions, workflows, skills, and channels. Returns the definition. |
+
+### Runtime methods
+
+These methods drive execution. The engine creates and owns all runtime state.
+
+| Method | Purpose |
+|--------|---------|
+| `delta.deploy(agent)` | Activate a defined agent. Required before `send`. |
+| `delta.send(input)` | Hand a goal to a named agent and run it to completion or until blocked. Returns `SendResult`. |
+| `delta.approve(approvalId)` | Approve a pending human approval request. Call `resume` after approving. |
+| `delta.pause(taskId)` | Suspend a running task and write a checkpoint. |
+| `delta.resume(taskId)` | Resume a paused or blocked task from its latest checkpoint. |
+| `delta.inspect(taskId)` | Read the full governance state: task, executions, checkpoint, escalations, approvals. |
+| `delta.lastTask(agentName)` | Return the most recent task for a named agent. |
+
+`send` returns `Ok(SendResult)` on success. `SendResult.status` is one of:
+
+- `completed`: all actions finished.
+- `blocked`: waiting on a human decision (approval or escalation).
+- `failed`: non-recoverable failure.
+- `queued`: the agent was already busy, so the goal was attached to its existing task. No new task was created.
+
+## Supervision Strategies
+
+Each workflow phase can declare a supervision policy. When a phase fails, the engine applies the strategy:
+
+| Strategy | Behavior |
+|----------|---------|
+| `retry` | Resume the phase from the action that failed, keeping prior progress. |
+| `restart` | Re-run the phase from the beginning, from the phase entry state. |
+| `resume` | Re-run from the latest checkpoint state, or fall back to restart when no checkpoint exists. |
+| `escalate` | Pause the task and raise a human escalation. Execution stops until a human acts. |
+| `abort-subtree` | Abort this task and all its delegated subtasks. |
+| `abort-tree` | Abort the entire task tree from the root. |
+
+```ts
+delta.phase({
+  name: "risky-step",
+  description: "Step with retry on transient failures",
+  actions: ["call-external-api"],
+  checkpoint: true,
+  supervision: { strategy: "retry", maxRetries: 5 },
+});
 ```
-Incoming Message
-  -> Create TaskID
-  -> Assign Agent
-  -> Agent Reasons
-  -> Agent Requests Action
-  -> Validate Schema
-  -> Risk Check
-  -> Budget Check
-  -> Approval Check
-  -> Execute fn()
-  -> Checkpoint
-  -> Trust Update
-  -> Continue
+
+## Cost Model
+
+Cost is a multi-axis vector. The engine tracks and enforces all declared axes:
+
+```ts
+type Cost = {
+  tokens: number;     // model token usage
+  durationMs: number; // wall-clock execution time in milliseconds
+  memory?: number;    // memory footprint (developer-chosen unit)
+  latency?: number;   // added delay beyond execution time, e.g. a network round-trip
+};
 ```
 
-The `TaskID` is the unit of governance. Authorization, budgeting, auditing, checkpointing, delegation, messaging, and supervision are all attached to it. Work is performed by tasks, not by agents.
+A budget enforces only the axes it declares. A budget of `{ tokens: 5000, durationMs: 30_000 }` is unlimited on memory and latency. An action's `estimatedCost` is a prior that seeds the Kalman estimator. Declared values are priors, never ceilings.
 
-### Composition
+```ts
+delta.send({
+  goal: "...",
+  agentName: "support-agent",
+  budget: { tokens: 5000, durationMs: 30_000, memory: 64 },
+});
+```
 
-Authoring composes through four mechanisms, all enforced by the engine:
+## Adapters
 
-- **Prerequisites.** An action can require other actions or whole workflows to complete first. Until they do, the action is not exposed and cannot be authorized. Ordering becomes an engine guarantee instead of model behavior.
-- **Conditional branching.** A workflow phase routes between actions on their outcome, success or failure, or on a declared guard. Decision structure stays inside the governed workflow.
-- **Explicit outcomes.** Every action returns a Result, either `Ok` or `Err`. The engine never infers success from a missing error, which gives trust scoring, branching, and supervision a clean signal.
-- **Lifecycle hooks.** `before`, `after`, and `onError` hooks attach to actions, phases, and workflows for setup, teardown, and notification. Hooks observe and prepare. They never authorize an action or bypass a check.
+### Storage
+
+```ts
+import { createInMemoryStore, createDrizzleStore } from "delta-agents";
+
+// In-memory (default): fast, isolated, lost on restart.
+const store = createInMemoryStore();
+
+// Drizzle + libsql: persistent.
+const store = await createDrizzleStore("file:./delta.db");
+// Or in-memory libsql:
+const store = await createDrizzleStore();
+```
+
+### Reasoner
+
+```ts
+import { createOpenAIReasoner, createMockReasoner } from "delta-agents";
+
+// Production: OpenAI chat completions.
+const reasoner = createOpenAIReasoner({ model: "gpt-4o" });
+
+// Testing: scripted deterministic responses.
+const reasoner = createMockReasoner({
+  responses: [{ actionName: "lookup-customer", input: { customerId: "C-42" } }],
+});
+```
+
+### Chat SDK channel bridge
+
+Delta Agents is transport-agnostic. Wire any Chat SDK thread into a governed channel:
+
+```ts
+import { createChatSdkChannel } from "delta-agents";
+
+// thread is any object with a .post(text: string) method.
+const channel = createChatSdkChannel({ thread, type: "slack" });
+
+const agent = delta.agent({
+  name: "...",
+  // ...
+  channels: [channel],
+});
+```
 
 ## Mathematical Foundations
 
-Delta Agents is built on established results from control theory, decision theory, and statistical estimation. The goal is to make autonomous execution tractable to reason about rather than to make it feel intelligent. Each foundation below maps to a concrete governance behavior in the engine.
+Delta Agents is built on established results from control theory, decision theory, and statistical estimation. Each foundation maps to a concrete governance behavior in the engine.
 
-Reference links and formal citations will be added as the work is published. The bracketed markers are placeholders.
+- **Bounded state-space model.** Execution is movement through a finite set of valid states and transitions. An action outside the current state-space does not exist.
+- **Markov constraints.** The legality of the next action depends only on the current state, never on historical replay. Decisions are stateless and reproducible.
+- **Bellman optimization.** Path, retry, escalation, and delegation decisions are evaluated as immediate cost plus expected future cost.
+- **Model predictive control.** The engine evaluates a finite future trajectory before allowing an action and stops prediction at epistemic boundaries such as data retrieval. Preventing failure is cheaper than recovering from it.
+- **Kalman state estimation.** Execution health is continuously estimated from predicted and observed progress, time, and token consumption. Declared anticipated cost and risk seed the estimator with a prior.
+- **Bayesian updating.** Trust, confidence, and risk are revised continuously from observed evidence. Trust is never static.
+- **Bayesian surprise.** The engine measures divergence between expected and observed outcomes. High divergence raises oversight requirements.
+- **Asymmetric reputation decay.** Trust accrues slowly and is lost quickly. Unexpected failures incur larger penalties than successes earn rewards.
+- **Cost friction detection.** High resource consumption with low state advancement signals instability such as infinite loops or reasoning spirals.
 
-- **Bounded state-space model.** Execution is movement through a finite set of valid states and transitions across task, workflow, budget, risk, trust, authorization, and delegation. An action outside the current state-space does not exist. Safety becomes analyzable only when the action space is bounded. [ref-state-space]
+## How Execution Works
 
-- **Markov constraints.** The legality of the next action depends only on the current state, never on historical replay. This forms a constrained Markov process and keeps decisions stateless and reproducible. [ref-markov]
+Each incoming request becomes a task. Every action the agent requests passes through the same pipeline:
 
-- **Bellman optimization.** Path, retry, escalation, and delegation decisions are evaluated as immediate cost plus expected future cost. Implementations may vary, the optimization principle does not. [ref-bellman]
+```
+Incoming goal
+  -> Create TaskID
+  -> Assign Agent
+  -> Agent Reasons (or Workflow runs)
+  -> Agent Requests Action
+  -> Validate Schema
+  -> Check Prerequisites
+  -> Risk Check
+  -> Budget Check
+  -> MPC Horizon Check
+  -> Approval Check
+  -> Execute fn()
+  -> Record Execution
+  -> Trust and Risk Update
+  -> Checkpoint
+  -> Continue
+```
 
-- **Model predictive control.** Execution uses receding-horizon prediction. The engine evaluates a finite future trajectory before allowing an action and stops prediction at epistemic boundaries such as data retrieval or unknown information. Preventing failure is cheaper than recovering from it. [ref-mpc]
+The TaskID is the unit of governance. Authorization, budgeting, auditing, checkpointing, delegation, messaging, and supervision are all attached to it.
 
-- **Kalman state estimation.** Execution health is continuously estimated from predicted progress, observed progress, time consumption, token consumption, and tool outcomes. An action's optional anticipated risk and cost seed the estimator with a prior, so it starts calibrated rather than cold and converges faster. Large deviations between anticipated and observed values raise risk. Declared values are priors, never ceilings. [ref-kalman]
+## Authoring and Runtime Types
 
-- **Bayesian updating.** Trust, confidence, and risk are revised continuously from observed evidence. Observed outcomes replace prior assumptions. Trust is never static. [ref-bayes]
-
-- **Bayesian surprise.** The engine measures divergence between expected and observed outcomes. High divergence signals model drift, workflow drift, or novel conditions and raises oversight requirements. [ref-surprise]
-
-- **Asymmetric reputation decay.** Trust accrues slowly and is lost quickly. Unexpected failures incur larger penalties than successes earn rewards, biasing the system toward caution. [ref-reputation]
-
-- **Cost friction detection.** Resource consumption is measured against state advancement. High consumption with low advancement indicates instability such as infinite loops or reasoning spirals, and execution may be terminated. [ref-friction]
-
-- **Predictive shadow racing.** Multiple candidate agents or workflows can be evaluated on projected safety, cost, and completion probability before execution. Only the selected candidate receives execution authority. [ref-shadow]
-
-## Authoring API and Runtime API
-
-The surface is split into two tiers so the developer experience stays small while the engine retains full control.
-
-**Authoring API** (you define these):
+**Authoring types** (you define these):
 
 | Type | Purpose |
 |------|---------|
 | `Action` | A single executable operation with a validation schema, optional anticipated risk and cost, optional prerequisites, and lifecycle hooks. |
 | `Workflow` | An ordered set of phases describing a procedure. |
-| `Phase` | A stage of a workflow with its actions, checkpoint, and supervision policy. |
+| `Phase` | A stage of a workflow with its actions, checkpoint flag, and supervision policy. |
 | `Agent` | A role with its actions, workflows, skills, and channels. |
-| `DataSource` | An owned or external resource with retrieve, create, update, and delete actions. |
 | `Channel` | An inbound or outbound communication surface. |
-| `Skill` | A reusable capability attached to an agent. |
+| `Skill` | A reusable capability description attached to an agent. |
 
-**Runtime API** (the engine owns these):
+**Runtime types** (the engine owns these, you read them via `inspect`):
 
 | Type | Purpose |
 |------|---------|
-| `Task` | The unit of governance. Owns goal, budget, risk, and trust. |
-| `TaskTree` | A bounded supervision tree, at most two active children. |
+| `Task` | The unit of governance. Owns goal, budget, risk, trust, and audit history. |
 | `Execution` | A single action run with cost and status. |
 | `Checkpoint` | A recoverable state boundary. |
-| `Approval` | A human approval request and its decision. |
-| `RiskState` | Static, current, and predicted risk with confidence. |
-| `TrustState` | Evidence-derived trust score and outcome counts. |
-| `Message` | A task-attributable communication. |
-| `Queue` | A FIFO queue for pending work, messages, and escalations. |
-
-## Supervision and Recovery
-
-Delegation reduces complexity, so it is bounded to never create complexity. A supervision tree has at most one active parent task and two active subtasks. Additional work waits in a FIFO queue until a slot frees. This produces predictable cost and risk profiles instead of exponential state growth.
-
-Supervision strategies are configurable and applied consistently for the lifetime of a task, drawing on the Erlang supervision tree model:
-
-- Retry
-- Restart
-- Resume from checkpoint
-- Escalate to human
-- Abort subtree
-- Abort entire tree
-
-Checkpoints define rollback and recovery points and can be placed per action, per task, per workflow node, or per phase. Recovery resumes from the latest valid checkpoint. Aborting a parent aborts all descendants.
-
-## Core Principles
-
-- The engine owns enforcement. Agents propose, the engine authorizes.
-- Execution stays inside a bounded state-space. Invalid actions do not exist.
-- Prediction precedes execution. Actions are checked against projected future states first.
-- Memory is retrieved, not carried. Agents pull context on demand.
-- Task identity is the security boundary. Governance attaches to the `TaskID`.
-- Delegation is bounded. One active parent, two active subtasks.
-- Trust is statistical. Earned through evidence, lost through evidence.
-- Human oversight is fundamental. Every task stays eligible for intervention.
-
-## Install
-
-```
-npm install delta-agents
-```
-
-Requirements: TypeScript v5 or later, running on Bun or Node.js.
+| `Cost` | Multi-axis resource measurement: tokens, duration, memory, latency. |
+| `SupervisionPolicy` | Strategy and retry limit applied when a phase fails. |
+| `Memory` | A retrieved-on-demand piece of agent context (spec principle 4). |
 
 ## Status
 
-The specification is stable. The implementation is in progress. API examples in this document describe the intended developer experience and are not all shipped yet. The canonical blueprint is [delta-agents.spec.md](./delta-agents.spec.md), which defines the principles, governance model, type system, invariants, and prohibitions.
+Pre-1.0. The specification is stable. The core engine, governance math, supervision strategies, workflow execution, delegation, channels, memory retrieval, and human oversight are all implemented and tested. The API shape is final. Breaking changes before 1.0 will be documented.
 
-## Documentation
-
-- [delta-agents.spec.md](./delta-agents.spec.md), the full specification.
-- [docs/architecture.md](./docs/architecture.md), governance engine and state-space model.
-- [docs/supervision.md](./docs/supervision.md), supervision strategies and recovery.
-- [docs/diagnostics.md](./docs/diagnostics.md), execution health, trust, and risk metrics.
-- [docs/resources.md](./docs/resources.md), data sources and ownership.
-
-## References and Citations
-
-Formal references for the mathematical foundations will be listed here as the work is published. Placeholders below correspond to the markers in the Mathematical Foundations section.
-
-- [ref-state-space] State-space and constrained action modeling. To be added.
-- [ref-markov] Markov decision processes. To be added.
-- [ref-bellman] Bellman equations and dynamic programming. To be added.
-- [ref-mpc] Model predictive control and receding-horizon estimation. To be added.
-- [ref-kalman] Kalman filtering and state estimation. To be added.
-- [ref-bayes] Bayesian inference and sequential updating. To be added.
-- [ref-surprise] Bayesian surprise and divergence measures. To be added.
-- [ref-reputation] Asymmetric reputation and trust dynamics. To be added.
-- [ref-friction] Resource-to-progress instability detection. To be added.
-- [ref-shadow] Predictive evaluation and candidate selection. To be added.
+Install with `pnpm add delta-agents` to use the current build. The canonical specification is [delta-agents.spec.md](./delta-agents.spec.md).
 
 ## License
 
