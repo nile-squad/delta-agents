@@ -173,6 +173,14 @@ export const createDeltaEngine = ({
     if (agentResult.isErr) {
       return Err(`resume failed: agent "${task.assignedAgent}" not in registry — ${agentResult.error}`);
     }
+    // Same deploy gate as send: an undeployed agent must not execute actions
+    // through any entry point. Keeps the "deployed before execution" invariant
+    // uniform across send and resume (security review J4, low finding).
+    if (!registry.isDeployed(task.assignedAgent)) {
+      return Err(
+        `resume failed: agent "${task.assignedAgent}" is defined but not deployed — call delta.deploy(agent) first`,
+      );
+    }
 
     return resumeTask({
       taskId: taskId_,
