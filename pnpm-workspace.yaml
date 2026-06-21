@@ -1,0 +1,8 @@
+allowBuilds:
+  esbuild: true
+# pnpm v11 reads build-script approvals from here (no longer from package.json).
+# esbuild (pulled in by tsup, the Node build bundler) needs its postinstall to
+# fetch its platform binary; approve it so `pnpm install` exits cleanly and the
+# build can run on Node alone.
+onlyBuiltDependencies:
+  - esbuild

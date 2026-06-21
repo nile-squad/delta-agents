@@ -16,7 +16,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "build": "vitest run && tsc --noEmit && bun run bun-build.ts && tsc -p tsconfig.build.json"
+    "build": "vitest run && tsc --noEmit && tsup"
   },
   "homepage": "https://github.com/hussein-kizz/delta-agents#readme",
   "repository": {
@@ -42,8 +42,8 @@
   "license": "MIT",
   "sideEffects": false,
   "devDependencies": {
-    "@types/bun": "latest",
     "@vitest/ui": "^4.0.15",
+    "tsup": "^8.5.1",
     "vitest": "^4.0.15"
   },
   "peerDependencies": {

@@ -323,6 +323,50 @@ Builds the real public entry point and writes the README from the shipped API.
 
 641 tests pass under vitest (636 + 5 new smoke tests). Typecheck clean.
 
+## Package J — Real-DB lifecycle and Node build (J3+J4, 2026-06-22)
+
+- **J3 — engine-on-real-libsql lifecycle.** `tests/integration/drizzle-store.spec.ts` already
+  covered every StoragePort method against real libsql; the gap was driving the actual engine
+  through it. Added `tests/integration/engine-drizzle-lifecycle.spec.ts` (3 tests) that wires a
+  real libsql **file** store into `createDeltaEngine`: (1) full lifecycle (send -> execute ->
+  checkpoint -> inspect) persisted to disk; (2) cross-instance persistence — a task written by one
+  engine is read back (inspect + lastTask) by a brand-new store instance on the same file, the
+  property an in-memory store cannot show; (3) resume-from-disk — engine A blocks on an approval
+  gate, approves, then a fresh engine B (new connection, same file) resumes the task to completion.
+  Temp DB files are created under the OS temp dir and removed in afterEach (ephemeral test scratch,
+  not project state).
+
+- **J4 — security review + Node build.** Security review found no critical/high issues: single
+  ordered gateway chokepoint (schema-validate first), model output treated as untrusted (guarded
+  JSON.parse, schema validation before fn), parameterized drizzle queries (no SQL injection), no
+  secret logging, fn-throws caught. Low/informational: resume does not re-check `isDeployed`
+  (not exploitable — send is the only task-creation path and it gates), stored-state deserialized
+  with `as` casts at the trusted store boundary, logger sink should be controlled in production.
+
+  Build switched from Bun to Node (owner directive 2026-06-22). See decision record below.
+
+## Critical decisions (2026-06-22)
+
+- **Build: Bun -> tsup (esbuild) on Node.** `bun-build.ts` (Bun.build) replaced by `tsup.config.ts`;
+  `build` script is now `vitest run && tsc --noEmit && tsup`. WHY: delta-agents ships as a library
+  installed into a Node backend, so the build must not require Bun. The source uses extensionless
+  barrel imports, which plain `tsc` cannot emit as Node-resolvable ESM, and a CommonJS emit is
+  impossible because several deps (`nanoid` v5, `openai` v6) are ESM-only — so a Node-native bundler
+  is required. Owner chose tsup over raw esbuild (it emits `.d.ts` in the same pass). New devDep:
+  `tsup`; removed `@types/bun`. esbuild's build script is approved in `pnpm-workspace.yaml`
+  (`onlyBuiltDependencies` / `allowBuilds`) — pnpm v11 no longer reads this from package.json.
+  `tsconfig.build.json` (declaration-only emit) retired to `/trash` since tsup emits the dts.
+- **slang-ts is bundled into the artifact (`noExternal: ["slang-ts"]`), not external.** WHY: the
+  public entry re-exports it with `export * from "slang-ts"` so `Ok`/`Err`/`Result`/`safeTry` are
+  importable from "delta-agents". esbuild silently DROPS a star re-export of an external package
+  (it cannot enumerate names at build time), which shipped a broken surface (only the 6 factory
+  functions, no `Ok`). Bundling slang-ts resolves the star at build time (verified: 22 exports incl.
+  Ok/Err/safeTry/match). slang-ts is tiny and its Result is structural (no `instanceof`), so a
+  consumer's own slang-ts copy interoperates with the bundled one. slang-ts kept in `dependencies`
+  for type-reference safety.
+- Verified: `dist/index.js` loads under plain `node` (not Bun); full `pnpm build` green
+  (644 tests + tsc + tsup).
+
 ## Overview
 Delta Agents is a deterministic autonomous control plane for AI agents. It provides the execution layer that constrains, validates, supervises, and audits agent behavior. The model reasons; the engine governs. The full specification is in `delta-agents.spec.md` (1185 lines) — that is the canonical blueprint for implementation.
 
