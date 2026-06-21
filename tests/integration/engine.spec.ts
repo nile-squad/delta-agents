@@ -1283,6 +1283,63 @@ describe("active skills are surfaced to the reasoner (Package E3)", () => {
   });
 });
 
+// ── On-demand memory retrieval (Package F) ────────────────────────────────────
+
+describe("memory is retrieved on demand, not carried (Package F)", () => {
+  it("ctx.remember persists a memory that a later task retrieves as reasoner context", async () => {
+    const store = createInMemoryStore();
+
+    // Task 1: an action remembers a fact (shared store).
+    const reasoner1 = createMockReasoner({ responses: [{ actionName: "learn", input: {} }] });
+    const delta1 = createDeltaEngine({ store, reasoner: reasoner1 });
+    const learn = delta1.action({
+      name: "learn",
+      description: "test action",
+      schema: z.object({}),
+      fn: async (_input, ctx) => {
+        if (ctx.remember !== undefined) await ctx.remember("the database password rotates weekly", "fact");
+        return Ok("ok");
+      },
+    });
+    delta1.deploy(delta1.agent({ name: "mem-agent", description: "d", role: "r", rolePrompt: ".", actions: [learn] }));
+    const r1 = await delta1.send({ goal: "learn the setup", agentName: "mem-agent" });
+    expect(r1.isOk).toBe(true);
+
+    // Task 2: the same agent's reasoner receives the prior memory as context.
+    let seenContext: string | undefined;
+    const reasoner2: ReasonerPort = {
+      reason: async (input) => { seenContext = input.context; return Ok({ kind: "done" }); },
+    };
+    const delta2 = createDeltaEngine({ store, reasoner: reasoner2 });
+    const noopAct = delta2.action({ name: "noop", description: "test action", schema: z.object({}), fn: noop });
+    delta2.deploy(delta2.agent({ name: "mem-agent", description: "d", role: "r", rolePrompt: ".", actions: [noopAct] }));
+
+    await delta2.send({ goal: "what about the database password", agentName: "mem-agent" });
+    expect(seenContext).toMatch(/database password rotates weekly/);
+
+    // The memory is attributable to the task that created it (invariant 8).
+    const mems = await store.getMemoriesByAgent("mem-agent");
+    if (mems.isOk) {
+      expect(mems.value).toHaveLength(1);
+      expect(mems.value[0]?.taskId).toBe(r1.isOk ? r1.value.taskId : "");
+    }
+  });
+
+  it("no context is injected when the agent has no memories", async () => {
+    const store = createInMemoryStore();
+    let seenContext: string | undefined;
+    const reasoner: ReasonerPort = {
+      reason: async (input) => { seenContext = input.context; return Ok({ kind: "done" }); },
+    };
+    const delta = createDeltaEngine({ store, reasoner });
+    const act = delta.action({ name: "act", description: "test action", schema: z.object({}), fn: noop });
+    delta.deploy(delta.agent({ name: "fresh-agent", description: "d", role: "r", rolePrompt: ".", actions: [act] }));
+
+    await delta.send({ goal: "do something", agentName: "fresh-agent" });
+    expect(seenContext).toBeUndefined();
+  });
+});
+
 // ── Decoupling check ──────────────────────────────────────────────────────────
 
 describe("decoupling — modules individually importable", () => {

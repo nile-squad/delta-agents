@@ -30,6 +30,14 @@ export type ActionContext = {
    * available (e.g. a standalone gateway call in a unit test).
    */
   communicate?: (channelType: string, body: string) => Promise<Result<unknown, string>>;
+  /**
+   * Persist a memory from inside an action fn, hook, or workflow phase. The memory
+   * is owned by the agent and attributable to this task (invariant 8); a later
+   * task by the same agent can retrieve it on demand (spec principle 4: memory is
+   * retrieved, not carried). `kind` is a free-form label (default "note"). Absent
+   * when no agent context is available (e.g. a standalone gateway call in a test).
+   */
+  remember?: (content: string, kind?: string) => Promise<Result<unknown, string>>;
 };
 
 // Every action fn and hook returns a Result. The engine never infers

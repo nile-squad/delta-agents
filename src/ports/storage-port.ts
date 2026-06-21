@@ -19,6 +19,7 @@ import type {
   ApprovalRequest,
   EscalationRecord,
   Message,
+  Memory,
   Queue,
 } from "../shared/types";
 
@@ -63,6 +64,12 @@ export type StoragePort = {
   // Messages — all attributable to a TaskID (invariant 9)
   saveMessage: (message: Message) => Promise<Result<Message, string>>;
   getMessages: (taskId: string) => Promise<Result<Message[], string>>;
+
+  // Memories — retrieved on demand, not carried (spec principle 4). Each write is
+  // TaskID-attributable (invariant 8); retrieval scopes by owning agent.
+  saveMemory: (memory: Memory) => Promise<Result<Memory, string>>;
+  /** Most-recent-first memories for an agent, optionally capped to `limit`. */
+  getMemoriesByAgent: (agentName: string, limit?: number) => Promise<Result<Memory[], string>>;
 
   // Queues
   saveQueue: (queue: Queue) => Promise<Result<Queue, string>>;

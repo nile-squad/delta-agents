@@ -134,6 +134,20 @@ export type Message = {
   createdAt: Date;
 };
 
+// A retrieved-on-demand piece of context (spec principle 4: memory is retrieved,
+// not carried). Owned by an agent and attributable to the TaskID in whose context
+// it was created (invariant 8). Retrieval scopes by agentName so knowledge persists
+// across that agent's tasks.
+export type Memory = {
+  id: string;
+  taskId: string;
+  agentName: string;
+  /** Free-form label, e.g. "note" | "fact" | "observation". */
+  kind: string;
+  content: string;
+  createdAt: Date;
+};
+
 // FIFO queue tracks work items by ID for deterministic ordering and replay.
 export type Queue = {
   id: string;

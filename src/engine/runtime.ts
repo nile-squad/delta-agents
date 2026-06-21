@@ -31,6 +31,7 @@ import type { SendResult, InspectResult } from "./types";
 import { snapshotFromTask } from "../state-space/task-state";
 import { runWorkflow } from "../workflow";
 import { makeContextCommunicate } from "../comms";
+import { makeContextRemember } from "../memory";
 import { getApprovalStatusForAction, requestApproval } from "../oversight";
 import { resolveApproval } from "../oversight";
 import { checkpointId } from "../shared/id";
@@ -201,6 +202,7 @@ export const runWorkflowTask = async ({
     inputFor: () => input ?? {},
     store,
     communicate: makeContextCommunicate({ agent, taskId: task.id, agentName: agent.name, store }),
+    remember: makeContextRemember({ store, taskId: task.id, agentName: agent.name }),
   });
 
   if (result.status === "completed") {

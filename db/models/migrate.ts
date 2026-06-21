@@ -87,6 +87,15 @@ CREATE TABLE IF NOT EXISTS queues (
   active     TEXT    NOT NULL,
   completed  TEXT    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS memories (
+  id         TEXT    PRIMARY KEY,
+  task_id    TEXT    NOT NULL,
+  agent_name TEXT    NOT NULL,
+  kind       TEXT    NOT NULL,
+  content    TEXT    NOT NULL,
+  created_at INTEGER NOT NULL
+);
 `;
 
 export const runMigrations = async (client: Client): Promise<void> => {

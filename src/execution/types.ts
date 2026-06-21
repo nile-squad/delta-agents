@@ -44,6 +44,8 @@ export type GatewayInput = {
    * channels) is known. Absent for standalone gateway calls (e.g. unit tests).
    */
   communicate?: ActionContext["communicate"];
+  /** Memory-write helper threaded onto the ActionContext (ctx.remember). */
+  remember?: ActionContext["remember"];
 };
 
 export type GatewaySuccess = {

@@ -45,6 +45,7 @@ export const runPhase = async ({
   inputFor,
   store,
   communicate,
+  remember,
 }: RunPhaseInput): Promise<PhaseResult> => {
   const phaseCtx: ActionContext = {
     taskId: state.taskId,
@@ -52,6 +53,7 @@ export const runPhase = async ({
     agentName: state.agentName,
     phase: phase.name,
     ...(communicate !== undefined ? { communicate } : {}),
+    ...(remember !== undefined ? { remember } : {}),
   };
 
   // Phase before hook — observes only, never authorizes (invariant 22, prohibition 17).
@@ -106,6 +108,7 @@ export const runPhase = async ({
       approvalStatus: getApprovalStatus(actionName),
       store,
       communicate,
+      remember,
     });
 
     if (gwResult.isErr) {

@@ -38,6 +38,7 @@ import { discoverActions } from "../state-space/discover-actions";
 import { runGateway } from "../execution/execution-gateway";
 import { applyPostStepGovernance, getApprovalStatusForAction, requestApproval } from "../oversight";
 import { dispatchCommunication, makeContextCommunicate } from "../comms";
+import { retrieveContext, makeContextRemember } from "../memory";
 import { enforceSubtaskScope, requestSlot, releaseSlot, abortEntireTree } from "../supervision";
 import { initialRiskState, initialTrust } from "../governance";
 import { taskId, checkpointId } from "../shared/id";
@@ -140,6 +141,11 @@ const stepTask = async ({
     return { kind: "natural-done", snapshot };
   }
 
+  // Retrieve relevant memory on demand (spec principle 4) — the agent's most
+  // relevant prior memories for this goal, injected as reasoner context rather
+  // than carried in the loop.
+  const retrieved = await retrieveContext({ store, agentName: agent.name, query: task.goal });
+
   // 2. Ask the reasoner what to do next. Delegation targets are every other
   // deployed agent (an agent does not delegate to itself; the supervision tree
   // and budget scoping bound the rest).
@@ -151,6 +157,7 @@ const stepTask = async ({
     availableSkills: (agent.skills ?? []).filter((s) => s.active).map((s) => ({ name: s.name, description: s.description })),
     agentRole: agent.role,
     rolePrompt: agent.rolePrompt,
+    ...(retrieved.context.length > 0 ? { context: retrieved.context } : {}),
   });
 
   // An Err is a genuine model/API failure or safety refusal — never completion.
@@ -215,10 +222,11 @@ const stepTask = async ({
     };
   }
 
-  // 5. Run through the execution gateway. The action fn / hooks get a governed
-  // channel-send helper bound to this agent + task (ctx.communicate).
+  // 5. Run through the execution gateway. The action fn / hooks get governed
+  // ctx helpers bound to this agent + task: channel-send and memory-write.
   const communicate = makeContextCommunicate({ agent, taskId: task.id, agentName: agent.name, store });
-  const gwResult = await runGateway({ action, rawInput: input, state: snapshot, approvalStatus, store, reasoningCost, stepIndex: step, communicate });
+  const remember = makeContextRemember({ store, taskId: task.id, agentName: agent.name });
+  const gwResult = await runGateway({ action, rawInput: input, state: snapshot, approvalStatus, store, reasoningCost, stepIndex: step, communicate, remember });
 
   if (gwResult.isErr) {
     const isApprovalBlock = gwResult.error.startsWith("approval-required:");

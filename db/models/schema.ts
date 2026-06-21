@@ -94,6 +94,17 @@ export const messages = sqliteTable("messages", {
   createdAt: integer("created_at").notNull(), // ms epoch
 });
 
+// ── Memories ───────────────────────────────────────────────────────────────────
+
+export const memories = sqliteTable("memories", {
+  id:        text("id").primaryKey(),
+  taskId:    text("task_id").notNull(),
+  agentName: text("agent_name").notNull(),
+  kind:      text("kind").notNull(),
+  content:   text("content").notNull(),
+  createdAt: integer("created_at").notNull(), // ms epoch
+});
+
 // ── Queues ─────────────────────────────────────────────────────────────────────
 
 export const queues = sqliteTable("queues", {

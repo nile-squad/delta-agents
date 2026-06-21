@@ -201,6 +201,32 @@ Closes the "net-new spec features" gap for channels + skills (memory retrieval i
   `Channel.retrieveMessages`/`replyMessage` not yet driven; root `index.ts` still exports only
   slang-ts (full public-API export pass is Package J). 601 tests pass under vitest.
 
+## Package F — On-demand memory retrieval (DONE 2026-06-21, libsql)
+Implements spec principle 4 ("memory is retrieved, not carried") + invariant 8 (memory access
+attributable to a TaskID). Backend = libsql (owner choice), behind `StoragePort` so the in-memory
+adapter covers it too.
+- **Model + store.** New `Memory` type ({id, taskId, agentName, kind, content, createdAt}) and a
+  `memories` table (schema.ts + migrate DDL). `StoragePort` gains `saveMemory` +
+  `getMemoriesByAgent(agentName, limit?)` (newest-first); both adapters implement it (drizzle uses
+  `orderBy(desc(createdAt)).limit`). Memories are owned by an agent and scoped by agentName so a
+  later task by the same agent can retrieve earlier knowledge.
+- **Retrieval.** `src/memory/`: pure `rankMemories` (keyword overlap with query, recency tiebreak —
+  no embeddings assumed; semantic ranking is the documented next step), and `retrieveContext`
+  (fetch a recent candidate pool → rank → format into the `ReasonerInput.context` string). The
+  scheduler retrieves before every `reason()` using the task goal as query; OpenAI already injects
+  `context` into the prompt, so no adapter change. Retrieval is best-effort (store error/empty →
+  empty context, never a gate).
+- **Write path.** `ctx.remember(content, kind?)` — like `ctx.communicate`, threaded onto
+  ActionContext (engine→runGateway→ctx and runWorkflowTask→runWorkflow→runPhase→ctx). An action fn,
+  hook, or workflow phase persists a memory attributable to its task (inv 8) and owned by the agent.
+  Tests: `tests/unit/memory/memory.spec.ts` (rank + retrieve + remember), drizzle-store.spec
+  memories block (real libsql roundtrip), engine.spec "memory is retrieved on demand" (full
+  remember→retrieve loop across two tasks). 613 tests pass.
+  **F-remaining (deferred):** semantic/embedding ranking (needs an embed provider); a separate
+  memory-access audit log (writes are attributable; reads happen in-task but aren't separately
+  logged); auto-capture of execution outcomes as memories (today writes are explicit via
+  ctx.remember).
+
 ## Overview
 Delta Agents is a deterministic autonomous control plane for AI agents. It provides the execution layer that constrains, validates, supervises, and audits agent behavior. The model reasons; the engine governs. The full specification is in `delta-agents.spec.md` (1185 lines) — that is the canonical blueprint for implementation.
 

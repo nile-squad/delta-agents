@@ -64,6 +64,8 @@ export type RunPhaseInput = {
   store: StoragePort;
   /** Governed channel-send helper exposed to phase/action hooks via ctx.communicate. */
   communicate?: ActionContext["communicate"];
+  /** Memory-write helper exposed to phase/action hooks via ctx.remember. */
+  remember?: ActionContext["remember"];
 };
 
 export type RunWorkflowInput = {
@@ -75,4 +77,6 @@ export type RunWorkflowInput = {
   store: StoragePort;
   /** Governed channel-send helper exposed to workflow/phase/action hooks via ctx.communicate. */
   communicate?: ActionContext["communicate"];
+  /** Memory-write helper exposed to workflow/phase/action hooks via ctx.remember. */
+  remember?: ActionContext["remember"];
 };

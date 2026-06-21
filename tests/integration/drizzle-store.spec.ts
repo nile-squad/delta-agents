@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from "vitest";
 import { createDrizzleStore } from "../../src/ports/drizzle-store";
-import type { Task, TaskTree, Execution, Checkpoint, ApprovalRequest, EscalationRecord, Message, Queue } from "../../src/shared/types";
+import type { Task, TaskTree, Execution, Checkpoint, ApprovalRequest, EscalationRecord, Message, Memory, Queue } from "../../src/shared/types";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -438,5 +438,51 @@ describe("DrizzleStore — cross-entity isolation", () => {
     await storeA.saveTask(makeTask({ id: "tsk_only_in_A" }));
     const resultB = await storeB.getTask("tsk_only_in_A");
     expect(resultB.isErr).toBe(true);
+  });
+});
+
+// ── Memories ────────────────────────────────────────────────────────────────
+
+const makeMemory = (overrides: Partial<Memory> = {}): Memory => ({
+  id:        "mem_test_001",
+  taskId:    "tsk_test_001",
+  agentName: "agent-x",
+  kind:      "fact",
+  content:   "the database password rotates weekly",
+  createdAt: new Date("2026-06-01T10:00:00.000Z"),
+  ...overrides,
+});
+
+describe("DrizzleStore — memories", () => {
+  it("saveMemory then getMemoriesByAgent returns the memory", async () => {
+    const store = await createDrizzleStore();
+    await store.saveMemory(makeMemory());
+    const result = await store.getMemoriesByAgent("agent-x");
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value).toHaveLength(1);
+    expect(result.value[0]?.content).toBe("the database password rotates weekly");
+    expect(result.value[0]?.kind).toBe("fact");
+    expect(result.value[0]?.taskId).toBe("tsk_test_001");
+  });
+
+  it("getMemoriesByAgent returns newest-first, capped to limit, scoped by agent", async () => {
+    const store = await createDrizzleStore();
+    await store.saveMemory(makeMemory({ id: "mem_1", content: "first", createdAt: new Date(1) }));
+    await store.saveMemory(makeMemory({ id: "mem_2", content: "second", createdAt: new Date(2) }));
+    await store.saveMemory(makeMemory({ id: "mem_3", content: "third", createdAt: new Date(3) }));
+    await store.saveMemory(makeMemory({ id: "mem_other", agentName: "agent-y", content: "other", createdAt: new Date(4) }));
+
+    const result = await store.getMemoriesByAgent("agent-x", 2);
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.map((m) => m.id)).toEqual(["mem_3", "mem_2"]);
+  });
+
+  it("returns an empty list for an agent with no memories", async () => {
+    const store = await createDrizzleStore();
+    const result = await store.getMemoriesByAgent("nobody");
+    expect(result.isOk).toBe(true);
+    if (result.isOk) expect(result.value).toEqual([]);
   });
 });

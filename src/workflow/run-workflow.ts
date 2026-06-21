@@ -110,6 +110,7 @@ export const runWorkflow = async ({
   inputFor,
   store,
   communicate,
+  remember,
 }: RunWorkflowInput): Promise<WorkflowResult> => {
   const workflowCtx: ActionContext = {
     taskId: state.taskId,
@@ -117,6 +118,7 @@ export const runWorkflow = async ({
     agentName: state.agentName,
     phase: undefined,
     ...(communicate !== undefined ? { communicate } : {}),
+    ...(remember !== undefined ? { remember } : {}),
   };
 
   // Workflow before hook.
@@ -140,6 +142,7 @@ export const runWorkflow = async ({
       inputFor,
       store,
       communicate,
+      remember,
     });
 
     currentState = phaseResult.snapshot;

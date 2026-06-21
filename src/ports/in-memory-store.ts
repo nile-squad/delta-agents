@@ -19,6 +19,7 @@ import type {
   ApprovalRequest,
   EscalationRecord,
   Message,
+  Memory,
   Queue,
 } from "../shared/types";
 
@@ -30,6 +31,7 @@ export const createInMemoryStore = (): StoragePort => {
   const approvals = new Map<string, ApprovalRequest>();
   const escalationsByTask = new Map<string, EscalationRecord[]>();
   const messagesByTask = new Map<string, Message[]>();
+  const memoriesByAgent = new Map<string, Memory[]>();
   const queues = new Map<string, Queue>();
 
   return {
@@ -152,6 +154,19 @@ export const createInMemoryStore = (): StoragePort => {
     },
     getMessages: async (taskId) => {
       return Ok(messagesByTask.get(taskId) ?? []);
+    },
+
+    // Memories — newest-first retrieval scoped to the owning agent
+    saveMemory: async (memory) => {
+      const existing = memoriesByAgent.get(memory.agentName) ?? [];
+      memoriesByAgent.set(memory.agentName, [...existing, memory]);
+      return Ok(memory);
+    },
+    getMemoriesByAgent: async (agentName, limit) => {
+      const all = [...(memoriesByAgent.get(agentName) ?? [])].sort(
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+      );
+      return Ok(limit !== undefined ? all.slice(0, limit) : all);
     },
 
     // Queues
