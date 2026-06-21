@@ -291,6 +291,23 @@ Closes the three gaps in workflow supervision and input routing identified in th
 
 634 tests pass under vitest. Typecheck clean.
 
+## Package I — Correctness cleanups (2026-06-22)
+Audit-driven correctness pass: L1 deploy gating, L2/L3 double-persistence audit, L4 `as unknown` centralization, M2 error message, dead-code removal.
+
+- **L1 [FIXED] — `deploy` now gates `send`.** `deploy()` was a no-op assertion; a defined-but-undeployed agent could silently accept tasks. Fix: `Registry` gained `deployAgent(name)` + `isDeployed(name)`. `deploy()` calls `registry.deployAgent` (errors on unregistered); `send()` checks `registry.isDeployed` before creating a task and returns a clear `Err("... defined but not deployed — call delta.deploy(agent) first")` if the gate fails. Tests: engine.spec "L1 — send returns Err for defined-but-not-deployed" (send-before-deploy → Err, error mentions `delta.deploy`) + "L1 — send succeeds after deploy()".
+
+- **L2 [NO CHANGE — no double write].** `execution-gateway.ts` writes ONE execution row (`saveExecution` with status "running") then UPDATES it (`updateExecution` to "completed"/"failed") — two ops on the same row, not two rows. The existing gateway unit test (`execs.value).toHaveLength(1)`) and provenance test (`executions.length === 2` for two actions) already prove the invariant.
+
+- **L3 [NO CHANGE — no double persistence].** Each post-step path calls `applyPostStepGovernance` (one `updateTask`) OR the failure path calls one direct `updateTask`. No redundant double persistence was found.
+
+- **L4 [FIXED] — `as unknown` casts centralized.** `snapshotFromJson` existed locally in `run-workflow.ts` and `runtime.ts`; `snapshotToJson` existed locally in `scheduler.ts` and `run-phase.ts`. All four were removed and replaced with `snapshotFromJson` + `snapshotToJson` exported from `src/state-space/task-state.ts` (with JSDoc explaining WHY the cast is unavoidable — single serialization boundary). Both are re-exported via the `state-space` barrel. Result: exactly **one** `as unknown` cast in all of `src/`.
+
+- **M2 [FIXED] — resume error message.** `resumeTask` guard message now says `(expected "paused" or "pending")` to match both accepted statuses.
+
+- **Dead code cleanup** — `tests/integration/resume-tree.spec.ts` first test trimmed: removed `rootReasoner`, `childReasoner`, `delta` engine, and the six agent/action registrations that were never used (only `delta2` drives the actual resume). `store` and `childRan` are preserved.
+
+636 tests pass under vitest (634 + 2 new L1 tests). Typecheck clean.
+
 ## Overview
 Delta Agents is a deterministic autonomous control plane for AI agents. It provides the execution layer that constrains, validates, supervises, and audits agent behavior. The model reasons; the engine governs. The full specification is in `delta-agents.spec.md` (1185 lines) — that is the canonical blueprint for implementation.
 

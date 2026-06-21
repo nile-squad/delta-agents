@@ -20,7 +20,6 @@
 import { Ok, Err } from "slang-ts";
 import type { Result } from "slang-ts";
 import type { Task, Checkpoint, ApprovalRequest } from "../shared/types";
-import type { JsonRecord } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort } from "../ports/reasoner-port";
 import type { Registry } from "../authoring/registry";
@@ -28,7 +27,7 @@ import type { Agent, Action, Workflow } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 import type { ApprovalStatus } from "../execution/types";
 import type { SendResult, InspectResult } from "./types";
-import { snapshotFromTask } from "../state-space/task-state";
+import { snapshotFromTask, snapshotFromJson, snapshotToJson } from "../state-space/task-state";
 import { runWorkflow } from "../workflow";
 import { makeContextCommunicate } from "../comms";
 import { makeContextRemember } from "../memory";
@@ -41,14 +40,6 @@ import { checkpointId } from "../shared/id";
 import { makeRunner, runScheduler } from "./scheduler";
 
 const MAX_STEPS_DEFAULT = 100;
-
-// ── Snapshot serialisation ────────────────────────────────────────────────────
-
-const snapshotToJson = (snapshot: TaskStateSnapshot): JsonRecord =>
-  JSON.parse(JSON.stringify(snapshot)) as JsonRecord;
-
-const snapshotFromJson = (json: JsonRecord): TaskStateSnapshot =>
-  json as unknown as TaskStateSnapshot;
 
 // ── Core send loop ────────────────────────────────────────────────────────────
 
@@ -339,7 +330,7 @@ export const resumeTask = async ({
   const task = taskResult.value;
 
   if (task.status !== "paused" && task.status !== "pending") {
-    return Err(`cannot resume task "${taskId}" — current status is "${task.status}" (expected "paused")`);
+    return Err(`cannot resume task "${taskId}" — current status is "${task.status}" (expected "paused" or "pending")`);
   }
 
   const ckptResult = await store.getLatestCheckpoint(taskId);

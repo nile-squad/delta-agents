@@ -6,6 +6,8 @@ export type { DiscoveryResult } from "./discover-actions";
 export { discoverActions } from "./discover-actions";
 export {
   snapshotFromTask,
+  snapshotFromJson,
+  snapshotToJson,
   withCompletedAction,
   withCompletedWorkflow,
   withStatus,

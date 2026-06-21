@@ -42,59 +42,7 @@ const makeTask = (overrides: Partial<Task> & Pick<Task, "id" | "goal" | "assigne
 describe("resume-tree — H2: active children rehydrated on resume", () => {
   it("child task in activeChildren is driven to completion after root is resumed", async () => {
     const store = createInMemoryStore();
-
-    // The root agent's reasoner signals done immediately (it has no more work).
-    const rootReasoner = createMockReasoner({ responses: [] });
-    // The child agent has one action to perform.
     const childRan: string[] = [];
-    const childReasoner = createMockReasoner({
-      responses: [{ actionName: "child-work", input: {} }],
-    });
-
-    // Build one engine whose registry knows both agents.
-    // We use a combined reasoner that serves as the child's action source.
-    // The engine is built with the root reasoner; the child is a separate agent
-    // in the same registry so runScheduler can look it up via registry.getAgent().
-    const delta = createDeltaEngine({ store, reasoner: rootReasoner });
-
-    // Root agent has a noop action (authoring requires at least one action).
-    // The root's reasoner is scripted to signal "done" immediately, so this
-    // action is never actually executed — it is purely a registration requirement.
-    const rootNoop = delta.action({
-      name: "root-noop",
-      description: "root noop",
-      schema: z.object({}),
-      fn: async () => Ok("noop"),
-    });
-
-    // Root agent (its work is "done" — reasoner signals done immediately).
-    const rootAgent = delta.agent({
-      name: "root-agent",
-      description: "root agent",
-      role: "Root",
-      rolePrompt: "Delegate work.",
-      actions: [rootNoop],
-    });
-    delta.deploy(rootAgent);
-
-    // Child agent has one action.
-    const childWork = delta.action({
-      name: "child-work",
-      description: "child work action",
-      schema: z.object({}),
-      fn: async () => {
-        childRan.push("child-work");
-        return Ok("done");
-      },
-    });
-    const childAgent = delta.agent({
-      name: "child-agent",
-      description: "child agent",
-      role: "Child",
-      rolePrompt: "Do child work.",
-      actions: [childWork],
-    });
-    delta.deploy(childAgent);
 
     // ── Directly construct the paused state ──────────────────────────────────
     // Root task: paused (was running, then paused mid-delegation).

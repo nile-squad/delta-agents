@@ -7,9 +7,35 @@
  * the current snapshot is always a complete description of the task's state.
  */
 
-import type { Task } from "../shared/types";
+import type { Task, JsonRecord } from "../shared/types";
 import type { TaskStateSnapshot } from "./types";
 import { zeroCost, addCosts } from "../shared/cost";
+
+/**
+ * Serialise a TaskStateSnapshot to a plain JsonRecord for checkpoint storage.
+ *
+ * WHY: checkpoints must be stored as opaque JSON (storage portability — the
+ * adapter may be in-memory, SQLite, or a remote DB). JSON.parse(JSON.stringify)
+ * is the only reliable roundtrip; the type system cannot verify that the
+ * resulting JsonRecord shape is correct at compile time, so the cast is
+ * unavoidable at this single serialization boundary. Do NOT add new casts
+ * elsewhere; route through this helper (L4 — centralised cast).
+ */
+export const snapshotToJson = (snapshot: TaskStateSnapshot): JsonRecord =>
+  JSON.parse(JSON.stringify(snapshot)) as JsonRecord;
+
+/**
+ * Deserialise a checkpoint JsonRecord back into a TaskStateSnapshot.
+ *
+ * WHY: at recovery time the stored JSON is structurally identical to
+ * TaskStateSnapshot but the type system cannot verify that at compile time —
+ * this is the single documented serialization boundary shim (L4). The cast
+ * is intentional and unavoidable: the storage layer uses JsonRecord for
+ * portability, so every recovery path needs exactly one bridge here.
+ * Do NOT add new `as unknown` casts elsewhere; import this function instead.
+ */
+export const snapshotFromJson = (json: JsonRecord): TaskStateSnapshot =>
+  json as unknown as TaskStateSnapshot;
 
 /**
  * Build an initial TaskStateSnapshot from a newly created Task.

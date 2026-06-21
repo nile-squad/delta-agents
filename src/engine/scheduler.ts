@@ -25,14 +25,13 @@
  */
 
 import type { Task, Checkpoint, Cost, TaskTree } from "../shared/types";
-import type { JsonRecord } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort, DelegationRequest } from "../ports/reasoner-port";
 import type { Registry } from "../authoring/registry";
 import type { Agent, Action } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 import type { SendResult } from "./types";
-import { snapshotFromTask } from "../state-space/task-state";
+import { snapshotFromTask, snapshotToJson } from "../state-space/task-state";
 import { isOverBudget, addCosts, remainingCost } from "../shared/cost";
 import { discoverActions } from "../state-space/discover-actions";
 import { runGateway } from "../execution/execution-gateway";
@@ -43,9 +42,6 @@ import { computeActionValue } from "../governance";
 import { enforceSubtaskScope, requestSlot, releaseSlot, abortEntireTree } from "../supervision";
 import { initialRiskState, initialTrust } from "../governance";
 import { taskId, checkpointId } from "../shared/id";
-
-const snapshotToJson = (snapshot: TaskStateSnapshot): JsonRecord =>
-  JSON.parse(JSON.stringify(snapshot)) as JsonRecord;
 
 // ── Step outcome ────────────────────────────────────────────────────────────
 

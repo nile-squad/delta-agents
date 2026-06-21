@@ -21,6 +21,20 @@ export type Registry = {
   registerPhase: (phase: Phase) => Result<Phase, string>;
   registerAgent: (agent: Agent) => Result<Agent, string>;
 
+  /**
+   * Mark an agent as deployed so send() may accept tasks for it.
+   * WHY: delta.deploy() is the DX signal that authoring is complete; this
+   * separates "defined" (registered) from "ready for execution" (deployed).
+   * Returns Err when the agent is not even registered (must call delta.agent() first).
+   */
+  deployAgent: (agentName: string) => Result<void, string>;
+
+  /**
+   * Returns true iff the agent has been explicitly deployed.
+   * Used by send() to gate task creation (L1).
+   */
+  isDeployed: (agentName: string) => boolean;
+
   // Lookup (called by engine at runtime)
   getAction: (name: string) => Result<Action, string>;
   getWorkflow: (name: string) => Result<Workflow, string>;
@@ -47,6 +61,13 @@ export const createRegistry = (): Registry => {
   const workflows = new Map<string, Workflow>();
   const phases = new Map<string, Phase>();
   const agents = new Map<string, Agent>();
+  /**
+   * Tracks agents that have been explicitly deployed via delta.deploy().
+   * An agent that is defined (registered) but not deployed must not accept
+   * tasks — deploy() is the DX signal that authoring is complete and the
+   * agent is ready for execution (L1 gate: send rejects undefined-but-undeployed).
+   */
+  const deployed = new Set<string>();
 
   return {
     registerAction: (action) => {
@@ -100,6 +121,16 @@ export const createRegistry = (): Registry => {
       const agent = agents.get(name);
       return agent !== undefined ? Ok(agent) : Err(`agent "${name}" not found in registry`);
     },
+
+    deployAgent: (agentName) => {
+      if (!agents.has(agentName)) {
+        return Err(`agent "${agentName}" is not registered — call delta.agent() first`);
+      }
+      deployed.add(agentName);
+      return Ok(undefined);
+    },
+
+    isDeployed: (agentName) => deployed.has(agentName),
 
     getActionsForAgent: (agentName) => {
       const agent = agents.get(agentName);

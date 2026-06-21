@@ -19,26 +19,12 @@ import { Ok, Err } from "slang-ts";
 import type { WorkflowResult, RunWorkflowInput, PhaseResult, RunPhaseInput } from "./types";
 import { runPhase } from "./run-phase";
 import { runHook } from "../execution/run-hooks";
-import { withCompletedWorkflow } from "../state-space/task-state";
+import { withCompletedWorkflow, snapshotFromJson } from "../state-space/task-state";
 import { applyStrategy, abortTask } from "../supervision";
 import { raiseEscalation } from "../oversight";
 import { retryWithJitter } from "../infra";
 import { executionId } from "../shared/id";
 import type { ActionContext } from "../authoring/types";
-import type { JsonRecord } from "../shared/types";
-import type { TaskStateSnapshot } from "../state-space/types";
-
-/**
- * Deserialise a checkpoint JsonRecord back into a TaskStateSnapshot.
- *
- * WHY: checkpoints are persisted as plain JSON (JsonRecord) for storage
- * portability. At recovery time the shape is structurally identical to
- * TaskStateSnapshot but the type system cannot verify that at compile time —
- * this is the single documented serialization boundary shim (see L4 in the
- * task blueprint). Do NOT add new casts elsewhere; route through this helper.
- */
-const snapshotFromJson = (json: JsonRecord): TaskStateSnapshot =>
-  json as unknown as TaskStateSnapshot;
 
 /**
  * Run a phase, then apply its declared supervision policy if it fails (H1).

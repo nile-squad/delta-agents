@@ -23,19 +23,15 @@
 
 import type { ActionContext } from "../authoring/types";
 import type { Checkpoint } from "../shared/types";
-import type { JsonRecord } from "../shared/types";
 import type { PhaseResult, RunPhaseInput } from "./types";
 import { runGateway } from "../execution/execution-gateway";
 import { runHook } from "../execution/run-hooks";
 import { applyPostStepGovernance } from "../oversight";
+import { snapshotToJson } from "../state-space/task-state";
 import { resolveNextStep } from "./resolve-next";
 import { executionId, checkpointId } from "../shared/id";
 
 const MAX_STEPS_PER_PHASE = 100;
-
-/** Serialise a TaskStateSnapshot to JsonRecord for checkpoint storage. */
-const snapshotToJson = (snapshot: Parameters<typeof runGateway>[0]["state"]): JsonRecord =>
-  JSON.parse(JSON.stringify(snapshot)) as JsonRecord;
 
 export const runPhase = async ({
   phase,

@@ -129,6 +129,37 @@ describe("deploy + send — task runs to completion", () => {
     expect(result.isErr).toBe(true);
   });
 
+  // L1: deploy gates execution — send-before-deploy → Err; deploy-then-send → Ok
+  it("L1 — send returns Err for an agent that is defined (registered) but not yet deployed", async () => {
+    const delta = createDeltaEngine({ reasoner: createMockReasoner() });
+    const act = delta.action({ name: "act-l1a", description: "test action", schema: z.object({}), fn: noop });
+    // Intentionally call delta.agent() but NOT delta.deploy() — authoring is defined but not activated.
+    delta.agent({ name: "undeploy-agent", description: "d", role: "r", rolePrompt: ".", actions: [act] });
+
+    const result = await delta.send({ goal: "run", agentName: "undeploy-agent" });
+    expect(result.isErr).toBe(true);
+    if (result.isErr) {
+      expect(result.error).toMatch(/defined but not deployed/);
+      expect(result.error).toMatch(/delta\.deploy/);
+    }
+  });
+
+  it("L1 — send succeeds after deploy() is called (deploy-then-send → Ok)", async () => {
+    const store = createInMemoryStore();
+    const delta = createDeltaEngine({
+      store,
+      reasoner: createMockReasoner({ responses: [{ actionName: "act-l1b", input: {} }] }),
+    });
+    const act = delta.action({ name: "act-l1b", description: "test action", schema: z.object({}), fn: noop });
+    const ag = delta.agent({ name: "deploy-then-send-agent", description: "d", role: "r", rolePrompt: ".", actions: [act] });
+    // Now deploy — this is the gate.
+    delta.deploy(ag);
+
+    const result = await delta.send({ goal: "run", agentName: "deploy-then-send-agent" });
+    expect(result.isOk).toBe(true);
+    if (result.isOk) expect(result.value.status).toBe("completed");
+  });
+
   it("send creates a TaskID for every task (invariant 1)", async () => {
     const store = createInMemoryStore();
     const delta = createDeltaEngine({ store, reasoner: createMockReasoner({ responses: [{ actionName: "act", input: {} }] }) });

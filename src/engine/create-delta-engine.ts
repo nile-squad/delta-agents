@@ -55,14 +55,13 @@ export const createDeltaEngine = ({
   // ── Runtime methods ──────────────────────────────────────────────────────
 
   const deploy = (_agent: ReturnType<typeof agent>): void => {
-    // The agent is already registered by delta.agent(). deploy() is the
-    // DX signal that authoring is complete and execution can begin.
-    // Validation: confirm the agent is in the registry (throws on misuse).
-    const check = registry.getAgent(_agent.name);
-    if (check.isErr) {
-      throw new Error(
-        `delta.deploy: agent "${_agent.name}" is not registered — call delta.agent() first`,
-      );
+    // deploy() is the DX signal that authoring is complete and execution can begin.
+    // It marks the agent as deployed in the registry (L1: send rejects a defined-but-
+    // undeployed agent with a clear error message). Without this gate an agent that is
+    // merely defined — but whose authoring is incomplete — could silently accept tasks.
+    const result = registry.deployAgent(_agent.name);
+    if (result.isErr) {
+      throw new Error(`delta.deploy: ${result.error}`);
     }
   };
 
@@ -109,9 +108,19 @@ export const createDeltaEngine = ({
       }
     }
 
+    // L1: gate on deploy() — an agent that is defined (registered) but not yet
+    // deployed must not accept tasks. Authoring and execution are intentionally
+    // separated so partial setups (missing actions, unapproved configs) cannot
+    // silently run. Return a clear, actionable error so the developer knows exactly
+    // what to call (prohibition 9: never fail silently on a misuse boundary).
     const agentResult = registry.getAgent(agentName);
     if (agentResult.isErr) {
-      return Err(`send failed: agent "${agentName}" not deployed — ${agentResult.error}`);
+      return Err(`send failed: agent "${agentName}" not found — ${agentResult.error}`);
+    }
+    if (!registry.isDeployed(agentName)) {
+      return Err(
+        `send failed: agent "${agentName}" is defined but not deployed — call delta.deploy(agent) first`,
+      );
     }
     const agentDef = agentResult.value;
 
