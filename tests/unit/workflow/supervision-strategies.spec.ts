@@ -24,7 +24,7 @@ import { createInMemoryStore } from "../../../src/ports";
 import { initialTrust, initialRiskState } from "../../../src/governance";
 import type { Action, Phase, Workflow } from "../../../src/authoring";
 import type { TaskStateSnapshot } from "../../../src/state-space";
-import type { SupervisionPolicy } from "../../../src/shared/types";
+import type { SupervisionPolicy, Task, TaskTree } from "../../../src/shared/types";
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -173,5 +173,83 @@ describe("supervision-strategies — H1 distinctness proof", () => {
 
     expect(result.status).toBe("completed");
     expect(aCount).toBe(3);
+  });
+});
+
+// ── abort-subtree vs abort-tree distinctness ───────────────────────────────────
+
+/**
+ * abort-subtree and abort-tree were previously collapsed onto the same single-task
+ * abortTask call, so a declared abort-tree silently failed to cascade. These tests
+ * prove the two are now observably distinct: abort-subtree aborts only the failing
+ * task and leaves its sibling running; abort-tree cascades from the snapshot's rootId
+ * and aborts the root plus every active/queued child, then clears the tree.
+ */
+
+const makeTask = (id: string, rootId: string): Task => ({
+  id,
+  rootId,
+  status: "running",
+  goal: `goal for ${id}`,
+  assignedAgent: "test-agent",
+  budget: { tokens: 100_000, durationMs: 300_000 },
+  risk: initialRiskState(),
+  trust: initialTrust(),
+  createdAt: new Date(),
+  updatedAt: new Date(),
+});
+
+const makeTree = (rootTaskId: string, active: string[]): TaskTree => ({
+  rootTaskId,
+  activeChildren: active,
+  queuedChildren: [],
+  maxConcurrency: 2,
+});
+
+const alwaysFails = makeAction("boom", async () => Err("boom"));
+
+const runWithStrategy = async (strategy: SupervisionPolicy["strategy"]) => {
+  // Root task with one active child, both persisted; the workflow runs on the root
+  // and its single phase always fails, triggering the declared abort strategy.
+  const store = createInMemoryStore();
+  await store.saveTask(makeTask("tsk_root", "tsk_root"));
+  await store.saveTask(makeTask("tsk_child", "tsk_root"));
+  await store.saveTaskTree(makeTree("tsk_root", ["tsk_child"]));
+
+  const phase = makePhase("boom-phase", ["boom"], { strategy, maxRetries: 0 });
+  const result = await runWorkflow({
+    workflow: makeWorkflow([phase]),
+    actionRegistry: new Map([["boom", alwaysFails]]),
+    state: { ...makeState(), taskId: "tsk_root", rootId: "tsk_root" },
+    getApprovalStatus: () => "none",
+    inputFor: () => ({}),
+    store,
+  });
+
+  const root = await store.getTask("tsk_root");
+  const child = await store.getTask("tsk_child");
+  const tree = await store.getTaskTree("tsk_root");
+  return { result, store, root, child, tree };
+};
+
+describe("supervision-strategies — abort-subtree vs abort-tree", () => {
+  it("abort-subtree aborts only the failing task; the sibling child stays running", async () => {
+    const { result, root, child } = await runWithStrategy("abort-subtree");
+
+    expect(result.status).toBe("failed");
+    if (root.isOk) expect(root.value.status).toBe("aborted");
+    // The child was NOT touched — abort-subtree is scoped to the single task.
+    if (child.isOk) expect(child.value.status).toBe("running");
+  });
+
+  it("abort-tree cascades: root and child are aborted and the tree is cleared", async () => {
+    const { result, root, child, tree } = await runWithStrategy("abort-tree");
+
+    expect(result.status).toBe("failed");
+    if (root.isOk) expect(root.value.status).toBe("aborted");
+    // The child IS aborted — abort-tree cascades the whole tree (invariant 17).
+    if (child.isOk) expect(child.value.status).toBe("aborted");
+    // The tree is cleared so no queued child is later promoted (prohibition 11).
+    if (tree.isOk) expect(tree.value.activeChildren).toEqual([]);
   });
 });

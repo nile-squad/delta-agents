@@ -20,7 +20,7 @@ import type { WorkflowResult, RunWorkflowInput, PhaseResult, RunPhaseInput } fro
 import { runPhase } from "./run-phase";
 import { runHook } from "../execution/run-hooks";
 import { withCompletedWorkflow, snapshotFromJson } from "../state-space/task-state";
-import { applyStrategy, abortTask } from "../supervision";
+import { applyStrategy, abortTask, abortEntireTree } from "../supervision";
 import { raiseEscalation } from "../oversight";
 import { retryWithJitter } from "../infra";
 import { executionId } from "../shared/id";
@@ -67,13 +67,37 @@ const runPhaseSupervised = async (input: RunPhaseInput): Promise<PhaseResult> =>
       };
     }
 
-    case "abort-subtree":
-    case "abort-tree": {
+    case "abort-subtree": {
+      // abort-subtree aborts only this task. Task trees are stored flat (one tree
+      // per root with its children), so a non-root task owns no nested subtree of
+      // its own: its subtree is itself. Aborting just this task leaves siblings
+      // and the root running, which is the intended scoped abort.
       await abortTask({ taskId, store: input.store });
       return {
         status: "failed",
         snapshot: first.snapshot,
-        failedReason: `aborted (${decision.action}): phase "${input.phase.name}" failed — ${first.failedReason}`,
+        failedReason: `aborted (abort-subtree): phase "${input.phase.name}" failed: ${first.failedReason}`,
+      };
+    }
+
+    case "abort-tree": {
+      // abort-tree aborts the ENTIRE tree, not just this task: the root and every
+      // active/queued child are marked aborted and the tree is cleared so no queued
+      // child is later promoted (invariant 17, prohibition 11). The tree is keyed by
+      // rootId, so cascade from the snapshot's rootId regardless of whether the
+      // failing task is the root or a delegated child.
+      const cascade = await abortEntireTree({ rootTaskId: input.state.rootId, store: input.store });
+      if (cascade.isErr) {
+        return {
+          status: "failed",
+          snapshot: first.snapshot,
+          failedReason: `aborted (abort-tree) but cascade failed on phase "${input.phase.name}": ${cascade.error}`,
+        };
+      }
+      return {
+        status: "failed",
+        snapshot: first.snapshot,
+        failedReason: `aborted (abort-tree): phase "${input.phase.name}" failed: ${first.failedReason}`,
       };
     }
 

@@ -288,17 +288,33 @@ Each invariant/prohibition gets at least one named test before its phase is "don
 
 | Phase | Invariants | Prohibitions | Status |
 |------:|-----------|--------------|--------|
-| 0 | (infra) | - | pending |
-| 1 | 4, 5 | - | pending |
-| 2 | 6, 7, 20 | 2, 3, 16 | pending |
-| 3 | 11, 12, 23 | 12, 13, 14, 20 | pending |
-| 4 | 1, 3, 4, 18, 19, 22 | 1, 2, 9, 17, 18 | pending |
-| 5 | 10, 21 | 19 | pending |
-| 6 | 14, 15, 16, 17, 18 | 5, 6, 7, 8, 10, 11, 15 | pending |
-| 7 | 13 | - | pending |
-| 8 | 1, 2, 8, 9 | 4 | pending |
+| 0 | (infra) | - | done |
+| 1 | 4, 5 | - | done |
+| 2 | 6, 7, 20 | 2, 3, 16 | done |
+| 3 | 11, 12, 23 | 12, 13, 14, 20 | done |
+| 4 | 1, 3, 4, 18, 19, 22 | 1, 2, 9, 17, 18 | done |
+| 5 | 10, 21 | 19 | done |
+| 6 | 14, 15, 16, 17, 18 | 5, 6, 7, 8, 10, 11, 15 | done |
+| 7 | 13 | - | done |
+| 8 | 1, 2, 8, 9 | 4 | done |
+| 9 (Drizzle adapter, G1) | (port contract) | - | done |
+| 10 (OpenAI adapter, G2) | (governance model-independent) | - | done |
+| 11 (Documentation) | - | - | done |
 
-All 23 invariants and 20 prohibitions must show a covering test by end of Phase 8.
+All 23 invariants and 20 prohibitions show a covering test. Beyond the master
+plan, refinement Packages H, I, and J shipped (supervision-strategy fidelity,
+per-action workflow inputs, deploy gating, serialization centralization, public
+API surface, real-DB lifecycle tests, Node/tsup build). The `abort-tree`
+supervision strategy now cascades the full tree via `abortEntireTree` (it was
+previously aliased to the single-task `abort-subtree`).
+
+Known deferred items, by design, not bugs:
+- Mid-workflow checkpoint resume: a workflow task resumes from the start of the
+  workflow, not the failed phase. Side-effectful actions must be idempotent.
+- `DataSource` authoring type: specified but not implemented. See
+  `docs/resources.md` for the honest status.
+- Cost friction scores only the `tokens` and `durationMs` axes; `memory` and
+  `latency` are budgeted and tracked but excluded from the friction ratio.
 
 ---
 
@@ -308,5 +324,6 @@ All 23 invariants and 20 prohibitions must show a covering test by end of Phase 
    abusable/raceable phases have stress tests.
 2. Covered invariants/prohibitions each have a named, self-contained test.
 3. Public APIs carry WHY-focused JSDoc.
-4. `bun test` and `tsc --noEmit` clean.
+4. `vitest run` and `tsc --noEmit` clean. (The canonical runner is vitest, not
+   `bun test`. See ADR-006 for the Node/tsup build decision.)
 5. Traceability table updated; learnings folded into `context.md`.

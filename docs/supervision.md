@@ -30,8 +30,8 @@ The strategy is applied by `applyStrategy` (`src/supervision/apply-strategy.ts`)
 | `restart` | Re-runs the phase from its entry state, action index 0. All progress within the phase is discarded. |
 | `resume` | Re-runs from the state captured in the latest checkpoint, action index 0. If no checkpoint exists, falls back to restart automatically. |
 | `escalate` | Pauses the task and raises a human escalation with trigger `"workflow-failure"`. Returns `status: "blocked"` to the caller. Execution stops until a human acts. Not subject to `maxRetries`. |
-| `abort-subtree` | Calls `abortTask` and returns `status: "failed"`. The whole task is aborted. Not subject to `maxRetries`. |
-| `abort-tree` | Same as `abort-subtree` in the current implementation: calls `abortTask` and returns `status: "failed"`. Not subject to `maxRetries`. |
+| `abort-subtree` | Calls `abortTask` on the failing task only and returns `status: "failed"`. Siblings and the root keep running. Not subject to `maxRetries`. |
+| `abort-tree` | Calls `abortEntireTree` from the snapshot's `rootId`: the root and every active and queued child are aborted and the tree is cleared so no queued child is later promoted. Returns `status: "failed"`. Not subject to `maxRetries`. |
 
 ### Observably distinct retry, restart, and resume
 
