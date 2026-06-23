@@ -19,21 +19,22 @@ describe("data source operations run through the gateway (#3)", () => {
     const delta = createDeltaEngine({ reasoner: createMockReasoner({ responses: [] }) });
 
     const reads: string[] = [];
-    const retrieve = delta.action({
-      name: "user-db.retrieve",
-      description: "read a user record by id",
-      schema: z.object({ id: z.string() }),
-      fn: async ({ id }) => {
-        reads.push(String(id));
-        return Ok(`user:${String(id)}`);
-      },
-    });
     const userDb = delta.dataSource({
       name: "user-db",
       description: "the user store",
       ownership: "internal",
       contentType: "application/json",
-      actions: { retrieve },
+      actions: {
+        retrieve: {
+          name: "user-db.retrieve",
+          description: "read a user record by id",
+          schema: z.object({ id: z.string() }),
+          fn: async ({ id }) => {
+            reads.push(String(id));
+            return Ok(`user:${String(id)}`);
+          },
+        },
+      },
     });
 
     const phase = delta.phase({

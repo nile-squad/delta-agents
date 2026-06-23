@@ -1,29 +1,21 @@
 /**
  * DataSource authoring tests (#3).
  *
- * A DataSource bundles governed CRUD operations over one store. Each operation is
- * a full Action, so it is validated and governed exactly like any other action.
- * These tests cover definition-time validation, registration, the ownership and
- * authentication metadata, and the key integration property: an agent's attached
- * data sources have their operations flattened into the agent's reachable action
- * set, so nothing downstream needs to special-case a data operation (ADR-007).
+ * A DataSource bundles governed CRUD operations over one store. The factory is the
+ * sole registrar of its operations, so ownership can shape the risk prior at
+ * registration time. These tests cover definition-time validation, the ownership
+ * trust posture (external is less trusted by default and must earn it back), and
+ * the integration property that an agent's attached data sources have their
+ * operations flattened into the agent's reachable action set (ADR-007).
  */
 
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { Ok } from "slang-ts";
 import { createDeltaEngine } from "../../../src/engine";
+import { ownershipAdjustedRisk, EXTERNAL_RISK_FLOOR } from "../../../src/authoring";
 
 const makeEngine = () => createDeltaEngine();
-
-const retrieveOp = (delta: ReturnType<typeof makeEngine>) =>
-  delta.action({
-    name: "user-db.retrieve",
-    description: "read a user record",
-    schema: z.object({ id: z.string() }),
-    risk: 2,
-    fn: async () => Ok("record"),
-  });
 
 describe("delta.dataSource — definition and validation", () => {
   it("registers a valid data source and returns it unchanged", () => {
@@ -33,7 +25,14 @@ describe("delta.dataSource — definition and validation", () => {
       description: "the user store",
       ownership: "internal",
       contentType: "application/json",
-      actions: { retrieve: retrieveOp(delta) },
+      actions: {
+        retrieve: {
+          name: "user-db.retrieve",
+          description: "read a user record",
+          schema: z.object({ id: z.string() }),
+          fn: async () => Ok("record"),
+        },
+      },
     });
     expect(ds.name).toBe("user-db");
     expect(ds.ownership).toBe("internal");
@@ -47,7 +46,14 @@ describe("delta.dataSource — definition and validation", () => {
       ownership: "external",
       contentType: "application/json",
       authentication: { type: "oauth2" },
-      actions: { retrieve: retrieveOp(delta) },
+      actions: {
+        retrieve: {
+          name: "partner-api.retrieve",
+          description: "read partner data",
+          schema: z.object({}),
+          fn: async () => Ok("record"),
+        },
+      },
     });
     expect(ds.authentication?.type).toBe("oauth2");
   });
@@ -74,7 +80,9 @@ describe("delta.dataSource — definition and validation", () => {
         // @ts-expect-error — exercising the runtime guard with an illegal value
         ownership: "public",
         contentType: "application/json",
-        actions: { retrieve: retrieveOp(delta) },
+        actions: {
+          retrieve: { name: "bad-own.retrieve", description: "r", schema: z.object({}), fn: async () => Ok("r") },
+        },
       }),
     ).toThrow(/ownership must be/);
   });
@@ -87,7 +95,9 @@ describe("delta.dataSource — definition and validation", () => {
         description: "d",
         ownership: "internal",
         contentType: "  ",
-        actions: { retrieve: retrieveOp(delta) },
+        actions: {
+          retrieve: { name: "no-ct.retrieve", description: "r", schema: z.object({}), fn: async () => Ok("r") },
+        },
       }),
     ).toThrow(/contentType/);
   });
@@ -101,33 +111,79 @@ describe("delta.dataSource — definition and validation", () => {
         ownership: "external",
         contentType: "application/json",
         authentication: { type: "" },
-        actions: { retrieve: retrieveOp(delta) },
+        actions: {
+          retrieve: { name: "bad-auth.retrieve", description: "r", schema: z.object({}), fn: async () => Ok("r") },
+        },
       }),
     ).toThrow(/authentication.type/);
+  });
+});
+
+describe("ownership shapes the risk prior — external is less trusted", () => {
+  it("computes the adjusted risk prior per ownership", () => {
+    // Internal: declared risk passes through unchanged (undefined stays a cold start).
+    expect(ownershipAdjustedRisk("internal", 2)).toBe(2);
+    expect(ownershipAdjustedRisk("internal", undefined)).toBeUndefined();
+    // External: floored at the moderate external floor; a higher declared risk wins.
+    expect(ownershipAdjustedRisk("external", undefined)).toBe(EXTERNAL_RISK_FLOOR);
+    expect(ownershipAdjustedRisk("external", 1)).toBe(EXTERNAL_RISK_FLOOR);
+    expect(ownershipAdjustedRisk("external", 5)).toBe(5);
+  });
+
+  it("raises the risk prior on an external source's operations", () => {
+    const delta = makeEngine();
+    const ds = delta.dataSource({
+      name: "partner",
+      description: "third party store",
+      ownership: "external",
+      contentType: "application/json",
+      actions: {
+        // Developer rated it low risk, but external data does not get to be low-risk.
+        retrieve: {
+          name: "partner.retrieve",
+          description: "read",
+          schema: z.object({}),
+          risk: 1,
+          fn: async () => Ok("r"),
+        },
+      },
+    });
+    expect(ds.actions.retrieve?.risk).toBe(EXTERNAL_RISK_FLOOR);
+  });
+
+  it("leaves an internal source's declared risk untouched", () => {
+    const delta = makeEngine();
+    const ds = delta.dataSource({
+      name: "internal-db",
+      description: "owned store",
+      ownership: "internal",
+      contentType: "application/json",
+      actions: {
+        retrieve: {
+          name: "internal-db.retrieve",
+          description: "read",
+          schema: z.object({}),
+          risk: 1,
+          fn: async () => Ok("r"),
+        },
+      },
+    });
+    expect(ds.actions.retrieve?.risk).toBe(1);
   });
 });
 
 describe("delta.agent — data source operations join the reachable action set", () => {
   it("flattens every attached data source operation into the agent's actions", () => {
     const delta = makeEngine();
-    const retrieve = delta.action({
-      name: "user-db.retrieve",
-      description: "read",
-      schema: z.object({}),
-      fn: async () => Ok("r"),
-    });
-    const create = delta.action({
-      name: "user-db.create",
-      description: "write",
-      schema: z.object({}),
-      fn: async () => Ok("c"),
-    });
     const userDb = delta.dataSource({
       name: "user-db",
       description: "the user store",
       ownership: "internal",
       contentType: "application/json",
-      actions: { retrieve, create },
+      actions: {
+        retrieve: { name: "user-db.retrieve", description: "read", schema: z.object({}), fn: async () => Ok("r") },
+        create: { name: "user-db.create", description: "write", schema: z.object({}), fn: async () => Ok("c") },
+      },
     });
     const plain = delta.action({
       name: "greet",
@@ -153,18 +209,14 @@ describe("delta.agent — data source operations join the reachable action set",
 
   it("does not duplicate an operation also listed directly in actions", () => {
     const delta = makeEngine();
-    const retrieve = delta.action({
-      name: "user-db.retrieve",
-      description: "read",
-      schema: z.object({}),
-      fn: async () => Ok("r"),
-    });
     const userDb = delta.dataSource({
       name: "user-db",
       description: "store",
       ownership: "internal",
       contentType: "application/json",
-      actions: { retrieve },
+      actions: {
+        retrieve: { name: "user-db.retrieve", description: "read", schema: z.object({}), fn: async () => Ok("r") },
+      },
     });
 
     const agent = delta.agent({
@@ -172,7 +224,8 @@ describe("delta.agent — data source operations join the reachable action set",
       description: "lists the op twice",
       role: "R",
       rolePrompt: ".",
-      actions: [retrieve],
+      // The returned data source's operation object, also listed directly.
+      actions: [userDb.actions.retrieve!],
       dataSources: [userDb],
     });
 

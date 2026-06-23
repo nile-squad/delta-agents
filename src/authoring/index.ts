@@ -27,5 +27,5 @@ export { validateAction, validatePhase, validateWorkflow, validateAgent, validat
 export { makeDefineAction } from "./define-action";
 export { makeDefinePhase } from "./define-phase";
 export { makeDefineWorkflow } from "./define-workflow";
-export { makeDefineDataSource } from "./define-data-source";
+export { makeDefineDataSource, ownershipAdjustedRisk, EXTERNAL_RISK_FLOOR } from "./define-data-source";
 export { makeDefineAgent } from "./define-agent";

@@ -6,23 +6,23 @@ See [ADR-007](./ADR-007-datasource-design.md) for the design decisions (the spec
 
 ## Defining a DataSource
 
-Create each operation with `delta.action` (so it is validated and registered), then attach the operations to a data source:
+Pass the operations directly to `delta.dataSource` (it is the sole registrar of its operations, so do not create them with `delta.action` first):
 
 ```ts
-const retrieveUser = delta.action({
-  name: "user-db.retrieve",
-  description: "read a user record by id",
-  schema: z.object({ id: z.string() }),
-  risk: 2,
-  fn: async ({ id }) => Ok(await db.users.find(id)),
-});
-
 const userDb = delta.dataSource({
   name: "user-db",
   description: "the application user store",
   ownership: "internal",
   contentType: "application/json",
-  actions: { retrieve: retrieveUser },
+  actions: {
+    retrieve: {
+      name: "user-db.retrieve",
+      description: "read a user record by id",
+      schema: z.object({ id: z.string() }),
+      risk: 2,
+      fn: async ({ id }) => Ok(await db.users.find(id)),
+    },
+  },
 });
 
 const agent = delta.agent({
@@ -43,7 +43,7 @@ When the agent is defined, the engine flattens every attached data source's oper
 |-------|---------|
 | `name` | Unique data source name. |
 | `description` | What the store holds and why the agent uses it. |
-| `ownership` | `"internal"` (the system owns the store) or `"external"` (a third party owns it). Recorded as audit metadata so an operator can see whether the agent touched data outside its trust boundary. It does not change an operation's risk on its own; declare `risk` per operation. |
+| `ownership` | `"internal"` (the system owns the store) or `"external"` (a third party owns it). External data is less trusted by default: each operation's risk prior is floored at moderate (3 of 5), so it starts with a lower execution-health expectation and earns trust through a successful track record (the floor is a prior, overridden by evidence, not a permanent penalty). A higher declared `risk` is preserved. Also recorded as audit metadata so an operator can see whether the agent touched data outside its trust boundary. |
 | `contentType` | Free-form descriptor of the records the source holds (for example `"application/json"`). |
 | `authentication` | Optional. `{ type: string }` describing the mechanism only (for example `"oauth2"`). Never a credential: the operation `fn` owns its own secrets through its closure, and the engine never stores or transmits secrets. |
 | `actions` | The defined operations: `retrieve`, `create`, `update`, `delete`. At least one is required. Each is a full action. |
