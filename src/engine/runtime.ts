@@ -27,6 +27,7 @@ import type { Agent, Action, Workflow } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 import type { ApprovalStatus } from "../execution/types";
 import type { RetryOptions } from "../infra";
+import type { SkillLoader } from "../authoring/types";
 import type { SendResult, InspectResult } from "./types";
 import { snapshotFromTask, snapshotFromJson, snapshotToJson } from "../state-space/task-state";
 import { runWorkflow } from "../workflow";
@@ -62,6 +63,7 @@ export const runSendLoop = async ({
   maxSteps = MAX_STEPS_DEFAULT,
   startingSnapshot,
   reasonerRetry,
+  loadSkill,
 }: {
   task: Task;
   agent: Agent;
@@ -71,6 +73,7 @@ export const runSendLoop = async ({
   maxSteps?: number;
   startingSnapshot?: TaskStateSnapshot;
   reasonerRetry?: RetryOptions;
+  loadSkill?: SkillLoader;
 }): Promise<SendResult> => {
   const root = makeRunner({
     task,
@@ -78,7 +81,7 @@ export const runSendLoop = async ({
     snapshot: startingSnapshot ?? snapshotFromTask(task),
     maxSteps,
   });
-  return runScheduler({ root, reasoner, registry, store, maxSteps, reasonerRetry });
+  return runScheduler({ root, reasoner, registry, store, maxSteps, reasonerRetry, loadSkill });
 };
 
 // ── Workflow task driver (C-a) ──────────────────────────────────────────────
@@ -352,6 +355,7 @@ export const resumeTask = async ({
   store,
   maxSteps,
   reasonerRetry,
+  loadSkill,
 }: {
   taskId: string;
   agent: Agent;
@@ -360,6 +364,7 @@ export const resumeTask = async ({
   store: StoragePort;
   maxSteps?: number;
   reasonerRetry?: RetryOptions;
+  loadSkill?: SkillLoader;
 }): Promise<Result<SendResult, string>> => {
   const taskResult = await store.getTask(taskId);
   if (taskResult.isErr) return Err(`cannot resume: task "${taskId}" not found`);
@@ -399,7 +404,7 @@ export const resumeTask = async ({
     return Ok(result);
   }
 
-  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, reasonerRetry });
+  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, reasonerRetry, loadSkill });
   return Ok(result);
 };
 

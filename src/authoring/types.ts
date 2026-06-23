@@ -151,6 +151,17 @@ export type Skill = {
 };
 
 /**
+ * Loads a skill's content from its `path`. The library deliberately does not
+ * assume a filesystem (it may run on Node, an edge runtime, or the browser), so
+ * the consumer provides the loader: in Node it wraps `fs.readFile`, elsewhere a
+ * fetch or a bundled lookup. When configured on the engine, the content of each
+ * active skill is loaded and surfaced to the reasoner alongside the skill's
+ * name and description. An Err is non-fatal: the skill is still offered by name,
+ * just without its loaded content.
+ */
+export type SkillLoader = (skill: Skill) => Promise<Result<string, string>>;
+
+/**
  * Who owns the data a DataSource reads and writes.
  *
  * "internal" — the system running the agent owns the store (its own database).

@@ -25,6 +25,7 @@ export type {
   Channel,
   ChannelType,
   Skill,
+  SkillLoader,
   DataSource,
   DataSourceOwnership,
   DataSourceAuthentication,

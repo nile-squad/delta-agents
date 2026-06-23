@@ -276,6 +276,11 @@ const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
   }
   if (hasSkills) {
     userLines.push(`Skills (specialized capabilities to apply): ${availableSkills.map((s) => `${s.name} — ${s.description}`).join("; ")}`);
+    for (const skill of availableSkills) {
+      if (skill.content !== undefined && skill.content.length > 0) {
+        userLines.push(`Skill "${skill.name}" content:\n${skill.content}`);
+      }
+    }
   }
   if (context !== undefined && context.length > 0) {
     userLines.push("", "Context:", context);

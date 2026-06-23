@@ -205,6 +205,25 @@ Within a team an agent can interact two ways:
 
 Both are scoped at the engine, not just hidden from the model: a delegation or mention that targets an agent outside the team is rejected.
 
+## Skills
+
+An agent can carry skills: named, reusable capability descriptions with a `path` to their content (a playbook, a policy, a prompt snippet). Active skills are surfaced to the reasoner. The library does not assume a filesystem, so to load a skill's `path` content you provide a loader; without one, skills are still surfaced by name and description.
+
+```ts
+import { readFile } from "node:fs/promises";
+
+const delta = await createDeltaEngine({
+  reasoner,
+  loadSkill: async (skill) => {
+    try {
+      return Ok(await readFile(skill.path, "utf8"));
+    } catch (e) {
+      return Err(String(e)); // non-fatal: the skill is still offered by name
+    }
+  },
+});
+```
+
 ## Cost Model
 
 Cost is a multi-axis vector. The engine tracks and enforces all declared axes:

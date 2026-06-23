@@ -44,6 +44,7 @@ export const createDeltaEngine = async ({
   reasoner: configReasoner,
   maxStepsPerTask = 100,
   reasonerRetry: configReasonerRetry,
+  loadSkill,
 }: DeltaEngineConfig = {}): Promise<DeltaEngine> => {
   const store = configStore ?? createInMemoryStore();
   const reasoner = configReasoner ?? createMockReasoner();
@@ -170,7 +171,7 @@ export const createDeltaEngine = async ({
     // free reasoner loop.
     const result = workflowName !== undefined
       ? await runWorkflowTask({ task, agent: agentDef, workflowName, input, actionInputs, registry, store })
-      : await runSendLoop({ task, agent: agentDef, reasoner, registry, store, maxSteps: maxStepsPerTask, reasonerRetry });
+      : await runSendLoop({ task, agent: agentDef, reasoner, registry, store, maxSteps: maxStepsPerTask, reasonerRetry, loadSkill });
 
     return Ok(result);
   };
@@ -209,6 +210,7 @@ export const createDeltaEngine = async ({
       store,
       maxSteps: maxStepsPerTask,
       reasonerRetry,
+      loadSkill,
     });
   };
 

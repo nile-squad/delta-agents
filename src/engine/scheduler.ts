@@ -28,7 +28,7 @@ import type { Task, Checkpoint, Cost, TaskTree } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort, DelegationRequest } from "../ports/reasoner-port";
 import type { Registry } from "../authoring/registry";
-import type { Agent, Action } from "../authoring/types";
+import type { Agent, Action, SkillLoader } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 import type { SendResult } from "./types";
 import { snapshotFromTask, snapshotToJson } from "../state-space/task-state";
@@ -120,6 +120,7 @@ const stepTask = async ({
   registry,
   store,
   reasonerRetry,
+  loadSkill,
 }: {
   task: Task;
   agent: Agent;
@@ -129,6 +130,7 @@ const stepTask = async ({
   registry: Registry;
   store: StoragePort;
   reasonerRetry: RetryOptions;
+  loadSkill?: SkillLoader;
 }): Promise<StepOutcome> => {
   // 1. Discover legal actions for the agent in the current state.
   const agentActionsResult = registry.getActionsForAgent(agent.name);
@@ -195,12 +197,30 @@ const stepTask = async ({
   // team (or every other agent when it has no team). This scopes collaboration to
   // the team so an agent never hands work to, or pulls in, an agent outside it.
   const teammates = registry.getTeammates(agent.name);
+
+  // Surface active skills to the reasoner. When a skill loader is configured, the
+  // skill's content is loaded from its path and included; a load failure is
+  // non-fatal (the skill is still offered by name and description).
+  const availableSkills: Array<{ name: string; description: string; content?: string }> = [];
+  for (const skill of (agent.skills ?? []).filter((s) => s.active)) {
+    if (loadSkill === undefined) {
+      availableSkills.push({ name: skill.name, description: skill.description });
+      continue;
+    }
+    const loaded = await loadSkill(skill);
+    availableSkills.push({
+      name: skill.name,
+      description: skill.description,
+      ...(loaded.isOk ? { content: loaded.value } : {}),
+    });
+  }
+
   const reasonInput = {
     task: { ...task, risk: snapshot.risk, trust: snapshot.trust, updatedAt: new Date() },
     availableActions: rankedActions.map((a) => a.name),
     availableAgents: teammates,
     availableChannels: (agent.channels ?? []).filter((c) => c.enabled).map((c) => c.type),
-    availableSkills: (agent.skills ?? []).filter((s) => s.active).map((s) => ({ name: s.name, description: s.description })),
+    availableSkills,
     agentRole: agent.role,
     rolePrompt: agent.rolePrompt,
     ...(reasonContext.length > 0 ? { context: reasonContext } : {}),
@@ -386,6 +406,7 @@ export const runScheduler = async ({
   store,
   maxSteps,
   reasonerRetry = defaultRetryOptions,
+  loadSkill,
 }: {
   root: Runner;
   reasoner: ReasonerPort;
@@ -393,6 +414,7 @@ export const runScheduler = async ({
   store: StoragePort;
   maxSteps: number;
   reasonerRetry?: RetryOptions;
+  loadSkill?: SkillLoader;
 }): Promise<SendResult> => {
   const rootId = root.task.rootId;
   const runners: Runner[] = [root];
@@ -649,6 +671,7 @@ export const runScheduler = async ({
         registry,
         store,
         reasonerRetry,
+        loadSkill,
       });
       runner.step++;
       runner.snapshot = outcome.snapshot;

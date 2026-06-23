@@ -112,12 +112,13 @@ export type ReasonerInput = {
    */
   availableChannels?: string[];
   /**
-   * Active skills (name + description) available to this agent, surfaced so the
-   * model knows its specialized capabilities. Inactive skills are omitted.
-   * (Loading skill *content* from a Skill.path is a future refinement — it needs
-   * a platform-specific file loader the library does not assume.)
+   * Active skills available to this agent, surfaced so the model knows its
+   * specialized capabilities. Inactive skills are omitted. `content` is the
+   * skill's loaded body, present when the engine is configured with a `loadSkill`
+   * loader (the library does not assume a filesystem, so the consumer provides
+   * it); absent when no loader is configured or loading failed.
    */
-  availableSkills?: Array<{ name: string; description: string }>;
+  availableSkills?: Array<{ name: string; description: string; content?: string }>;
   agentRole: string;
   rolePrompt: string;
   /** Retrieved memory/context injected by the memory retrieval step. */
