@@ -17,7 +17,7 @@
  */
 
 import { Ok, Err } from "slang-ts";
-import type { ReasonerPort, ActionRequest, DelegationRequest, CommunicationRequest } from "./reasoner-port";
+import type { ReasonerPort, ActionRequest, DelegationRequest, MentionRequest, CommunicationRequest } from "./reasoner-port";
 
 /**
  * A scripted reasoner turn. The shapes mirror the ReasonerDecision kinds:
@@ -32,6 +32,7 @@ export type MockResponse =
       reasoning?: string;
     }
   | { delegate: DelegationRequest }
+  | { mention: MentionRequest }
   | { communicate: CommunicationRequest }
   | { done: true; reason?: string };
 
@@ -63,6 +64,9 @@ export const createMockReasoner = ({
 
       if ("delegate" in next) {
         return Ok({ kind: "delegate", delegation: next.delegate });
+      }
+      if ("mention" in next) {
+        return Ok({ kind: "mention", mention: next.mention });
       }
       if ("communicate" in next) {
         return Ok({ kind: "communicate", communication: next.communicate });

@@ -52,7 +52,7 @@ Delegation exists to reduce complexity. It must never create complexity.
 
 **Why:** unbounded delegation creates exponential state growth and unpredictable resource consumption.
 
-**How it is enforced:** the supervision tree is bounded to at most two active children per parent (`maxConcurrency: 2`, a literal), enforced by `requestSlot` / `releaseSlot` (`src/supervision/task-tree.ts`); further delegations queue FIFO. A child's budget is clamped to the parent's remaining headroom by `enforceSubtaskScope` (`src/supervision/scope.ts`), and the grant is debited from the parent immediately so two concurrent children cannot collectively exceed it. A failed root cascades an abort to all descendants via `abortEntireTree` (`src/supervision/abort.ts`).
+**How it is enforced:** the supervision tree is bounded to at most two active children per parent (`maxConcurrency: 2`, a literal), enforced by `requestSlot` / `releaseSlot` (`src/supervision/task-tree.ts`); further delegations queue FIFO. A child's budget is clamped to the parent's remaining headroom by `enforceSubtaskScope` (`src/supervision/scope.ts`), and the grant is debited from the parent immediately so two concurrent children cannot collectively exceed it. A failed root cascades an abort to all descendants via `abortEntireTree` (`src/supervision/abort.ts`). Delegation is also scoped by team: an agent may only delegate to (or mention) a teammate, computed by `registry.getTeammates` and enforced in the scheduler, so collaboration stays inside the team rather than reaching any agent in the system.
 
 ## 7. Trust Is Statistical
 

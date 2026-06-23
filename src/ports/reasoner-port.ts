@@ -68,15 +68,30 @@ export type CommunicationRequest = {
 };
 
 /**
+ * What the reasoner returns when it wants to mention a teammate: reference a
+ * named agent on the same team and leave them a note on this task. Unlike
+ * delegation, a mention does not spawn a child task or hand off work; it records
+ * a TaskID-attributable agent-to-agent Message (sender → receiver). It is scoped
+ * to the agent's team: the engine rejects a mention of a non-teammate.
+ */
+export type MentionRequest = {
+  /** Name of a teammate (an agent sharing this agent's `team`). */
+  agentName: string;
+  /** The note left for the mentioned teammate. */
+  message: string;
+};
+
+/**
  * A reasoner decision is explicit: commit to one action, delegate a scoped
- * sub-goal, communicate through a channel, or declare the task done. Completion
- * is never inferred from the reasoner failing or running out — those are
- * distinct, observable outcomes (a clean `done` versus an `Err` model/API
- * failure). This keeps `status: "completed"` trustworthy.
+ * sub-goal, mention a teammate, communicate through a channel, or declare the
+ * task done. Completion is never inferred from the reasoner failing or running
+ * out — those are distinct, observable outcomes (a clean `done` versus an `Err`
+ * model/API failure). This keeps `status: "completed"` trustworthy.
  */
 export type ReasonerDecision =
   | { kind: "act"; request: ActionRequest }
   | { kind: "delegate"; delegation: DelegationRequest }
+  | { kind: "mention"; mention: MentionRequest }
   | { kind: "communicate"; communication: CommunicationRequest }
   | { kind: "done"; reason?: string };
 

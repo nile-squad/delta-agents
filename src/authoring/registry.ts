@@ -47,6 +47,14 @@ export type Registry = {
   getActionsForAgent: (agentName: string) => Result<Action[], string>;
   getWorkflowsForAgent: (agentName: string) => Result<Workflow[], string>;
 
+  /**
+   * Names of the agent's teammates: other registered agents that share its
+   * non-empty `team`. An agent with no team has every other registered agent as
+   * an available peer (teams are opt-in scoping, not mandatory). Used to scope
+   * delegation and mentions so an agent only collaborates within its team.
+   */
+  getTeammates: (agentName: string) => string[];
+
   // Inspection (used by tests and diagnostics)
   listActions: () => string[];
   listWorkflows: () => string[];
@@ -159,6 +167,15 @@ export const createRegistry = (): Registry => {
       const agent = agents.get(agentName);
       if (agent === undefined) return Err(`agent "${agentName}" not found in registry`);
       return Ok(agent.workflows ?? []);
+    },
+
+    getTeammates: (agentName) => {
+      const self = agents.get(agentName);
+      const others = [...agents.values()].filter((a) => a.name !== agentName);
+      // No team declared: every other agent is an available peer (opt-in scoping).
+      if (self === undefined || self.team === undefined) return others.map((a) => a.name);
+      // Team declared: only agents sharing the same team.
+      return others.filter((a) => a.team === self.team).map((a) => a.name);
     },
 
     listActions: () => [...actions.keys()],

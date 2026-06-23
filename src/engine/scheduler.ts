@@ -43,7 +43,7 @@ import { retrieveContext, makeContextRemember } from "../memory";
 import { computeActionValue } from "../governance";
 import { enforceSubtaskScope, requestSlot, releaseSlot, abortEntireTree } from "../supervision";
 import { initialRiskState, initialTrust } from "../governance";
-import { taskId, checkpointId } from "../shared/id";
+import { taskId, checkpointId, messageId } from "../shared/id";
 
 // ── Step outcome ────────────────────────────────────────────────────────────
 
@@ -175,10 +175,14 @@ const stepTask = async ({
   // calling a tool. Each step is retried with jittered exponential backoff so a
   // transient failure does not sink the task (spec: resilience at the model
   // boundary). The same input is replayed on each attempt.
+  // Delegation and mention targets are the agent's teammates: agents sharing its
+  // team (or every other agent when it has no team). This scopes collaboration to
+  // the team so an agent never hands work to, or pulls in, an agent outside it.
+  const teammates = registry.getTeammates(agent.name);
   const reasonInput = {
     task: { ...task, risk: snapshot.risk, trust: snapshot.trust, updatedAt: new Date() },
     availableActions: rankedActions.map((a) => a.name),
-    availableAgents: registry.listAgents().filter((name) => name !== agent.name),
+    availableAgents: teammates,
     availableChannels: (agent.channels ?? []).filter((c) => c.enabled).map((c) => c.type),
     availableSkills: (agent.skills ?? []).filter((s) => s.active).map((s) => ({ name: s.name, description: s.description })),
     agentRole: agent.role,
@@ -215,9 +219,48 @@ const stepTask = async ({
     return { kind: "natural-done", snapshot };
   }
 
-  // Delegation is handled by the scheduler (it owns the tree + slots).
+  // Delegation is handled by the scheduler (it owns the tree + slots). Scoped to
+  // the team: an agent may only delegate to a teammate. This is enforced here, not
+  // just by what the reasoner is offered, so the boundary holds even if a reasoner
+  // proposes an out-of-team target. A registered agent on another team is rejected
+  // here; an unknown agent falls through to the scheduler's clearer "not found".
   if (decision.kind === "delegate") {
+    const target = decision.delegation.agentName;
+    if (registry.getAgent(target).isOk && !teammates.includes(target)) {
+      return {
+        kind: "failed",
+        snapshot,
+        reason: `cannot delegate to "${target}": not a teammate of "${agent.name}"`,
+      };
+    }
     return { kind: "delegate", snapshot, delegation: decision.delegation };
+  }
+
+  // A mention references a teammate and leaves them a note on this task. Unlike
+  // delegation it spawns no child task; it records a TaskID-attributable
+  // agent-to-agent Message and the loop continues. It is scoped to the team: a
+  // mention of a non-teammate is rejected (the agent cannot reach outside it).
+  if (decision.kind === "mention") {
+    const { agentName: mentioned, message } = decision.mention;
+    if (!teammates.includes(mentioned)) {
+      return {
+        kind: "failed",
+        snapshot,
+        reason: `cannot mention "${mentioned}": not a teammate of "${agent.name}"`,
+      };
+    }
+    const saved = await store.saveMessage({
+      id: messageId(),
+      taskId: snapshot.taskId,
+      sender: agent.name,
+      receiver: mentioned,
+      payload: message,
+      createdAt: new Date(),
+    });
+    if (saved.isErr) {
+      return { kind: "failed", snapshot, reason: `failed to record mention: ${saved.error}` };
+    }
+    return { kind: "stepped", snapshot };
   }
 
   // Communication routes through the shared dispatch (resolve channel → approval

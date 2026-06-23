@@ -618,9 +618,11 @@ describe("createOpenAIReasoner — delegation", () => {
 
     const tools = capturedBody!["tools"] as Array<{ function: { name: string } }>;
     expect(tools.map((t) => t.function.name)).toContain("delegate_task");
+    // Teammates also unlock the mention tool.
+    expect(tools.map((t) => t.function.name)).toContain("mention_teammate");
     const messages = capturedBody!["messages"] as Array<{ role: string; content: string }>;
     const userMsg = messages.find((m) => m.role === "user");
-    expect(userMsg?.content).toMatch(/Available agents to delegate to: research-agent/);
+    expect(userMsg?.content).toMatch(/Available teammates \(to delegate to or mention\): research-agent/);
   });
 
   it("does not offer delegate_task when no other agents are available", async () => {

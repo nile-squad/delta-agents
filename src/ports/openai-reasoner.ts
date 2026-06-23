@@ -170,6 +170,38 @@ const buildDelegateTool = (availableAgents: string[]): ChatCompletionTool => ({
   },
 });
 
+// The model calls this to mention a teammate: leave a named teammate a note on
+// this task without handing off work. Unlike delegate_task it spawns no child
+// task; the engine records a TaskID-attributable agent-to-agent message. Only
+// offered when the agent has teammates (the same availableAgents set).
+const MENTION_TOOL_NAME = "mention_teammate";
+
+const buildMentionTool = (availableAgents: string[]): ChatCompletionTool => ({
+  type: "function",
+  function: {
+    name: MENTION_TOOL_NAME,
+    description:
+      "Leave a note for a teammate on this task without handing off work. Use this to " +
+      "reference or loop in a teammate; use delegate_task instead when you want them to own a sub-goal.",
+    parameters: {
+      type: "object",
+      properties: {
+        agent_name: {
+          type: "string",
+          description: "Exact name of the teammate to mention. Must be one of the available agents.",
+          enum: availableAgents,
+        },
+        message: {
+          type: "string",
+          description: "The note left for the mentioned teammate.",
+        },
+      },
+      required: ["agent_name", "message"],
+      additionalProperties: false,
+    },
+  },
+});
+
 // The model calls this to send a message through one of the agent's bound
 // channels (Slack, email, WhatsApp, …). Only offered when the agent has at least
 // one channel. The engine routes it through the channel, optionally gating it
@@ -219,7 +251,10 @@ const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
       "Call request_action with the action name and the parameters that action needs.",
       "Only call actions listed in the user message — all others are outside your authority.",
       ...(canDelegate
-        ? ["Call delegate_task to hand a scoped sub-goal to one of the available agents."]
+        ? [
+            "Call delegate_task to hand a scoped sub-goal to one of the available agents.",
+            "Call mention_teammate to leave one of them a note without handing off work.",
+          ]
         : []),
       ...(canCommunicate
         ? ["Call send_message to send a message through one of the available channels."]
@@ -234,7 +269,7 @@ const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
     `Available actions: ${availableActions.join(", ")}`,
   ];
   if (canDelegate) {
-    userLines.push(`Available agents to delegate to: ${availableAgents.join(", ")}`);
+    userLines.push(`Available teammates (to delegate to or mention): ${availableAgents.join(", ")}`);
   }
   if (canCommunicate) {
     userLines.push(`Available channels to send through: ${availableChannels.join(", ")}`);
@@ -344,6 +379,24 @@ const parseToolCall = (
     });
   }
 
+  // Mention — leave a teammate a note on this task (no child task spawned).
+  if (call.function.name === MENTION_TOOL_NAME) {
+    const agentName = args["agent_name"];
+    if (typeof agentName !== "string" || agentName.length === 0) {
+      return Err(`openai-reasoner: mention agent_name is missing or not a string in arguments: ${JSON.stringify(args)}`);
+    }
+    if (!availableAgents.includes(agentName)) {
+      return Err(
+        `openai-reasoner: model chose to mention "${agentName}" which is not in availableAgents ${JSON.stringify(availableAgents)}`,
+      );
+    }
+    const message = args["message"];
+    if (typeof message !== "string" || message.length === 0) {
+      return Err(`openai-reasoner: mention message is missing or not a string in arguments: ${JSON.stringify(args)}`);
+    }
+    return Ok({ kind: "mention", mention: { agentName, message } });
+  }
+
   // Communication — send a message through a bound channel.
   if (call.function.name === SEND_MESSAGE_TOOL_NAME) {
     const channel = args["channel"];
@@ -364,7 +417,7 @@ const parseToolCall = (
 
   if (call.function.name !== "request_action") {
     return Err(
-      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action", "delegate_task", "send_message", or "finish_task"`,
+      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action", "delegate_task", "mention_teammate", "send_message", or "finish_task"`,
     );
   }
 
@@ -436,6 +489,7 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
       // tool needs another agent, a send_message tool needs a bound channel.
       const tools: ChatCompletionTool[] = [buildTool(availableActions), buildFinishTool()];
       if (availableAgents.length > 0) tools.push(buildDelegateTool(availableAgents));
+      if (availableAgents.length > 0) tools.push(buildMentionTool(availableAgents));
       if (availableChannels.length > 0) tools.push(buildCommunicateTool(availableChannels));
 
       let response: OpenAI.Chat.Completions.ChatCompletion;

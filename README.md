@@ -189,6 +189,22 @@ delta.phase({
 });
 ```
 
+## Teams
+
+An agent has a role and can belong to a team. Teams scope collaboration: an agent may only delegate work to, or mention, agents that share its `team`. An agent with no team treats every other agent as an available peer (teams are opt-in).
+
+```ts
+const researcher = delta.agent({ name: "researcher", role: "Researcher", team: "support", /* ... */ });
+const writer = delta.agent({ name: "writer", role: "Writer", team: "support", /* ... */ });
+```
+
+Within a team an agent can interact two ways:
+
+- **Delegate** a scoped sub-goal to a teammate, which creates a bounded child task the teammate owns.
+- **Mention** a teammate to leave them a note on the current task, without handing off work. A mention records a TaskID-attributable agent-to-agent message; it does not spawn a child task.
+
+Both are scoped at the engine, not just hidden from the model: a delegation or mention that targets an agent outside the team is rejected.
+
 ## Cost Model
 
 Cost is a multi-axis vector. The engine tracks and enforces all declared axes:
