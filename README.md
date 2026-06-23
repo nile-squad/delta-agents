@@ -305,7 +305,8 @@ The TaskID is the unit of governance. Authorization, budgeting, auditing, checkp
 | `Action` | A single executable operation with a validation schema, optional anticipated risk and cost, optional prerequisites, and lifecycle hooks. |
 | `Workflow` | An ordered set of phases describing a procedure. |
 | `Phase` | A stage of a workflow with its actions, checkpoint flag, and supervision policy. |
-| `Agent` | A role with its actions, workflows, skills, and channels. |
+| `DataSource` | A named, owned store of governed CRUD operations. External sources are less trusted by default. |
+| `Agent` | A role with its actions, workflows, data sources, skills, and channels. |
 | `Channel` | An inbound or outbound communication surface. |
 | `Skill` | A reusable capability description attached to an agent. |
 
