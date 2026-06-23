@@ -306,10 +306,16 @@ describeLive("P6 delegation is bounded", () => {
 });
 
 // ── P7. Trust is statistical ─────────────────────────────────────────────────────
+// Deterministic: trust moving with evidence is an engine mechanic. A mock drives
+// the failing action so the failure evidence is guaranteed; a live model may or
+// may not call the action on a given run, which is about the model, not the
+// principle. (P1, P2, P6 carry the live-model-cannot-bypass angle.)
 
-describeLive("P7 trust is statistical", () => {
-  it("lowers trust below the 0.5 start when an action fails under a live model", async () => {
-    const delta = await liveEngine();
+describe("P7 trust is statistical", () => {
+  it("lowers trust below the 0.5 start when an action fails", async () => {
+    const delta = await createDeltaEngine({
+      reasoner: createMockReasoner({ responses: [{ actionName: "charge-card", input: { amount: 20 } }] }),
+    });
     const flaky = delta.action({
       name: "charge-card",
       description: "charge the customer's card",
@@ -325,11 +331,7 @@ describeLive("P7 trust is statistical", () => {
     });
     delta.deploy(agent);
 
-    const result = await delta.send({
-      goal: "Charge the customer 20 dollars.",
-      agentName: "payments-agent",
-      budget: GENEROUS,
-    });
+    const result = await delta.send({ goal: "Charge the customer 20 dollars.", agentName: "payments-agent" });
 
     expect(result.isOk).toBe(true);
     if (!result.isOk) return;
@@ -337,7 +339,7 @@ describeLive("P7 trust is statistical", () => {
     expect(inspected.isOk).toBe(true);
     if (!inspected.isOk) return;
     // Evidence moved trust: a failed execution was recorded and the score fell
-    // below the neutral 0.5 start. Trust is earned and lost by evidence, not asserted.
+    // below the neutral 0.5 start. Trust is earned and lost by evidence.
     expect(inspected.value.task.trust.failedExecutions).toBeGreaterThan(0);
     expect(inspected.value.task.trust.score).toBeLessThan(0.5);
   });
