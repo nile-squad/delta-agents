@@ -308,13 +308,17 @@ API surface, real-DB lifecycle tests, Node/tsup build). The `abort-tree`
 supervision strategy now cascades the full tree via `abortEntireTree` (it was
 previously aliased to the single-task `abort-subtree`).
 
-Known deferred items, by design, not bugs:
-- Mid-workflow checkpoint resume: a workflow task resumes from the start of the
-  workflow, not the failed phase. Side-effectful actions must be idempotent.
-- `DataSource` authoring type: specified but not implemented. See
-  `docs/resources.md` for the honest status.
-- Cost friction scores only the `tokens` and `durationMs` axes; `memory` and
-  `latency` are budgeted and tracked but excluded from the friction ratio.
+Follow-up items, now all shipped:
+- Mid-workflow resume: a workflow task now re-enters the workflow engine on
+  resume (it previously fell into the reasoner loop) and skips phases proven
+  complete by a checkpoint, so finished side-effectful phases do not re-run.
+  Re-entering the middle of a single phase is still out of scope; the recovery
+  boundary on resume is the phase.
+- `DataSource` authoring type: implemented. A named, owned bundle of governed
+  CRUD operations whose operations are full actions. See `docs/resources.md` and
+  `docs/ADR-007-datasource-design.md`.
+- Cost friction now scores every budgeted axis (`memory` and `latency` included
+  when the budget declares them), not only `tokens` and `durationMs`.
 
 ---
 

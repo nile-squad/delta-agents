@@ -150,6 +150,69 @@ export type Skill = {
   active: boolean;
 };
 
+/**
+ * Who owns the data a DataSource reads and writes.
+ *
+ * "internal" — the system running the agent owns the store (its own database).
+ * "external" — a third party owns it (a partner API, a customer system). The
+ * distinction is recorded as audit metadata so an operator can see, per task,
+ * whether the agent touched data outside its own trust boundary. It is
+ * descriptive, not an automatic risk multiplier: each operation declares its
+ * own `risk` (see ADR-007).
+ */
+export type DataSourceOwnership = "internal" | "external";
+
+/**
+ * A non-secret descriptor of how a DataSource's operations authenticate.
+ *
+ * The engine NEVER stores or transmits credentials. Each operation `fn` owns its
+ * own secrets through its closure, exactly as a plain action's fn does. This
+ * field records only the mechanism (for example "oauth2", "api-key", "iam") so
+ * the authoring surface and audit trail can describe the integration without
+ * holding a secret (ADR-007, AGENTS.md secrets posture).
+ */
+export type DataSourceAuthentication = {
+  type: string;
+};
+
+/**
+ * A named, owned bundle of governed CRUD operations over one data store.
+ *
+ * Each operation is a full {@link Action}: it carries a schema and flows through
+ * the same execution gateway as any other action, so a data read or write is
+ * governed identically (schema validation, legality, approval, budget, risk,
+ * trust, audit). The spec's bare `Fn` per operation cannot be governed because
+ * the gateway is schema-first (invariant 4), so each operation is promoted to an
+ * Action (ADR-007).
+ *
+ * `contentType` is a free-form descriptor of the records the source holds (the
+ * spec's `ContentTypes` is undefined and AGENTS.md bans enum). At least one
+ * operation must be defined. An agent reaches a DataSource by listing it in
+ * `dataSources`; the engine then exposes its operations as governed actions.
+ */
+export type DataSource = {
+  name: string;
+  description: string;
+  ownership: DataSourceOwnership;
+  contentType: string;
+  authentication?: DataSourceAuthentication;
+  actions: {
+    retrieve?: Action;
+    create?: Action;
+    update?: Action;
+    delete?: Action;
+  };
+};
+
+/** The four CRUD slots a DataSource may define, in a fixed order for iteration. */
+export const DATA_SOURCE_OPERATIONS = ["retrieve", "create", "update", "delete"] as const;
+
+/** Collect the defined operations of a DataSource as a flat Action list. */
+export const dataSourceActions = (dataSource: DataSource): Action[] =>
+  DATA_SOURCE_OPERATIONS.map((op) => dataSource.actions[op]).filter(
+    (action): action is Action => action !== undefined,
+  );
+
 // Outbound/inbound transports an agent may use. Covers the spec's original set
 // plus the platforms the Chat SDK message layer bridges to. The engine treats
 // the type only as a selector label; the transport lives behind sendMessage.
@@ -199,5 +262,11 @@ export type Agent = {
   workflows?: Workflow[];
   skills?: Skill[];
   channels?: Channel[];
+  /**
+   * Data stores this agent may read from and write to. The engine flattens each
+   * DataSource's defined operations into the agent's reachable action set, so a
+   * data operation is discovered and governed exactly like any other action.
+   */
+  dataSources?: DataSource[];
   team?: string;
 };

@@ -1,25 +1,60 @@
 # DataSources
 
-> **Status:** Planned, not implemented. There is no `DataSource` authoring type in the current codebase. This document records the intended design so it is not mistaken for a shipped feature.
+A `DataSource` is a named, owned store of governed CRUD operations. It groups up to four operations (`retrieve`, `create`, `update`, `delete`) over one data store, with ownership and content-type metadata. Each operation is a full action, so a data read or write is governed exactly like any other action: schema validation, legality, approval, budget, risk, trust, and a TaskID-attributable audit record.
 
-The canonical specification describes a `DataSource` authoring type: a developer-configured handle to an internal or external data store that an agent can read from and write to under governance. As of this writing none of it exists in `src/`. There is no `delta.dataSource` method on the engine, no `DataSource` type, and no execution path that touches one. Do not write code against this document.
+See [ADR-007](./ADR-007-datasource-design.md) for the design decisions (the spec left parts of the `DataSource` contract undefined) and [architecture.md](./architecture.md) for the execution gateway every operation flows through.
 
-## What is shipped today
+## Defining a DataSource
 
-Agents reach data through **actions**, not DataSources. An action wraps a `fn` that the developer supplies; that `fn` is free to call a database, an HTTP API, or any other resource. The governance the engine provides (schema validation, legality, approval gates, budget, risk, trust, audit) applies to the action, not to a typed data handle. See [architecture.md](./architecture.md) for the execution gateway and [the authoring API](./architecture.md#two-tier-authoring-versus-runtime).
+Create each operation with `delta.action` (so it is validated and registered), then attach the operations to a data source:
 
-So the capability "an agent reads from a store" already works through `delta.action`. What a `DataSource` would add is a first-class, declarative authoring type with built-in CRUD semantics and ownership metadata, rather than a hand-written `fn`.
+```ts
+const retrieveUser = delta.action({
+  name: "user-db.retrieve",
+  description: "read a user record by id",
+  schema: z.object({ id: z.string() }),
+  risk: 2,
+  fn: async ({ id }) => Ok(await db.users.find(id)),
+});
 
-## Intended shape (from the spec, not yet built)
+const userDb = delta.dataSource({
+  name: "user-db",
+  description: "the application user store",
+  ownership: "internal",
+  contentType: "application/json",
+  actions: { retrieve: retrieveUser },
+});
 
-When implemented, a `DataSource` is expected to carry:
+const agent = delta.agent({
+  name: "support-agent",
+  description: "answers user questions",
+  role: "Support",
+  rolePrompt: "Help the user.",
+  actions: [],
+  dataSources: [userDb],
+});
+```
 
-- `name` and `description`.
-- `ownership`: internal (the system owns the data) or external (a third party owns it). This is expected to influence default risk and approval posture.
-- `contentType`: the shape of the records the source holds.
-- `authentication`: how the engine authenticates to the source.
-- CRUD actions: `retrieve`, `create`, `update`, `delete`, each governed through the same execution gateway as a normal action.
+When the agent is defined, the engine flattens every attached data source's operations into the agent's reachable action set. From that point the operations are discovered and governed exactly like any other action, so they can be used in the free reasoner loop or referenced by name in a workflow phase.
 
-These are intentions drawn from the specification, not a contract. The field names and semantics may change when the type is actually built.
+## Fields
+
+| Field | Meaning |
+|-------|---------|
+| `name` | Unique data source name. |
+| `description` | What the store holds and why the agent uses it. |
+| `ownership` | `"internal"` (the system owns the store) or `"external"` (a third party owns it). Recorded as audit metadata so an operator can see whether the agent touched data outside its trust boundary. It does not change an operation's risk on its own; declare `risk` per operation. |
+| `contentType` | Free-form descriptor of the records the source holds (for example `"application/json"`). |
+| `authentication` | Optional. `{ type: string }` describing the mechanism only (for example `"oauth2"`). Never a credential: the operation `fn` owns its own secrets through its closure, and the engine never stores or transmits secrets. |
+| `actions` | The defined operations: `retrieve`, `create`, `update`, `delete`. At least one is required. Each is a full action. |
+
+## Why operations are full actions
+
+The execution gateway is schema-first: every operation must carry a schema (invariant 4), and governance is defined on actions. A bare function cannot be governed. Promoting each CRUD operation to an action means a data read or write passes through the same single chokepoint as everything else, with no DataSource-specific execution path to audit separately. See [ADR-007](./ADR-007-datasource-design.md).
+
+## Limits and conventions
+
+- Operation names are not auto-namespaced. Two data sources that each define an operation literally named `retrieve` would collide in the registry. Namespace by convention (`user-db.retrieve`, `orders.retrieve`).
+- A DataSource is authoring-time state held in the registry; nothing about it is written to the storage port.
 
 See [delta-agents.spec.md](../delta-agents.spec.md) for the canonical specification.

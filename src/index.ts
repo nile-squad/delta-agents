@@ -25,6 +25,9 @@ export type {
   Channel,
   ChannelType,
   Skill,
+  DataSource,
+  DataSourceOwnership,
+  DataSourceAuthentication,
   Agent,
 } from "./authoring/types";
 

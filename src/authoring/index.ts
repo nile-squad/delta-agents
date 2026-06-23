@@ -12,15 +12,20 @@ export type {
   Skill,
   ChannelType,
   Channel,
+  DataSourceOwnership,
+  DataSourceAuthentication,
+  DataSource,
   Agent,
 } from "./types";
+export { DATA_SOURCE_OPERATIONS, dataSourceActions } from "./types";
 
 export type { Registry } from "./registry";
 export { createRegistry } from "./registry";
 
-export { validateAction, validatePhase, validateWorkflow, validateAgent } from "./validate";
+export { validateAction, validatePhase, validateWorkflow, validateAgent, validateDataSource } from "./validate";
 
 export { makeDefineAction } from "./define-action";
 export { makeDefinePhase } from "./define-phase";
 export { makeDefineWorkflow } from "./define-workflow";
+export { makeDefineDataSource } from "./define-data-source";
 export { makeDefineAgent } from "./define-agent";

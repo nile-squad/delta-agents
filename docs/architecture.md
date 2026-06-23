@@ -87,7 +87,7 @@ When the scheduler resumes a previously paused task, it rehydrates the supervisi
 
 The developer surface is split cleanly:
 
-**Authoring API.** These methods define capabilities. They run before `deploy`, return definitions, and are read-only during execution. `delta.action`, `delta.workflow`, `delta.phase`, and `delta.agent` populate the `Registry`. Nothing in the authoring API touches the store or creates runtime state.
+**Authoring API.** These methods define capabilities. They run before `deploy`, return definitions, and are read-only during execution. `delta.action`, `delta.workflow`, `delta.phase`, `delta.dataSource`, and `delta.agent` populate the `Registry`. A `DataSource` is a named bundle of governed CRUD operations; its operations are full actions, flattened into the agent's reachable action set so a data read or write is governed exactly like any other action (see [resources.md](./resources.md)). Nothing in the authoring API touches the store or creates runtime state.
 
 **Runtime API.** These methods drive execution. `delta.deploy` gates execution by marking an agent as deployed in the registry. `delta.send`, `delta.pause`, `delta.resume`, `delta.approve`, `delta.inspect`, and `delta.lastTask` all touch the store. The engine constructs and owns all runtime types (`Task`, `Execution`, `Checkpoint`, `TaskTree`, `EscalationRecord`, `ApprovalRequest`, `Message`, `Memory`). The developer never constructs these.
 

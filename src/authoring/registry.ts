@@ -10,7 +10,7 @@
  * (spec §Bounded State-Space Model, principle 2).
  */
 
-import type { Action, Workflow, Phase, Agent } from "./types";
+import type { Action, Workflow, Phase, Agent, DataSource } from "./types";
 import { Err, Ok } from "slang-ts";
 import type { Result } from "slang-ts";
 
@@ -20,6 +20,7 @@ export type Registry = {
   registerWorkflow: (workflow: Workflow) => Result<Workflow, string>;
   registerPhase: (phase: Phase) => Result<Phase, string>;
   registerAgent: (agent: Agent) => Result<Agent, string>;
+  registerDataSource: (dataSource: DataSource) => Result<DataSource, string>;
 
   /**
    * Mark an agent as deployed so send() may accept tasks for it.
@@ -40,6 +41,7 @@ export type Registry = {
   getWorkflow: (name: string) => Result<Workflow, string>;
   getPhase: (name: string) => Result<Phase, string>;
   getAgent: (name: string) => Result<Agent, string>;
+  getDataSource: (name: string) => Result<DataSource, string>;
 
   // Discovery (used by state-space module)
   getActionsForAgent: (agentName: string) => Result<Action[], string>;
@@ -49,6 +51,7 @@ export type Registry = {
   listActions: () => string[];
   listWorkflows: () => string[];
   listAgents: () => string[];
+  listDataSources: () => string[];
 };
 
 /**
@@ -61,6 +64,7 @@ export const createRegistry = (): Registry => {
   const workflows = new Map<string, Workflow>();
   const phases = new Map<string, Phase>();
   const agents = new Map<string, Agent>();
+  const dataSources = new Map<string, DataSource>();
   /**
    * Tracks agents that have been explicitly deployed via delta.deploy().
    * An agent that is defined (registered) but not deployed must not accept
@@ -102,6 +106,14 @@ export const createRegistry = (): Registry => {
       return Ok(agent);
     },
 
+    registerDataSource: (dataSource) => {
+      if (dataSources.has(dataSource.name)) {
+        return Err(`data source "${dataSource.name}" is already registered`);
+      }
+      dataSources.set(dataSource.name, dataSource);
+      return Ok(dataSource);
+    },
+
     getAction: (name) => {
       const action = actions.get(name);
       return action !== undefined ? Ok(action) : Err(`action "${name}" not found in registry`);
@@ -120,6 +132,11 @@ export const createRegistry = (): Registry => {
     getAgent: (name) => {
       const agent = agents.get(name);
       return agent !== undefined ? Ok(agent) : Err(`agent "${name}" not found in registry`);
+    },
+
+    getDataSource: (name) => {
+      const dataSource = dataSources.get(name);
+      return dataSource !== undefined ? Ok(dataSource) : Err(`data source "${name}" not found in registry`);
     },
 
     deployAgent: (agentName) => {
@@ -147,5 +164,6 @@ export const createRegistry = (): Registry => {
     listActions: () => [...actions.keys()],
     listWorkflows: () => [...workflows.keys()],
     listAgents: () => [...agents.keys()],
+    listDataSources: () => [...dataSources.keys()],
   };
 };

@@ -140,7 +140,8 @@ These methods define what an agent can do. They return the definitions you pass 
 | `delta.action(def)` | Define a named, schema-validated operation. Returns the definition. |
 | `delta.workflow(def)` | Define an ordered procedure composed of phases. Returns the definition. |
 | `delta.phase(def)` | Define a phase within a workflow. Returns the definition. |
-| `delta.agent(def)` | Define a role with its allowed actions, workflows, skills, and channels. Returns the definition. |
+| `delta.dataSource(def)` | Define a named, owned store of governed CRUD operations. Returns the definition. |
+| `delta.agent(def)` | Define a role with its allowed actions, workflows, data sources, skills, and channels. Returns the definition. |
 
 ### Runtime methods
 

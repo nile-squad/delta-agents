@@ -14,7 +14,7 @@ import type { Result } from "slang-ts";
 import type { Cost, Task, Execution, Checkpoint, ApprovalRequest, EscalationRecord } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort } from "../ports/reasoner-port";
-import type { Action, Workflow, Phase, Agent } from "../authoring/types";
+import type { Action, Workflow, Phase, Agent, DataSource } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 
 export type DeltaEngineConfig = {
@@ -94,7 +94,9 @@ export type DeltaEngine = {
   workflow: (def: Workflow) => Workflow;
   /** Define a phase within a workflow. */
   phase: (def: Phase) => Phase;
-  /** Define a role with its allowed actions and workflows. */
+  /** Define a named, owned store of governed CRUD operations. */
+  dataSource: (def: DataSource) => DataSource;
+  /** Define a role with its allowed actions, workflows, and data sources. */
   agent: (def: Agent) => Agent;
 
   // ── Runtime methods (drive execution) ─────────────────────────────────────

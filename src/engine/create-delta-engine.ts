@@ -29,6 +29,7 @@ import { makeDefineAction } from "../authoring/define-action";
 import { makeDefineWorkflow } from "../authoring/define-workflow";
 import { makeDefinePhase } from "../authoring/define-phase";
 import { makeDefineAgent } from "../authoring/define-agent";
+import { makeDefineDataSource } from "../authoring/define-data-source";
 import type { Message } from "../shared/types";
 import { taskId, messageId } from "../shared/id";
 import { initialRiskState, initialTrust } from "../governance";
@@ -50,6 +51,7 @@ export const createDeltaEngine = ({
   const action = makeDefineAction({ registry });
   const workflow = makeDefineWorkflow({ registry });
   const phase = makeDefinePhase({ registry });
+  const dataSource = makeDefineDataSource({ registry });
   const agent = makeDefineAgent({ registry });
 
   // ── Runtime methods ──────────────────────────────────────────────────────
@@ -200,5 +202,5 @@ export const createDeltaEngine = ({
     return store.getLatestTaskByAgent(agentName);
   };
 
-  return { action, workflow, phase, agent, deploy, send, approve, pause, resume, inspect, lastTask };
+  return { action, workflow, phase, dataSource, agent, deploy, send, approve, pause, resume, inspect, lastTask };
 };

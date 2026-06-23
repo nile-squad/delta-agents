@@ -20,7 +20,8 @@
 
 import type { Result } from "slang-ts";
 import { Ok, Err } from "slang-ts";
-import type { Action, Workflow, Phase, Agent, ActionRef, Branch } from "./types";
+import type { Action, Workflow, Phase, Agent, ActionRef, Branch, DataSource } from "./types";
+import { DATA_SOURCE_OPERATIONS, dataSourceActions } from "./types";
 
 const isBranch = (ref: ActionRef): ref is Branch =>
   typeof ref === "object" && "action" in ref;
@@ -133,6 +134,51 @@ export const validateWorkflow = (workflow: Workflow): Result<Workflow, string> =
     return Err(`workflow "${workflow.name}": phases list must be non-empty`);
   }
   return Ok(workflow);
+};
+
+// ---------------------------------------------------------------------------
+// DataSource
+// ---------------------------------------------------------------------------
+
+export const validateDataSource = (dataSource: DataSource): Result<DataSource, string> => {
+  if (!dataSource.name || dataSource.name.trim() === "") {
+    return Err("data source name must be a non-empty string");
+  }
+  if (!dataSource.description || dataSource.description.trim() === "") {
+    return Err(`data source "${dataSource.name}": description must be a non-empty string`);
+  }
+  if (dataSource.ownership !== "internal" && dataSource.ownership !== "external") {
+    return Err(`data source "${dataSource.name}": ownership must be "internal" or "external"`);
+  }
+  if (!dataSource.contentType || dataSource.contentType.trim() === "") {
+    return Err(`data source "${dataSource.name}": contentType must be a non-empty string`);
+  }
+  if (dataSource.authentication !== undefined) {
+    const authType = dataSource.authentication.type;
+    if (!authType || authType.trim() === "") {
+      return Err(`data source "${dataSource.name}": authentication.type must be a non-empty string when declared`);
+    }
+  }
+
+  // At least one CRUD operation must be defined — an empty data source is useless
+  // and almost always a mistake.
+  const operations = dataSourceActions(dataSource);
+  if (operations.length === 0) {
+    return Err(
+      `data source "${dataSource.name}": at least one operation (${DATA_SOURCE_OPERATIONS.join(", ")}) must be defined`,
+    );
+  }
+
+  // Each defined operation is a full action and must pass action validation:
+  // a data read or write is governed exactly like any other action.
+  for (const action of operations) {
+    const result = validateAction(action);
+    if (result.isErr) {
+      return Err(`data source "${dataSource.name}": ${result.error}`);
+    }
+  }
+
+  return Ok(dataSource);
 };
 
 // ---------------------------------------------------------------------------

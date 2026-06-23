@@ -10,24 +10,47 @@
  * programming error.
  */
 
-import type { Agent } from "./types";
+import type { Agent, Action } from "./types";
+import { dataSourceActions } from "./types";
 import type { Registry } from "./registry";
 import { validateAgent } from "./validate";
+
+/**
+ * Merge the agent's declared actions with the operations of every attached
+ * DataSource, de-duplicated by name. This is what makes a data operation
+ * reachable: once it is in the agent's action set, discovery, the gateway, and
+ * the workflow engine all govern it exactly like any other action, with no
+ * special-casing downstream (ADR-007). An operation already listed directly in
+ * `actions` is not duplicated.
+ */
+const expandActions = (definition: Agent): Action[] => {
+  const byName = new Map<string, Action>();
+  for (const action of definition.actions) byName.set(action.name, action);
+  for (const dataSource of definition.dataSources ?? []) {
+    for (const action of dataSourceActions(dataSource)) byName.set(action.name, action);
+  }
+  return [...byName.values()];
+};
 
 export const makeDefineAgent = ({ registry }: { registry: Registry }) =>
   (definition: Agent): Agent => {
     const knownActionNames = new Set(registry.listActions());
     const knownWorkflowNames = new Set(registry.listWorkflows());
 
-    const validation = validateAgent(definition, knownActionNames, knownWorkflowNames);
+    // Flatten DataSource operations into the agent's effective action set so the
+    // rest of the engine sees one uniform action list (the data operations carry
+    // the same governance as any action).
+    const expanded: Agent = { ...definition, actions: expandActions(definition) };
+
+    const validation = validateAgent(expanded, knownActionNames, knownWorkflowNames);
     if (validation.isErr) {
       throw new Error(`delta.agent validation failed: ${validation.error}`);
     }
 
-    const result = registry.registerAgent(definition);
+    const result = registry.registerAgent(expanded);
     if (result.isErr) {
       throw new Error(`delta.agent registration failed: ${result.error}`);
     }
 
-    return definition;
+    return expanded;
   };
