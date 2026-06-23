@@ -81,6 +81,32 @@ describe("detectFriction", () => {
     ).not.toThrow();
   });
 
+  it("scores the memory axis when the budget declares it", () => {
+    // tokens/durationMs spend is zero, but 80% of the memory budget is consumed
+    // against only 10% progress. With memory scored, avgCostRatio = 0.8/3 ≈ 0.267
+    // and friction ≈ 2.67, above threshold. If memory were ignored the ratio would
+    // be 0 and this would read as stable, so this proves the axis is counted.
+    const result = detectFriction({
+      spent: { tokens: 0, durationMs: 0, memory: 800 },
+      budget: { tokens: 1000, durationMs: 60_000, memory: 1000 },
+      progressRatio: 0.1,
+    });
+    expect(result.isUnstable).toBe(true);
+    expect(result.frictionRatio).toBeGreaterThan(FRICTION_THRESHOLD);
+  });
+
+  it("ignores an axis the budget does not declare (no dilution)", () => {
+    // The budget declares only tokens and durationMs (both at 80% spend). The
+    // spent memory is huge but unbudgeted, so it must NOT enter the ratio. The
+    // friction is therefore 0.8 / 0.5 = 1.6, exactly as if memory were absent.
+    const result = detectFriction({
+      spent: { tokens: 800, durationMs: 48_000, memory: 9_999_999 },
+      budget: { tokens: 1000, durationMs: 60_000 },
+      progressRatio: 0.5,
+    });
+    expect(result.frictionRatio).toBeCloseTo(1.6, 5);
+  });
+
   it("frictionRatio is proportional to cost-to-progress imbalance", () => {
     const mild = detectFriction({
       spent: { tokens: 500, durationMs: 30_000 },

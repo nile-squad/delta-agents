@@ -54,7 +54,7 @@ Edge cases:
 
 The threshold for instability is `FRICTION_THRESHOLD = 2.5`. The friction ratio is capped at 10 for arithmetic safety and then normalized to `[0, 1]` (divided by 10) before being fed into risk evidence.
 
-Cost friction currently scores only the `tokens` and `durationMs` axes. The `memory` and `latency` axes are budgeted and tracked but not included in the `frictionRatio` calculation today.
+Cost friction scores every axis the budget declares. `tokens` and `durationMs` are always present; `memory` and `latency` are included in `avgCostRatio` only when the budget sets a limit for them. An undeclared axis is unlimited and never treated as zero, so it does not dilute the ratio. A budget of `{ tokens, durationMs }` scores exactly those two; a budget that also declares `memory` scores three.
 
 ## The Multi-Axis Cost Vector
 

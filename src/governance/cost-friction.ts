@@ -46,10 +46,23 @@ export const detectFriction = ({
 }): FrictionSignal => {
   const clampedProgress = Math.max(0, Math.min(1, progressRatio));
 
-  // Cost ratio: average of token and duration axes.
-  const tokenRatio = budget.tokens <= 0 ? 0 : spent.tokens / budget.tokens;
-  const durationRatio = budget.durationMs <= 0 ? 0 : spent.durationMs / budget.durationMs;
-  const avgCostRatio = (tokenRatio + durationRatio) / 2;
+  // Cost ratio: average over every axis the budget declares. tokens and
+  // durationMs are always present; memory and latency are scored only when the
+  // budget sets a limit for them. This mirrors isOverBudget/remainingCost: an
+  // undeclared axis is unlimited, never treated as zero, so it does not dilute
+  // the ratio. A budget of just { tokens, durationMs } scores exactly those two.
+  const axisRatio = (spentValue: number, budgetValue: number | undefined): number | undefined => {
+    if (budgetValue === undefined) return undefined; // axis not declared, not enforced
+    if (budgetValue <= 0) return 0;
+    return spentValue / budgetValue;
+  };
+  const ratios = [
+    axisRatio(spent.tokens, budget.tokens),
+    axisRatio(spent.durationMs, budget.durationMs),
+    axisRatio(spent.memory ?? 0, budget.memory),
+    axisRatio(spent.latency ?? 0, budget.latency),
+  ].filter((ratio): ratio is number => ratio !== undefined);
+  const avgCostRatio = ratios.length === 0 ? 0 : ratios.reduce((sum, r) => sum + r, 0) / ratios.length;
 
   // No cost spent yet — nothing to detect.
   if (avgCostRatio <= 0) {
