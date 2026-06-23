@@ -144,6 +144,13 @@ export type Message = {
   receiver: string;
   payload: Json;
   createdAt: Date;
+  /**
+   * Whether this message has been delivered to its receiver. Set when an agent
+   * folds a mention addressed to it into its reasoning context, so a mention is
+   * delivered exactly once across all of the recipient's tasks. Absent/false
+   * means undelivered. (Caller-queue messages use the per-task drain instead.)
+   */
+  consumed?: boolean;
 };
 
 // A retrieved-on-demand piece of context (spec principle 4: memory is retrieved,

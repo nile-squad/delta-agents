@@ -166,6 +166,22 @@ const stepTask = async ({
   // than carried in the loop.
   const retrieved = await retrieveContext({ store, agentName: agent.name, query: task.goal });
 
+  // Deliver mentions: fold any undelivered notes a teammate left for this agent
+  // into the reasoning context (informational, not a goal change), and mark each
+  // consumed so a mention reaches its recipient exactly once across all of its
+  // tasks. Caller-queue messages use the per-task drain instead, so they are
+  // excluded here by sender.
+  const inbound = await store.getMessagesByReceiver(agent.name);
+  const mentionLines: string[] = [];
+  if (inbound.isOk) {
+    for (const m of inbound.value) {
+      if (m.sender === "caller" || m.consumed === true) continue;
+      mentionLines.push(`Teammate ${m.sender} mentioned you: ${String(m.payload)}`);
+      await store.markMessageConsumed(m.id);
+    }
+  }
+  const reasonContext = [retrieved.context, ...mentionLines].filter((s) => s.length > 0).join("\n");
+
   // 2. Ask the reasoner what to do next. Delegation targets are every other
   // deployed agent (an agent does not delegate to itself; the supervision tree
   // and budget scoping bound the rest).
@@ -187,7 +203,7 @@ const stepTask = async ({
     availableSkills: (agent.skills ?? []).filter((s) => s.active).map((s) => ({ name: s.name, description: s.description })),
     agentRole: agent.role,
     rolePrompt: agent.rolePrompt,
-    ...(retrieved.context.length > 0 ? { context: retrieved.context } : {}),
+    ...(reasonContext.length > 0 ? { context: reasonContext } : {}),
   };
   const reasonResult = await retryWithJitter({
     fn: () => reasoner.reason(reasonInput),

@@ -155,6 +155,22 @@ export const createInMemoryStore = (): StoragePort => {
     getMessages: async (taskId) => {
       return Ok(messagesByTask.get(taskId) ?? []);
     },
+    getMessagesByReceiver: async (receiver) => {
+      const all = [...messagesByTask.values()].flat().filter((m) => m.receiver === receiver);
+      return Ok(all);
+    },
+    markMessageConsumed: async (id) => {
+      for (const [taskId, msgs] of messagesByTask.entries()) {
+        const idx = msgs.findIndex((m) => m.id === id);
+        if (idx !== -1) {
+          const updated = [...msgs];
+          updated[idx] = { ...msgs[idx]!, consumed: true };
+          messagesByTask.set(taskId, updated);
+          return Ok(undefined);
+        }
+      }
+      return Err(`message "${id}" not found`);
+    },
 
     // Memories — newest-first retrieval scoped to the owning agent
     saveMemory: async (memory) => {

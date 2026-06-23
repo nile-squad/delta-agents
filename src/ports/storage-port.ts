@@ -73,6 +73,12 @@ export type StoragePort = {
   // Messages — all attributable to a TaskID (invariant 9)
   saveMessage: (message: Message) => Promise<Result<Message, string>>;
   getMessages: (taskId: string) => Promise<Result<Message[], string>>;
+  /** All messages addressed to an agent (the `receiver`), across tasks. Used to
+   *  deliver mentions to a teammate regardless of which task they were sent from. */
+  getMessagesByReceiver: (receiver: string) => Promise<Result<Message[], string>>;
+  /** Mark a message delivered so a mention is folded into its receiver's context
+   *  exactly once (idempotent across the recipient's tasks and across restarts). */
+  markMessageConsumed: (id: string) => Promise<Result<void, string>>;
 
   // Memories — retrieved on demand, not carried (spec principle 4). Each write is
   // TaskID-attributable (invariant 8); retrieval scopes by owning agent.

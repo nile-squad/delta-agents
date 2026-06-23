@@ -121,6 +121,42 @@ describe("mentions", () => {
     if (child.isOk) expect(child.value).toBeNull();
   });
 
+  it("delivers a mention into the recipient's reasoning context exactly once", async () => {
+    const workerContexts: Array<string | undefined> = [];
+    let leadMentioned = false;
+    const reasoner: ReasonerPort = {
+      reason: async ({ agentRole, context }) => {
+        if (agentRole === "Lead") {
+          if (!leadMentioned) {
+            leadMentioned = true;
+            return Ok({ kind: "mention", mention: { agentName: "worker", message: "check order O-1" } });
+          }
+          return Ok({ kind: "done" });
+        }
+        // Worker: record the context it was given, then finish.
+        workerContexts.push(context);
+        return Ok({ kind: "done" });
+      },
+    };
+    const delta = await createDeltaEngine({ reasoner });
+    delta.deploy(delta.agent({ name: "lead", description: "d", role: "Lead", rolePrompt: ".", team: "alpha", actions: [anAction(delta, "plan")] }));
+    delta.deploy(delta.agent({ name: "worker", description: "d", role: "Worker", rolePrompt: ".", team: "alpha", actions: [anAction(delta, "do")] }));
+
+    // The lead mentions the worker (records an undelivered note).
+    const mentioned = await delta.send({ goal: "loop in worker", agentName: "lead" });
+    expect(mentioned.isOk).toBe(true);
+
+    // The worker runs: the mention is folded into its reasoning context.
+    const first = await delta.send({ goal: "do work", agentName: "worker" });
+    expect(first.isOk).toBe(true);
+    expect(workerContexts[0]).toContain("Teammate lead mentioned you: check order O-1");
+
+    // The worker runs again: the mention was consumed, so it is not redelivered.
+    const second = await delta.send({ goal: "do more work", agentName: "worker" });
+    expect(second.isOk).toBe(true);
+    expect(workerContexts[1] ?? "").not.toContain("check order O-1");
+  });
+
   it("rejects mentioning a non-teammate", async () => {
     const reasoner: ReasonerPort = {
       reason: async ({ agentRole }) =>

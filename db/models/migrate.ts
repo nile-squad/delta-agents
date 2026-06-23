@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS messages (
   sender     TEXT    NOT NULL,
   receiver   TEXT    NOT NULL,
   payload    TEXT    NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  consumed   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS queues (

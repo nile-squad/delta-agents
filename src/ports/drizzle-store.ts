@@ -121,6 +121,7 @@ const toMessage = (r: typeof messages.$inferSelect): Message => ({
   receiver:  r.receiver,
   payload:   JSON.parse(r.payload) as Json,
   createdAt: new Date(r.createdAt),
+  consumed:  r.consumed === 1,
 });
 
 const toQueue = (r: typeof queues.$inferSelect): Queue => ({
@@ -450,6 +451,7 @@ const buildStore = (db: DB): StoragePort => ({
         receiver:  msg.receiver,
         payload:   JSON.stringify(msg.payload),
         createdAt: msg.createdAt.getTime(),
+        consumed:  msg.consumed ? 1 : 0,
       });
       return Ok(msg);
     } catch (e) {
@@ -463,6 +465,24 @@ const buildStore = (db: DB): StoragePort => ({
       return Ok(rows.map(toMessage));
     } catch (e) {
       return Err(`failed to get messages for task "${taskId}": ${String(e)}`);
+    }
+  },
+
+  getMessagesByReceiver: async (receiver: string): Promise<Result<Message[], string>> => {
+    try {
+      const rows = await db.select().from(messages).where(eq(messages.receiver, receiver));
+      return Ok(rows.map(toMessage));
+    } catch (e) {
+      return Err(`failed to get messages for receiver "${receiver}": ${String(e)}`);
+    }
+  },
+
+  markMessageConsumed: async (id: string): Promise<Result<void, string>> => {
+    try {
+      await db.update(messages).set({ consumed: 1 }).where(eq(messages.id, id));
+      return Ok(undefined);
+    } catch (e) {
+      return Err(`failed to mark message "${id}" consumed: ${String(e)}`);
     }
   },
 
