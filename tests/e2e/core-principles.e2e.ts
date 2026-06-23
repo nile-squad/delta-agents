@@ -25,7 +25,9 @@ import { createDeltaEngine, createOpenAIReasoner, createMockReasoner, Ok, Err } 
 // ── Live-model wiring ──────────────────────────────────────────────────────────
 
 const API_KEY = process.env.OPENROUTER_API_KEY;
-const MODEL = process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini";
+// A free, tool-calling-capable model. Free models are rate-limited, so the live
+// suites run sequentially. Override with OPENROUTER_MODEL for a stronger model.
+const MODEL = process.env.OPENROUTER_MODEL ?? "cohere/north-mini-code:free";
 const BASE_URL = process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
 
 // Skip the live suites cleanly when no key is present, rather than failing.
@@ -342,10 +344,14 @@ describeLive("P7 trust is statistical", () => {
 });
 
 // ── P8. Human oversight is fundamental ───────────────────────────────────────────
+// Deterministic: the approval gate and the pause/resume cycle are engine mechanics
+// that hold regardless of the model. (P1 already proves a live model cannot bypass
+// the same gate.) This runs on the reasoner-less workflow path so the resume always
+// completes, instead of depending on a model emitting a clean tool call every turn.
 
-describeLive("P8 human oversight is fundamental", () => {
-  it("blocks on approval, then resumes to completion after a human approves", async () => {
-    const delta = liveEngine();
+describe("P8 human oversight is fundamental", () => {
+  it("blocks a workflow on approval, then resumes to completion after a human approves", async () => {
+    const delta = createDeltaEngine();
     let executed = 0;
     const publish = delta.action({
       name: "publish-post",
@@ -357,23 +363,27 @@ describeLive("P8 human oversight is fundamental", () => {
         return Ok("published");
       },
     });
+    const phase = delta.phase({ name: "publish", description: "publish step", actions: ["publish-post"], checkpoint: true });
+    const wf = delta.workflow({ name: "publish-wf", description: "publishes with sign-off", version: "1.0.0", phases: [phase] });
     const agent = delta.agent({
       name: "social-agent",
       description: "publishes posts",
       role: "Social",
-      rolePrompt: "Publish the post the user asks for.",
+      rolePrompt: ".",
       actions: [publish],
+      workflows: [wf],
     });
     delta.deploy(agent);
 
     const blocked = await delta.send({
-      goal: "Publish a post that says hello world.",
+      goal: "publish hello world",
       agentName: "social-agent",
+      workflow: "publish-wf",
       input: { text: "hello world" },
-      budget: GENEROUS,
     });
     expect(blocked.isOk).toBe(true);
     if (!blocked.isOk) return;
+    // Oversight gate: the task is held, nothing ran.
     expect(blocked.value.status).toBe("blocked");
     expect(executed).toBe(0);
 

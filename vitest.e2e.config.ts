@@ -1,4 +1,24 @@
+import { existsSync, readFileSync } from "node:fs";
 import { defineConfig } from "vitest/config";
+
+/**
+ * Load credentials from a gitignored .env (OPENROUTER_API_KEY, optional
+ * OPENROUTER_MODEL / OPENROUTER_BASE_URL) so they never live in a committed file
+ * or on the command line. A real environment variable always wins over .env.
+ * Dependency-free on purpose: a single secret file does not justify a dotenv dep.
+ */
+const loadEnvFile = (): void => {
+  if (!existsSync(".env")) return;
+  for (const line of readFileSync(".env", "utf8").split("\n")) {
+    const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (match === null) continue;
+    const [, key, rawValue] = match;
+    if (process.env[key] !== undefined) continue;
+    process.env[key] = rawValue.replace(/^["']|["']$/g, "");
+  }
+};
+
+loadEnvFile();
 
 /**
  * End-to-end config: runs the tests under tests/e2e against the BUILT artifact
