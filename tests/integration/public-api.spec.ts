@@ -49,7 +49,7 @@ describe("public-api — smoke test", () => {
     });
 
     // createDeltaEngine is the single entry point.
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
 
     // Authoring — define an action. delta.action() infers TInput from the Zod
     // schema; the fn receives the inferred narrowed type. We do not annotate

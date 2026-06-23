@@ -24,6 +24,15 @@ import type {
 } from "../shared/types";
 
 export type StoragePort = {
+  /**
+   * Optional readiness gate awaited once during engine construction. An adapter
+   * that needs async warm-up before it can serve queries (open a connection,
+   * run migrations, ping the database) implements this; the engine awaits it in
+   * `createDeltaEngine` and refuses to construct if it returns Err. Adapters that
+   * are ready the moment they are created (the in-memory store) omit it.
+   */
+  ready?: () => Promise<Result<void, string>>;
+
   // Tasks
   saveTask: (task: Task) => Promise<Result<Task, string>>;
   getTask: (id: string) => Promise<Result<Task, string>>;

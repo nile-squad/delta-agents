@@ -96,7 +96,7 @@ describe("resume-tree — H2: active children rehydrated on resume", () => {
       },
     };
 
-    const delta2 = createDeltaEngine({ store, reasoner: routingReasoner });
+    const delta2 = await createDeltaEngine({ store, reasoner: routingReasoner });
 
     // Re-register both agents in delta2's registry so resume can look them up.
     const rootNoop2 = delta2.action({
@@ -151,7 +151,7 @@ describe("resume-tree — H2: active children rehydrated on resume", () => {
     const store = createInMemoryStore();
     const childRan: string[] = [];
 
-    const delta = createDeltaEngine({ store, reasoner: createMockReasoner({ responses: [] }) });
+    const delta = await createDeltaEngine({ store, reasoner: createMockReasoner({ responses: [] }) });
 
     const rootNoop = delta.action({
       name: "root-noop2",

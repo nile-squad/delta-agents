@@ -24,7 +24,7 @@ describe("workflow resume: routes through the workflow engine (#2)", () => {
   it("resumes an approval-blocked workflow task to completion via the workflow path", async () => {
     // The reasoner is given NO responses: a workflow task must not consult it.
     // If resume wrongly used the reasoner loop, `ran` would stay empty.
-    const delta = createDeltaEngine({ reasoner: createMockReasoner({ responses: [] }) });
+    const delta = await createDeltaEngine({ reasoner: createMockReasoner({ responses: [] }) });
 
     const ran: string[] = [];
     const step = delta.action({
@@ -77,7 +77,7 @@ describe("workflow resume: routes through the workflow engine (#2)", () => {
   });
 
   it("skips an already-completed phase on resume (mid-workflow resume)", async () => {
-    const delta = createDeltaEngine({ reasoner: createMockReasoner({ responses: [] }) });
+    const delta = await createDeltaEngine({ reasoner: createMockReasoner({ responses: [] }) });
 
     let aCount = 0;
     let flakyCalls = 0;

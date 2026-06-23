@@ -91,7 +91,7 @@ The developer surface is split cleanly:
 
 **Runtime API.** These methods drive execution. `delta.deploy` gates execution by marking an agent as deployed in the registry. `delta.send`, `delta.pause`, `delta.resume`, `delta.approve`, `delta.inspect`, and `delta.lastTask` all touch the store. The engine constructs and owns all runtime types (`Task`, `Execution`, `Checkpoint`, `TaskTree`, `EscalationRecord`, `ApprovalRequest`, `Message`, `Memory`). The developer never constructs these.
 
-The single `createDeltaEngine` factory assembles all modules onto one returned object. The modules themselves stay decoupled: the facade is the only coupling point. Each method delegates to its own domain module.
+The single `createDeltaEngine` factory assembles all modules onto one returned object. The modules themselves stay decoupled: the facade is the only coupling point. Each method delegates to its own domain module. The factory is asynchronous (`await createDeltaEngine(...)`): it awaits the store's optional `ready()` gate before returning, so an adapter that needs async warm-up (open a connection, run migrations) can fail construction loudly instead of deferring the error to the first send.
 
 ## Storage Port Abstraction
 

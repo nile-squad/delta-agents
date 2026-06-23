@@ -16,7 +16,7 @@ import { createMockReasoner } from "../../src/ports/mock-reasoner";
 
 describe("data source operations run through the gateway (#3)", () => {
   it("executes a retrieve operation via a workflow and records it in the audit trail", async () => {
-    const delta = createDeltaEngine({ reasoner: createMockReasoner({ responses: [] }) });
+    const delta = await createDeltaEngine({ reasoner: createMockReasoner({ responses: [] }) });
 
     const reads: string[] = [];
     const userDb = delta.dataSource({

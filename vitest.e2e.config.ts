@@ -12,7 +12,9 @@ const loadEnvFile = (): void => {
   for (const line of readFileSync(".env", "utf8").split("\n")) {
     const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
     if (match === null) continue;
-    const [, key, rawValue] = match;
+    const key = match[1];
+    const rawValue = match[2];
+    if (key === undefined || rawValue === undefined) continue;
     if (process.env[key] !== undefined) continue;
     process.env[key] = rawValue.replace(/^["']|["']$/g, "");
   }

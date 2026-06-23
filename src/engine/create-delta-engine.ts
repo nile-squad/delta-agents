@@ -13,7 +13,7 @@
  *   maxStepsPerTask — step limit per send/resume loop (default: 100)
  *
  * Usage:
- *   const delta = createDeltaEngine({ store, reasoner });
+ *   const delta = await createDeltaEngine({ store, reasoner });
  *   const lookup = delta.action({ ... });
  *   const myAgent = delta.agent({ actions: [lookup], ... });
  *   delta.deploy(myAgent);
@@ -38,14 +38,26 @@ import { runSendLoop, runWorkflowTask, pauseTask, resumeTask, inspectTask, resol
 
 const DEFAULT_BUDGET = { tokens: 10_000, durationMs: 300_000 };
 
-export const createDeltaEngine = ({
+export const createDeltaEngine = async ({
   store: configStore,
   reasoner: configReasoner,
   maxStepsPerTask = 100,
-}: DeltaEngineConfig = {}): DeltaEngine => {
+}: DeltaEngineConfig = {}): Promise<DeltaEngine> => {
   const store = configStore ?? createInMemoryStore();
   const reasoner = configReasoner ?? createMockReasoner();
   const registry = createRegistry();
+
+  // Await the store's readiness gate before the engine serves any request. An
+  // adapter that needs async warm-up (open a connection, run migrations) signals
+  // it here; construction fails loudly if the data layer cannot come up, rather
+  // than deferring the error to the first send. Adapters with no async setup
+  // (the in-memory store) omit `ready` and this is a no-op.
+  if (store.ready !== undefined) {
+    const readiness = await store.ready();
+    if (readiness.isErr) {
+      throw new Error(`createDeltaEngine: storage adapter is not ready: ${readiness.error}`);
+    }
+  }
 
   // ── Authoring methods ────────────────────────────────────────────────────
   const action = makeDefineAction({ registry });

@@ -42,7 +42,7 @@ const GENEROUS = { tokens: 8000, durationMs: 120_000 };
 
 describeLive("P1 the engine owns enforcement", () => {
   it("blocks a requiresApproval action even when the live model requests it", async () => {
-    const delta = liveEngine();
+    const delta = await liveEngine();
     let executed = false;
     const refund = delta.action({
       name: "issue-refund",
@@ -85,7 +85,7 @@ describeLive("P1 the engine owns enforcement", () => {
 
 describeLive("P2 the system operates within a bounded state-space", () => {
   it("only ever executes actions the agent declares", async () => {
-    const delta = liveEngine();
+    const delta = await liveEngine();
     const lookup = delta.action({
       name: "lookup-order",
       description: "Look up an order by id",
@@ -132,7 +132,7 @@ describeLive("P2 the system operates within a bounded state-space", () => {
 
 describe("P3 prediction precedes execution (MPC)", () => {
   it("blocks a workflow whose projected cost exceeds the budget before any action runs", async () => {
-    const delta = createDeltaEngine();
+    const delta = await createDeltaEngine();
     let ran = false;
     const expensive = delta.action({
       name: "expensive-step",
@@ -176,7 +176,7 @@ describe("P3 prediction precedes execution (MPC)", () => {
 
 describe("P4 memory is retrieved, not carried", () => {
   it("an action persists a memory through the built engine as a stored resource", async () => {
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       reasoner: createMockReasoner({ responses: [{ actionName: "note", input: {} }] }),
     });
     let rememberOk = false;
@@ -211,7 +211,7 @@ describe("P4 memory is retrieved, not carried", () => {
 
 describe("P5 task identity is the security boundary", () => {
   it("attributes the full audit trail to one TaskID and finds it without a stored id", async () => {
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       reasoner: createMockReasoner({
         responses: [{ actionName: "act", input: {} }, { done: true }],
       }),
@@ -253,7 +253,7 @@ describe("P5 task identity is the security boundary", () => {
 
 describeLive("P6 delegation is bounded", () => {
   it("scopes a delegated child task under the parent's tree", async () => {
-    const delta = liveEngine();
+    const delta = await liveEngine();
     const research = delta.action({
       name: "research",
       description: "research a topic and return notes",
@@ -309,7 +309,7 @@ describeLive("P6 delegation is bounded", () => {
 
 describeLive("P7 trust is statistical", () => {
   it("lowers trust below the 0.5 start when an action fails under a live model", async () => {
-    const delta = liveEngine();
+    const delta = await liveEngine();
     const flaky = delta.action({
       name: "charge-card",
       description: "charge the customer's card",
@@ -351,7 +351,7 @@ describeLive("P7 trust is statistical", () => {
 
 describe("P8 human oversight is fundamental", () => {
   it("blocks a workflow on approval, then resumes to completion after a human approves", async () => {
-    const delta = createDeltaEngine();
+    const delta = await createDeltaEngine();
     let executed = 0;
     const publish = delta.action({
       name: "publish-post",

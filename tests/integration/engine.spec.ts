@@ -56,7 +56,7 @@ describe("deploy + send — task runs to completion", () => {
     const reasoner = createMockReasoner({
       responses: [{ actionName: "lookup", input: { id: "1" } }],
     });
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
 
     const lookup = delta.action({
       name: "lookup",
@@ -89,7 +89,7 @@ describe("deploy + send — task runs to completion", () => {
         { actionName: "step-b", input: {} },
       ],
     });
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
 
     const stepA = delta.action({
       name: "step-a",
@@ -108,7 +108,7 @@ describe("deploy + send — task runs to completion", () => {
     delta.deploy(delta.agent({ name: "seq-agent2", description: "test action", role: "r", rolePrompt: ".", actions: [stepA, stepB] }));
 
     // Use a fresh engine for isolation
-    const delta2 = createDeltaEngine({ store, reasoner: createMockReasoner({
+    const delta2 = await createDeltaEngine({ store, reasoner: createMockReasoner({
       responses: [{ actionName: "step-a", input: {} }, { actionName: "step-b", input: {} }],
     })});
     const a2 = delta2.action({ name: "step-a", description: "a", schema: z.object({}), fn: async () => { executed.push("a2"); return Ok("a"); } });
@@ -124,14 +124,14 @@ describe("deploy + send — task runs to completion", () => {
   });
 
   it("returns Err when agent is not deployed", async () => {
-    const delta = createDeltaEngine();
+    const delta = await createDeltaEngine();
     const result = await delta.send({ goal: "run", agentName: "ghost-agent" });
     expect(result.isErr).toBe(true);
   });
 
   // L1: deploy gates execution — send-before-deploy → Err; deploy-then-send → Ok
   it("L1 — send returns Err for an agent that is defined (registered) but not yet deployed", async () => {
-    const delta = createDeltaEngine({ reasoner: createMockReasoner() });
+    const delta = await createDeltaEngine({ reasoner: createMockReasoner() });
     const act = delta.action({ name: "act-l1a", description: "test action", schema: z.object({}), fn: noop });
     // Intentionally call delta.agent() but NOT delta.deploy() — authoring is defined but not activated.
     delta.agent({ name: "undeploy-agent", description: "d", role: "r", rolePrompt: ".", actions: [act] });
@@ -146,7 +146,7 @@ describe("deploy + send — task runs to completion", () => {
 
   it("L1 — send succeeds after deploy() is called (deploy-then-send → Ok)", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "act-l1b", input: {} }] }),
     });
@@ -162,7 +162,7 @@ describe("deploy + send — task runs to completion", () => {
 
   it("send creates a TaskID for every task (invariant 1)", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({ store, reasoner: createMockReasoner({ responses: [{ actionName: "act", input: {} }] }) });
+    const delta = await createDeltaEngine({ store, reasoner: createMockReasoner({ responses: [{ actionName: "act", input: {} }] }) });
 
     const act = delta.action({ name: "act", description: "test action", schema: z.object({}), fn: noop });
     const ag = delta.agent({ name: "ag", description: "test action", role: "r", rolePrompt: ".", actions: [act] });
@@ -182,7 +182,7 @@ describe("deploy + send — task runs to completion", () => {
 describe("inspect — read full governance state", () => {
   it("returns task record, executions, checkpoint, escalations, pending approvals", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "work", input: {} }] }),
     });
@@ -205,14 +205,14 @@ describe("inspect — read full governance state", () => {
   });
 
   it("inspect returns Err for unknown taskId", async () => {
-    const delta = createDeltaEngine();
+    const delta = await createDeltaEngine();
     const result = await delta.inspect("tsk_ghost");
     expect(result.isErr).toBe(true);
   });
 
   it("every execution record is attributable to the task's id (invariant 1)", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [
         { actionName: "a1", input: {} },
@@ -238,7 +238,7 @@ describe("inspect — read full governance state", () => {
 
   it("checkpoint is saved after successful action (invariant 10)", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "checkpt", input: {} }] }),
     });
@@ -276,7 +276,7 @@ describe("pause + resume — checkpoint round-trip", () => {
 
   it("pause sets a non-terminal task's status to 'paused'", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({ store });
+    const delta = await createDeltaEngine({ store });
     const id = await seedRunningTask(store, "pausable");
 
     const pauseResult = await delta.pause(id);
@@ -288,7 +288,7 @@ describe("pause + resume — checkpoint round-trip", () => {
 
   it("pause saves a checkpoint", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({ store });
+    const delta = await createDeltaEngine({ store });
     const id = await seedRunningTask(store, "p2");
 
     await delta.pause(id);
@@ -299,7 +299,7 @@ describe("pause + resume — checkpoint round-trip", () => {
 
   it("pause returns Err for a terminal (completed) task — no resurrection (M1)", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "work", input: {} }] }),
     });
@@ -340,7 +340,7 @@ describe("pause + resume — checkpoint round-trip", () => {
     };
     await store.saveCheckpoint({ id: checkpointId(), taskId: id, state: checkpointSnapshot, createdAt: now });
 
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "second", input: {} }] }),
     });
@@ -355,13 +355,13 @@ describe("pause + resume — checkpoint round-trip", () => {
   });
 
   it("resume returns Err for unknown task", async () => {
-    const delta = createDeltaEngine();
+    const delta = await createDeltaEngine();
     const result = await delta.resume("tsk_ghost");
     expect(result.isErr).toBe(true);
   });
 
   it("pause returns Err for unknown task", async () => {
-    const delta = createDeltaEngine();
+    const delta = await createDeltaEngine();
     const result = await delta.pause("tsk_ghost");
     expect(result.isErr).toBe(true);
   });
@@ -372,7 +372,7 @@ describe("pause + resume — checkpoint round-trip", () => {
 describe("approve — resolve a pending approval", () => {
   it("approve marks the approval as approved", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({ store, reasoner: createMockReasoner() });
+    const delta = await createDeltaEngine({ store, reasoner: createMockReasoner() });
 
     // Create an approval manually via the oversight module
     const { requestApproval } = await import("../../src/oversight");
@@ -386,7 +386,7 @@ describe("approve — resolve a pending approval", () => {
 
   it("send blocks when action requires approval that hasn't been granted", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "pay", input: { amount: 100 } }] }),
     });
@@ -412,7 +412,7 @@ describe("approve — resolve a pending approval", () => {
   it("approve + resume unblocks an approval-blocked task", async () => {
     const store = createInMemoryStore();
     const executed: string[] = [];
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "pay", input: { amount: 100 } }] }),
     });
@@ -440,7 +440,7 @@ describe("approve — resolve a pending approval", () => {
     await delta.approve(approvalId);
 
     // Resume with fresh reasoner (same approval now in store)
-    const delta2 = createDeltaEngine({
+    const delta2 = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "pay", input: { amount: 100 } }] }),
     });
@@ -466,7 +466,7 @@ describe("approve — resolve a pending approval", () => {
 describe("lastTask — retrieval without stored TaskID (invariant 25)", () => {
   it("lastTask returns the agent's most recent task", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "act", input: {} }] }),
     });
@@ -486,7 +486,7 @@ describe("lastTask — retrieval without stored TaskID (invariant 25)", () => {
   });
 
   it("lastTask returns null when no task exists for agent (invariant 25)", async () => {
-    const delta = createDeltaEngine();
+    const delta = await createDeltaEngine();
     const result = await delta.lastTask("nobody");
     expect(result.isOk).toBe(true);
     if (result.isOk) expect(result.value).toBeNull();
@@ -513,7 +513,7 @@ describe("invariant 26 — no new task when agent already has active work", () =
       updatedAt: now,
     });
 
-    const delta = createDeltaEngine({ store });
+    const delta = await createDeltaEngine({ store });
     const act = delta.action({ name: "act", description: "test action", schema: z.object({}), fn: noop });
     const ag = delta.agent({ name: "busy-agent", description: "test action", role: "r", rolePrompt: ".", actions: [act] });
     delta.deploy(ag);
@@ -549,7 +549,7 @@ describe("invariant 26 — no new task when agent already has active work", () =
       risk: initialRiskState(), trust: initialTrust(), createdAt: now, updatedAt: now,
     });
 
-    const delta = createDeltaEngine({ store, reasoner: createMockReasoner() });
+    const delta = await createDeltaEngine({ store, reasoner: createMockReasoner() });
     const act = delta.action({ name: "act", description: "test action", schema: z.object({}), fn: noop });
     delta.deploy(delta.agent({ name: "dual-agent", description: "d", role: "r", rolePrompt: ".", actions: [act] }));
 
@@ -567,7 +567,7 @@ describe("invariant 26 — no new task when agent already has active work", () =
 describe("loop terminal states are honest (C1–C4)", () => {
   it("C2 — a reasoner failure marks the task failed, never completed", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ alwaysFail: "model exploded" }),
     });
@@ -584,7 +584,7 @@ describe("loop terminal states are honest (C1–C4)", () => {
 
   it("C4 — reasoning token cost is recorded on the execution and drives spent", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: costReasoner([{ actionName: "work", tokens: 50 }]),
     });
@@ -604,7 +604,7 @@ describe("loop terminal states are honest (C1–C4)", () => {
 
   it("C1 — exceeding token budget escalates and blocks, never completes", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: costReasoner([{ actionName: "spend", tokens: 50 }]),
     });
@@ -628,7 +628,7 @@ describe("loop terminal states are honest (C1–C4)", () => {
 
   it("C3 — resuming a task already over budget fails, never completes", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({ store, reasoner: createMockReasoner() });
+    const delta = await createDeltaEngine({ store, reasoner: createMockReasoner() });
     const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: noop });
     delta.deploy(delta.agent({ name: "spent-agent", description: "d", role: "r", rolePrompt: ".", actions: [work] }));
 
@@ -661,7 +661,7 @@ describe("loop terminal states are honest (C1–C4)", () => {
 describe("governance math drives the live loop (H3)", () => {
   it("a large predicted-vs-observed health divergence escalates via bayesian-surprise", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: costReasoner([{ actionName: "burn", tokens: 1000 }]),
     });
@@ -684,7 +684,7 @@ describe("governance math drives the live loop (H3)", () => {
 
   it("kalman health estimate is computed and carried on the snapshot", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: costReasoner([{ actionName: "work", tokens: 10 }]),
     });
@@ -707,7 +707,7 @@ describe("workflow tasks run deterministically through the engine (H2)", () => {
     const store = createInMemoryStore();
     const order: string[] = [];
     // No reasoner responses scripted — a workflow task must not consult the reasoner.
-    const delta = createDeltaEngine({ store, reasoner: createMockReasoner({ alwaysFail: "reasoner must not run" }) });
+    const delta = await createDeltaEngine({ store, reasoner: createMockReasoner({ alwaysFail: "reasoner must not run" }) });
 
     const a1 = delta.action({ name: "a1", description: "test action", schema: z.object({}), fn: async () => { order.push("a1"); return Ok("ok"); } });
     const a2 = delta.action({ name: "a2", description: "test action", schema: z.object({}), fn: async () => { order.push("a2"); return Ok("ok"); } });
@@ -735,7 +735,7 @@ describe("workflow tasks run deterministically through the engine (H2)", () => {
   it("branch routes to onSuccess target and skips the other path", async () => {
     const store = createInMemoryStore();
     const ran: string[] = [];
-    const delta = createDeltaEngine({ store });
+    const delta = await createDeltaEngine({ store });
 
     const check = delta.action({ name: "check", description: "test action", schema: z.object({}), fn: async () => { ran.push("check"); return Ok("ok"); } });
     const approve = delta.action({ name: "approve", description: "test action", schema: z.object({}), fn: async () => { ran.push("approve"); return Ok("ok"); } });
@@ -761,7 +761,7 @@ describe("workflow tasks run deterministically through the engine (H2)", () => {
 
   it("returns failed when the agent does not declare the workflow", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({ store });
+    const delta = await createDeltaEngine({ store });
     const act = delta.action({ name: "act", description: "test action", schema: z.object({}), fn: noop });
     const other = delta.action({ name: "other", description: "test action", schema: z.object({}), fn: noop });
     const ph = delta.phase({ name: "p", description: "p", actions: ["other"], checkpoint: false });
@@ -782,7 +782,7 @@ describe("workflow supervision recovers or surfaces failure (H1)", () => {
   it("retry strategy re-runs the phase and surfaces failure once retries are exhausted", async () => {
     const store = createInMemoryStore();
     let attempts = 0;
-    const delta = createDeltaEngine({ store });
+    const delta = await createDeltaEngine({ store });
 
     const flaky = delta.action({
       name: "flaky",
@@ -815,7 +815,7 @@ describe("workflow supervision recovers or surfaces failure (H1)", () => {
 
   it("escalate strategy pauses the task and records a workflow-failure escalation", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({ store });
+    const delta = await createDeltaEngine({ store });
 
     // A failed action routes to the phase's supervision policy (escalate),
     // not to post-step governance — so the policy reliably decides the outcome.
@@ -855,7 +855,7 @@ describe("workflow approval pre-flight (C-a)", () => {
   it("blocks the whole workflow when a requiresApproval action is not yet approved", async () => {
     const store = createInMemoryStore();
     const ran: string[] = [];
-    const delta = createDeltaEngine({ store });
+    const delta = await createDeltaEngine({ store });
 
     const prep = delta.action({ name: "prep", description: "test action", schema: z.object({}), fn: async () => { ran.push("prep"); return Ok("ok"); } });
     const pay = delta.action({ name: "pay", description: "needs sign-off", schema: z.object({}), requiresApproval: true, fn: async () => { ran.push("pay"); return Ok("ok"); } });
@@ -888,7 +888,7 @@ describe("per-action workflow inputs (H3)", () => {
     // Actions record the input they received so we can assert distinctness.
     const receivedInputs: Record<string, Record<string, unknown>> = {};
 
-    const delta = createDeltaEngine({ store, reasoner: createMockReasoner({ alwaysFail: "must not run" }) });
+    const delta = await createDeltaEngine({ store, reasoner: createMockReasoner({ alwaysFail: "must not run" }) });
 
     const act1 = delta.action({
       name: "act-one",
@@ -972,7 +972,7 @@ describe("delegation drives a bounded supervision tree (H4)", () => {
       Parent: [{ delegate: { goal: "do the sub-work", agentName: "child-agent" } }],
       Child: [{ actionName: "work" }],
     });
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
 
     const plan = delta.action({ name: "plan", description: "test action", schema: z.object({}), fn: async () => { ran.push("plan"); return Ok("ok"); } });
     const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: async () => { ran.push("work"); return Ok("ok"); } });
@@ -1003,7 +1003,7 @@ describe("delegation drives a bounded supervision tree (H4)", () => {
       Parent: [{ delegate: { goal: "sub", agentName: "child-agent", budget: { tokens: 1_000_000, durationMs: 1_000_000 } } }],
       Child: [{ actionName: "work" }],
     });
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
 
     const plan = delta.action({ name: "plan", description: "test action", schema: z.object({}), fn: noop });
     const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: noop });
@@ -1044,7 +1044,7 @@ describe("delegation drives a bounded supervision tree (H4)", () => {
         return Ok({ kind: "done" });
       },
     };
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
 
     const plan = delta.action({ name: "plan", description: "test action", schema: z.object({}), fn: noop });
     const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: async () => { workCount++; return Ok("ok"); } });
@@ -1079,7 +1079,7 @@ describe("delegation drives a bounded supervision tree (H4)", () => {
       ChildA: [{ actionName: "work" }],
       ChildB: [{ actionName: "work" }],
     });
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
     const plan = delta.action({ name: "plan", description: "test action", schema: z.object({}), fn: noop });
     const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: noop });
     delta.deploy(delta.agent({ name: "child-a", description: "d", role: "ChildA", rolePrompt: ".", actions: [work] }));
@@ -1119,7 +1119,7 @@ describe("delegation drives a bounded supervision tree (H4)", () => {
         return Err("child model exploded");
       },
     };
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
     const plan = delta.action({ name: "plan", description: "test action", schema: z.object({}), fn: noop });
     const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: noop });
     delta.deploy(delta.agent({ name: "child-agent", description: "d", role: "Child", rolePrompt: ".", actions: [work] }));
@@ -1142,7 +1142,7 @@ describe("delegation drives a bounded supervision tree (H4)", () => {
       Parent: [{ delegate: { goal: "sub", agentName: "child-agent" } }],
       Child: [{ actionName: "pay" }],
     });
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
     const plan = delta.action({ name: "plan", description: "test action", schema: z.object({}), fn: noop });
     const pay = delta.action({ name: "pay", description: "needs sign-off", schema: z.object({}), requiresApproval: true, fn: noop });
     delta.deploy(delta.agent({ name: "child-agent", description: "d", role: "Child", rolePrompt: ".", actions: [pay] }));
@@ -1160,7 +1160,7 @@ describe("delegation drives a bounded supervision tree (H4)", () => {
     const reasoner = routingReasoner({
       Parent: [{ delegate: { goal: "sub", agentName: "ghost-agent" } }],
     });
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
     const plan = delta.action({ name: "plan", description: "test action", schema: z.object({}), fn: noop });
     delta.deploy(delta.agent({ name: "parent-agent", description: "d", role: "Parent", rolePrompt: ".", actions: [plan] }));
 
@@ -1177,7 +1177,7 @@ describe("delegation drives a bounded supervision tree (H4)", () => {
 describe("queued caller messages are drained into the task (H5b)", () => {
   it("a message queued on a busy agent's task is consumed when the task next settles", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({ store, reasoner: createMockReasoner() });
+    const delta = await createDeltaEngine({ store, reasoner: createMockReasoner() });
     const work = delta.action({ name: "work", description: "test action", schema: z.object({}), fn: noop });
     delta.deploy(delta.agent({ name: "comms-agent", description: "d", role: "r", rolePrompt: ".", actions: [work] }));
 
@@ -1216,7 +1216,7 @@ describe("agents communicate through bound channels (Package E)", () => {
     const store = createInMemoryStore();
     const sent: string[] = [];
     const reasoner = createMockReasoner({ responses: [{ communicate: { channel: "slack", body: "hi there" } }] });
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
 
     const noopAction = delta.action({ name: "noop", description: "test action", schema: z.object({}), fn: noop });
     const channel = {
@@ -1243,7 +1243,7 @@ describe("agents communicate through bound channels (Package E)", () => {
     const store = createInMemoryStore();
     const sent: string[] = [];
     const reasoner = createMockReasoner({ responses: [{ communicate: { channel: "email", body: "your invoice" } }] });
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
 
     const noopAction = delta.action({ name: "noop", description: "test action", schema: z.object({}), fn: noop });
     const channel = {
@@ -1269,7 +1269,7 @@ describe("agents communicate through bound channels (Package E)", () => {
   it("communicating on an undeclared channel fails the task", async () => {
     const store = createInMemoryStore();
     const reasoner = createMockReasoner({ responses: [{ communicate: { channel: "slack", body: "hi" } }] });
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
     const noopAction = delta.action({ name: "noop", description: "test action", schema: z.object({}), fn: noop });
     // Agent declares no channels.
     delta.deploy(delta.agent({ name: "no-channel-agent", description: "d", role: "r", rolePrompt: ".", actions: [noopAction] }));
@@ -1285,7 +1285,7 @@ describe("agents communicate through bound channels (Package E)", () => {
     const store = createInMemoryStore();
     const sent: string[] = [];
     const reasoner = createMockReasoner({ responses: [{ actionName: "notify", input: {} }] });
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
 
     const channel = {
       type: "slack" as const,
@@ -1316,7 +1316,7 @@ describe("agents communicate through bound channels (Package E)", () => {
   it("a workflow action can send through ctx.communicate (workflow path E2)", async () => {
     const store = createInMemoryStore();
     const sent: string[] = [];
-    const delta = createDeltaEngine({ store });
+    const delta = await createDeltaEngine({ store });
 
     const channel = {
       type: "slack" as const,
@@ -1353,7 +1353,7 @@ describe("active skills are surfaced to the reasoner (Package E3)", () => {
     const reasoner: ReasonerPort = {
       reason: async (input) => { seenSkills = input.availableSkills; return Ok({ kind: "done" }); },
     };
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
 
     const act = delta.action({ name: "act", description: "test action", schema: z.object({}), fn: noop });
     delta.deploy(delta.agent({
@@ -1382,7 +1382,7 @@ describe("memory is retrieved on demand, not carried (Package F)", () => {
 
     // Task 1: an action remembers a fact (shared store).
     const reasoner1 = createMockReasoner({ responses: [{ actionName: "learn", input: {} }] });
-    const delta1 = createDeltaEngine({ store, reasoner: reasoner1 });
+    const delta1 = await createDeltaEngine({ store, reasoner: reasoner1 });
     const learn = delta1.action({
       name: "learn",
       description: "test action",
@@ -1401,7 +1401,7 @@ describe("memory is retrieved on demand, not carried (Package F)", () => {
     const reasoner2: ReasonerPort = {
       reason: async (input) => { seenContext = input.context; return Ok({ kind: "done" }); },
     };
-    const delta2 = createDeltaEngine({ store, reasoner: reasoner2 });
+    const delta2 = await createDeltaEngine({ store, reasoner: reasoner2 });
     const noopAct = delta2.action({ name: "noop", description: "test action", schema: z.object({}), fn: noop });
     delta2.deploy(delta2.agent({ name: "mem-agent", description: "d", role: "r", rolePrompt: ".", actions: [noopAct] }));
 
@@ -1422,7 +1422,7 @@ describe("memory is retrieved on demand, not carried (Package F)", () => {
     const reasoner: ReasonerPort = {
       reason: async (input) => { seenContext = input.context; return Ok({ kind: "done" }); },
     };
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
     const act = delta.action({ name: "act", description: "test action", schema: z.object({}), fn: noop });
     delta.deploy(delta.agent({ name: "fresh-agent", description: "d", role: "r", rolePrompt: ".", actions: [act] }));
 
@@ -1437,7 +1437,7 @@ describe("value-guided execution (Package G)", () => {
   it("blocks a workflow projected to exceed budget before any action runs (MPC, G3)", async () => {
     const store = createInMemoryStore();
     let ran = false;
-    const delta = createDeltaEngine({ store });
+    const delta = await createDeltaEngine({ store });
 
     const expensive = delta.action({
       name: "expensive",
@@ -1464,7 +1464,7 @@ describe("value-guided execution (Package G)", () => {
   it("blocks a workflow whose projected MEMORY exceeds budget (multi-axis cost, MPC)", async () => {
     const store = createInMemoryStore();
     let ran = false;
-    const delta = createDeltaEngine({ store });
+    const delta = await createDeltaEngine({ store });
 
     const heavy = delta.action({
       name: "heavy",
@@ -1492,7 +1492,7 @@ describe("value-guided execution (Package G)", () => {
     const reasoner: ReasonerPort = {
       reason: async (input) => { seen = input.availableActions; return Ok({ kind: "done" }); },
     };
-    const delta = createDeltaEngine({ store, reasoner });
+    const delta = await createDeltaEngine({ store, reasoner });
 
     const cheap = delta.action({ name: "cheap", description: "test action", schema: z.object({}), estimatedCost: { tokens: 10, durationMs: 0 }, fn: noop });
     const pricey = delta.action({ name: "pricey", description: "test action", schema: z.object({}), estimatedCost: { tokens: 900, durationMs: 0 }, fn: noop });

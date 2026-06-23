@@ -18,8 +18,8 @@ import { ownershipAdjustedRisk, EXTERNAL_RISK_FLOOR } from "../../../src/authori
 const makeEngine = () => createDeltaEngine();
 
 describe("delta.dataSource — definition and validation", () => {
-  it("registers a valid data source and returns it unchanged", () => {
-    const delta = makeEngine();
+  it("registers a valid data source and returns it unchanged", async () => {
+    const delta = await makeEngine();
     const ds = delta.dataSource({
       name: "user-db",
       description: "the user store",
@@ -38,8 +38,8 @@ describe("delta.dataSource — definition and validation", () => {
     expect(ds.ownership).toBe("internal");
   });
 
-  it("accepts an authentication descriptor (mechanism only, never a secret)", () => {
-    const delta = makeEngine();
+  it("accepts an authentication descriptor (mechanism only, never a secret)", async () => {
+    const delta = await makeEngine();
     const ds = delta.dataSource({
       name: "partner-api",
       description: "external partner data",
@@ -58,8 +58,8 @@ describe("delta.dataSource — definition and validation", () => {
     expect(ds.authentication?.type).toBe("oauth2");
   });
 
-  it("rejects a data source with no operations", () => {
-    const delta = makeEngine();
+  it("rejects a data source with no operations", async () => {
+    const delta = await makeEngine();
     expect(() =>
       delta.dataSource({
         name: "empty",
@@ -71,8 +71,8 @@ describe("delta.dataSource — definition and validation", () => {
     ).toThrow(/at least one operation/);
   });
 
-  it("rejects an invalid ownership value", () => {
-    const delta = makeEngine();
+  it("rejects an invalid ownership value", async () => {
+    const delta = await makeEngine();
     expect(() =>
       delta.dataSource({
         name: "bad-own",
@@ -87,8 +87,8 @@ describe("delta.dataSource — definition and validation", () => {
     ).toThrow(/ownership must be/);
   });
 
-  it("rejects an empty contentType", () => {
-    const delta = makeEngine();
+  it("rejects an empty contentType", async () => {
+    const delta = await makeEngine();
     expect(() =>
       delta.dataSource({
         name: "no-ct",
@@ -102,8 +102,8 @@ describe("delta.dataSource — definition and validation", () => {
     ).toThrow(/contentType/);
   });
 
-  it("rejects an authentication descriptor with an empty type", () => {
-    const delta = makeEngine();
+  it("rejects an authentication descriptor with an empty type", async () => {
+    const delta = await makeEngine();
     expect(() =>
       delta.dataSource({
         name: "bad-auth",
@@ -120,7 +120,7 @@ describe("delta.dataSource — definition and validation", () => {
 });
 
 describe("ownership shapes the risk prior — external is less trusted", () => {
-  it("computes the adjusted risk prior per ownership", () => {
+  it("computes the adjusted risk prior per ownership", async () => {
     // Internal: declared risk passes through unchanged (undefined stays a cold start).
     expect(ownershipAdjustedRisk("internal", 2)).toBe(2);
     expect(ownershipAdjustedRisk("internal", undefined)).toBeUndefined();
@@ -130,8 +130,8 @@ describe("ownership shapes the risk prior — external is less trusted", () => {
     expect(ownershipAdjustedRisk("external", 5)).toBe(5);
   });
 
-  it("raises the risk prior on an external source's operations", () => {
-    const delta = makeEngine();
+  it("raises the risk prior on an external source's operations", async () => {
+    const delta = await makeEngine();
     const ds = delta.dataSource({
       name: "partner",
       description: "third party store",
@@ -151,8 +151,8 @@ describe("ownership shapes the risk prior — external is less trusted", () => {
     expect(ds.actions.retrieve?.risk).toBe(EXTERNAL_RISK_FLOOR);
   });
 
-  it("leaves an internal source's declared risk untouched", () => {
-    const delta = makeEngine();
+  it("leaves an internal source's declared risk untouched", async () => {
+    const delta = await makeEngine();
     const ds = delta.dataSource({
       name: "internal-db",
       description: "owned store",
@@ -173,8 +173,8 @@ describe("ownership shapes the risk prior — external is less trusted", () => {
 });
 
 describe("delta.agent — data source operations join the reachable action set", () => {
-  it("flattens every attached data source operation into the agent's actions", () => {
-    const delta = makeEngine();
+  it("flattens every attached data source operation into the agent's actions", async () => {
+    const delta = await makeEngine();
     const userDb = delta.dataSource({
       name: "user-db",
       description: "the user store",
@@ -207,8 +207,8 @@ describe("delta.agent — data source operations join the reachable action set",
     expect(agent.dataSources?.[0]?.ownership).toBe("internal");
   });
 
-  it("does not duplicate an operation also listed directly in actions", () => {
-    const delta = makeEngine();
+  it("does not duplicate an operation also listed directly in actions", async () => {
+    const delta = await makeEngine();
     const userDb = delta.dataSource({
       name: "user-db",
       description: "store",

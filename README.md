@@ -40,8 +40,10 @@ Requirements: TypeScript 5 or later.
 import { createDeltaEngine, createOpenAIReasoner, Ok } from "delta-agents";
 import { z } from "zod";
 
-// Create the engine once. Adapters and limits are configured here.
-const delta = createDeltaEngine({
+// Create the engine once. Adapters and limits are configured here. Creation is
+// awaited so the engine can gate on its store being ready (open a connection,
+// run migrations) before it serves a single request.
+const delta = await createDeltaEngine({
   reasoner: createOpenAIReasoner({ model: "gpt-4o-mini" }),
 });
 

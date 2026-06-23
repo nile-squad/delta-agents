@@ -28,7 +28,7 @@ const noop = async () => Ok("ok" as unknown);
 describe("invariant 1 — every execution record is TaskID-attributable", () => {
   it("all executions for a two-action task carry the same taskId", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({
         responses: [
@@ -60,7 +60,7 @@ describe("invariant 1 — every execution record is TaskID-attributable", () => 
   it("executions from two separate tasks do not bleed into each other's inspect results", async () => {
     const store = createInMemoryStore();
 
-    const delta1 = createDeltaEngine({
+    const delta1 = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "op", input: {} }] }),
     });
@@ -69,7 +69,7 @@ describe("invariant 1 — every execution record is TaskID-attributable", () => 
     delta1.deploy(ag1);
     const r1 = await delta1.send({ goal: "A task", agentName: "agent-A" });
 
-    const delta2 = createDeltaEngine({
+    const delta2 = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "op", input: {} }] }),
     });
@@ -118,7 +118,7 @@ describe("invariant 13 — escalations are TaskID-attributable and retrievable",
 
   it("inspect returns all escalations for the task (invariant 13)", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "work", input: {} }] }),
     });
@@ -150,7 +150,7 @@ describe("invariant 13 — escalations are TaskID-attributable and retrievable",
 describe("invariant 25 — agent always has a retrieval path to its latest task", () => {
   it("lastTask(agentName) returns the task without requiring the caller to remember its id", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "ping", input: {} }] }),
     });
@@ -173,7 +173,7 @@ describe("invariant 25 — agent always has a retrieval path to its latest task"
 
   it("lastTask can be used to inspect the task after losing its id", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "ping", input: {} }] }),
     });
@@ -202,7 +202,7 @@ describe("invariant 25 — agent always has a retrieval path to its latest task"
 describe("invariant 2 — TaskID hierarchy integrity", () => {
   it("a task created by send has rootId === its own id (top-level task)", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "act", input: {} }] }),
     });
@@ -228,7 +228,7 @@ describe("invariant 2 — TaskID hierarchy integrity", () => {
 describe("checkpoint provenance — every checkpoint is TaskID-attributable", () => {
   it("checkpoint saved after successful action carries the correct taskId", async () => {
     const store = createInMemoryStore();
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "checkp", input: {} }] }),
     });

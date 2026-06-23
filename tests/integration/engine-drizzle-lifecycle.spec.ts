@@ -44,7 +44,7 @@ describe("engine on real libsql — full lifecycle (J3)", () => {
     const url = await freshDbUrl();
     const store = await createDrizzleStore(url);
 
-    const delta = createDeltaEngine({
+    const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ responses: [{ actionName: "record", input: { value: 7 } }] }),
     });
@@ -91,7 +91,7 @@ describe("engine on real libsql — full lifecycle (J3)", () => {
 
     // ── Engine A: run a task to completion, then drop the store instance. ──────
     const storeA = await createDrizzleStore(url);
-    const deltaA = createDeltaEngine({
+    const deltaA = await createDeltaEngine({
       store: storeA,
       reasoner: createMockReasoner({ responses: [{ actionName: "act", input: {} }] }),
     });
@@ -112,7 +112,7 @@ describe("engine on real libsql — full lifecycle (J3)", () => {
 
     // ── Engine B: brand-new connection to the same file (a process restart). ──
     const storeB = await createDrizzleStore(url);
-    const deltaB = createDeltaEngine({
+    const deltaB = await createDeltaEngine({
       store: storeB,
       reasoner: createMockReasoner({ responses: [] }),
     });
@@ -147,7 +147,7 @@ describe("engine on real libsql — full lifecycle (J3)", () => {
 
     // ── Engine A: send hits an approval gate and blocks; state is on disk. ────
     const storeA = await createDrizzleStore(url);
-    const deltaA = createDeltaEngine({
+    const deltaA = await createDeltaEngine({
       store: storeA,
       reasoner: createMockReasoner({ responses: [{ actionName: "pay", input: { amount: 100 } }] }),
     });
@@ -183,7 +183,7 @@ describe("engine on real libsql — full lifecycle (J3)", () => {
 
     // ── Engine B: fresh connection to the same file resumes to completion. ────
     const storeB = await createDrizzleStore(url);
-    const deltaB = createDeltaEngine({
+    const deltaB = await createDeltaEngine({
       store: storeB,
       reasoner: createMockReasoner({ responses: [{ actionName: "pay", input: { amount: 100 } }] }),
     });
