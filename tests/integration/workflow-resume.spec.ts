@@ -76,6 +76,65 @@ describe("workflow resume: routes through the workflow engine (#2)", () => {
     expect(ran).toEqual(["ran"]);
   });
 
+  it("re-enters an escalated phase at the failed action, not its first action (mid-phase resume)", async () => {
+    const delta = await createDeltaEngine({ reasoner: createMockReasoner({ responses: [] }) });
+
+    let aCount = 0;
+    let flakyCalls = 0;
+    const a = delta.action({
+      name: "a",
+      description: "side-effectful first action of the phase",
+      schema: z.object({}),
+      fn: async () => {
+        aCount++;
+        return Ok("a-ok");
+      },
+    });
+    const flaky = delta.action({
+      name: "flaky",
+      description: "fails once then succeeds",
+      schema: z.object({}),
+      fn: async () => {
+        flakyCalls++;
+        return flakyCalls === 1 ? Err("flaky-fail") : Ok("flaky-ok");
+      },
+    });
+    // One phase, two actions: [a, flaky]. It escalates after a succeeds and flaky fails.
+    const phase = delta.phase({
+      name: "two-step",
+      description: "two actions, escalates on failure",
+      actions: ["a", "flaky"],
+      checkpoint: true,
+      supervision: { strategy: "escalate", maxRetries: 0 },
+    });
+    const wf = delta.workflow({ name: "single-phase", description: "one phase", version: "1.0.0", phases: [phase] });
+    const agent = delta.agent({
+      name: "mp-agent",
+      description: "single phase, two actions",
+      role: "R",
+      rolePrompt: ".",
+      actions: [a, flaky],
+      workflows: [wf],
+    });
+    delta.deploy(agent);
+
+    const blocked = await delta.send({ goal: "run the phase", agentName: "mp-agent", workflow: "single-phase" });
+    expect(blocked.isOk).toBe(true);
+    if (!blocked.isOk) return;
+    expect(blocked.value.status).toBe("blocked"); // escalated mid-phase
+    expect(aCount).toBe(1); // a ran
+    expect(flakyCalls).toBe(1); // flaky attempted and failed
+
+    const resumed = await delta.resume(blocked.value.taskId);
+    expect(resumed.isOk).toBe(true);
+    if (!resumed.isOk) return;
+    expect(resumed.value.status).toBe("completed");
+    // a was NOT re-run: the phase resumed at the failed action (flaky), not the top.
+    expect(aCount).toBe(1);
+    // flaky re-ran and succeeded.
+    expect(flakyCalls).toBe(2);
+  });
+
   it("skips an already-completed phase on resume (mid-workflow resume)", async () => {
     const delta = await createDeltaEngine({ reasoner: createMockReasoner({ responses: [] }) });
 

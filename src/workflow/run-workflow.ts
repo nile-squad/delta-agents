@@ -19,11 +19,11 @@ import { Ok, Err } from "slang-ts";
 import type { WorkflowResult, RunWorkflowInput, PhaseResult, RunPhaseInput } from "./types";
 import { runPhase } from "./run-phase";
 import { runHook } from "../execution/run-hooks";
-import { withCompletedWorkflow, snapshotFromJson } from "../state-space/task-state";
+import { withCompletedWorkflow, snapshotFromJson, snapshotToJson } from "../state-space/task-state";
 import { applyStrategy, abortTask, abortEntireTree } from "../supervision";
 import { raiseEscalation } from "../oversight";
 import { retryWithJitter } from "../infra";
-import { executionId } from "../shared/id";
+import { executionId, checkpointId } from "../shared/id";
 import type { ActionContext } from "../authoring/types";
 
 /**
@@ -52,13 +52,29 @@ const runPhaseSupervised = async (input: RunPhaseInput): Promise<PhaseResult> =>
   // applyStrategy maps resume-with-no-checkpoint → restart automatically, so the
   // downstream switch only needs to handle what the decision actually says.
   const latestCkpt = await input.store.getLatestCheckpoint(taskId);
-  const checkpointId =
+  const latestCheckpointId =
     latestCkpt.isOk && latestCkpt.value !== null ? latestCkpt.value.id : undefined;
-  const decision = applyStrategy({ policy, retryCount: 0, checkpointId });
+  const decision = applyStrategy({ policy, retryCount: 0, checkpointId: latestCheckpointId });
 
   switch (decision.action) {
     case "escalate": {
       await raiseEscalation({ taskId, trigger: "workflow-failure", reason: first.failedReason, store: input.store });
+      // Persist mid-phase progress so resume re-enters this phase at the action
+      // that failed, not from the top: the actions completed before the failure
+      // are not re-executed (mid-phase resume). The completed-phases set on the
+      // snapshot still skips the phases that finished before this one.
+      await input.store.saveCheckpoint({
+        id: checkpointId(),
+        taskId,
+        phase: input.phase.name,
+        state: snapshotToJson({
+          ...first.snapshot,
+          status: "paused",
+          currentPhase: input.phase.name,
+          currentActionIndex: first.failedIndex ?? 0,
+        }),
+        createdAt: new Date(),
+      });
       await input.store.updateTask(taskId, { status: "paused", updatedAt: new Date() });
       return {
         status: "blocked",
@@ -188,8 +204,18 @@ export const runWorkflow = async ({
   // side-effectful phases. On a fresh send this set is empty (mid-workflow resume).
   const alreadyDone = new Set(state.completedPhases ?? []);
 
+  // On resume from a mid-phase escalation, the in-progress phase re-enters at the
+  // action it reached rather than at the top, so its already-completed actions do
+  // not re-run (mid-phase resume). Captured from the resume snapshot; absent on a
+  // fresh send.
+  const resumePhase = state.currentPhase;
+  const resumeActionIndex = state.currentActionIndex;
+
   for (const phase of workflow.phases) {
     if (alreadyDone.has(phase.name)) continue;
+
+    const startIndex =
+      phase.name === resumePhase && resumeActionIndex !== undefined ? resumeActionIndex : undefined;
 
     const phaseResult = await runPhaseSupervised({
       phase,
@@ -200,6 +226,7 @@ export const runWorkflow = async ({
       store,
       communicate,
       remember,
+      ...(startIndex !== undefined ? { startIndex } : {}),
     });
 
     currentState = phaseResult.snapshot;

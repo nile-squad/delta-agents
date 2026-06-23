@@ -59,6 +59,12 @@ export type TaskStateSnapshot = {
   // what the store can prove finished.
   completedPhases?: string[];
 
+  // When a phase escalated part way through (some actions done, one failed), this
+  // is the action index at which to re-enter `currentPhase` on resume, so the
+  // already-completed actions in that phase are not re-executed (mid-phase
+  // resume). Set only on the checkpoint written at a mid-phase escalation.
+  currentActionIndex?: number;
+
   // The send-time inputs for a workflow task, carried on the snapshot so a
   // resumed workflow re-runs faithfully. The deterministic (reasoner-less)
   // workflow path has no other source for them after a process restart, so they
