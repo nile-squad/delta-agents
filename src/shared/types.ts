@@ -123,6 +123,7 @@ export type EscalationTrigger =
   | "policy-violation"
   | "budget-violation"
   | "workflow-failure"
+  | "reasoner-failure"
   | "explicit";
 
 // Every escalation is stored and attributable so oversight is never silent (invariant 13).

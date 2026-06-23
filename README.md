@@ -249,6 +249,18 @@ const reasoner = createMockReasoner({
 });
 ```
 
+### Reasoner resilience
+
+Models fail: a network error, a maxed-out rate limit, malformed JSON, or a turn that does not call a tool. Each reasoner step is retried with jittered exponential backoff. When the retries are exhausted the task does not fail outright; it escalates to a human (a `reasoner-failure` escalation, the task paused and resumable), so a transient upstream problem is recoverable rather than fatal.
+
+```ts
+const delta = await createDeltaEngine({
+  reasoner,
+  // Defaults: 3 attempts, 200ms base, 5s cap, 0.3 jitter. Partial overrides merge.
+  reasonerRetry: { maxAttempts: 5, baseDelayMs: 500, maxDelayMs: 10_000 },
+});
+```
+
 ### Chat SDK channel bridge
 
 Delta Agents is transport-agnostic. Wire any Chat SDK thread into a governed channel:

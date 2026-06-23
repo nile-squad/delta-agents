@@ -21,6 +21,7 @@
  */
 
 import { Ok, Err } from "slang-ts";
+import { defaultRetryOptions } from "../infra";
 import type { DeltaEngineConfig, DeltaEngine } from "./types";
 import { createInMemoryStore } from "../ports/in-memory-store";
 import { createMockReasoner } from "../ports/mock-reasoner";
@@ -42,10 +43,14 @@ export const createDeltaEngine = async ({
   store: configStore,
   reasoner: configReasoner,
   maxStepsPerTask = 100,
+  reasonerRetry: configReasonerRetry,
 }: DeltaEngineConfig = {}): Promise<DeltaEngine> => {
   const store = configStore ?? createInMemoryStore();
   const reasoner = configReasoner ?? createMockReasoner();
   const registry = createRegistry();
+  // Resolve the reasoner-retry policy once. Partial config merges over the infra
+  // defaults so a caller can tune just the field they care about (e.g. attempts).
+  const reasonerRetry = { ...defaultRetryOptions, ...configReasonerRetry };
 
   // Await the store's readiness gate before the engine serves any request. An
   // adapter that needs async warm-up (open a connection, run migrations) signals
@@ -165,7 +170,7 @@ export const createDeltaEngine = async ({
     // free reasoner loop.
     const result = workflowName !== undefined
       ? await runWorkflowTask({ task, agent: agentDef, workflowName, input, actionInputs, registry, store })
-      : await runSendLoop({ task, agent: agentDef, reasoner, registry, store, maxSteps: maxStepsPerTask });
+      : await runSendLoop({ task, agent: agentDef, reasoner, registry, store, maxSteps: maxStepsPerTask, reasonerRetry });
 
     return Ok(result);
   };
@@ -203,6 +208,7 @@ export const createDeltaEngine = async ({
       registry,
       store,
       maxSteps: maxStepsPerTask,
+      reasonerRetry,
     });
   };
 

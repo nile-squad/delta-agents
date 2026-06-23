@@ -14,6 +14,7 @@ import type { Result } from "slang-ts";
 import type { Cost, Task, Execution, Checkpoint, ApprovalRequest, EscalationRecord } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort } from "../ports/reasoner-port";
+import type { RetryOptions } from "../infra";
 import type { Action, Workflow, Phase, Agent, DataSource } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 
@@ -28,6 +29,16 @@ export type DeltaEngineConfig = {
    * Default: 100.
    */
   maxStepsPerTask?: number;
+  /**
+   * Resilience for the reasoner boundary. A model call can fail in many ways:
+   * a network error, a maxed-out usage/rate limit, malformed JSON, or simply not
+   * calling a tool. Each reasoner step is retried with jittered exponential
+   * backoff up to `maxAttempts`; when retries are exhausted the task escalates to
+   * a human (a `reasoner-failure` escalation, task paused and resumable) rather
+   * than failing outright (principle 8: human oversight is fundamental).
+   * Partial overrides merge over the defaults (3 attempts, 200ms base, 5s cap).
+   */
+  reasonerRetry?: Partial<RetryOptions>;
 };
 
 export type SendInput = {

@@ -565,21 +565,31 @@ describe("invariant 26 — no new task when agent already has active work", () =
 // ── Critical-set corrections (C1–C4) ──────────────────────────────────────────
 
 describe("loop terminal states are honest (C1–C4)", () => {
-  it("C2 — a reasoner failure marks the task failed, never completed", async () => {
+  it("C2 — a persistent reasoner failure retries then escalates to a human, never completes", async () => {
     const store = createInMemoryStore();
     const delta = await createDeltaEngine({
       store,
       reasoner: createMockReasoner({ alwaysFail: "model exploded" }),
+      // Near-zero backoff so the retries do not slow the test.
+      reasonerRetry: { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 2 },
     });
     const act = delta.action({ name: "act", description: "test action", schema: z.object({}), fn: noop });
     delta.deploy(delta.agent({ name: "fail-agent", description: "d", role: "r", rolePrompt: ".", actions: [act] }));
 
     const result = await delta.send({ goal: "go", agentName: "fail-agent" });
     expect(result.isOk).toBe(true);
-    if (result.isOk) {
-      expect(result.value.status).toBe("failed");
-      expect(result.value.reason).toMatch(/reasoner failed/);
-    }
+    if (!result.isOk) return;
+    // After exhausting retries the task is blocked for human review, not failed,
+    // and not completed. The reason names the escalation and the attempt count.
+    expect(result.value.status).toBe("blocked");
+    expect(result.value.reason).toMatch(/3 attempt\(s\), escalated/);
+
+    // The escalation is recorded, TaskID-attributable, with the reasoner trigger.
+    const inspected = await delta.inspect(result.value.taskId);
+    expect(inspected.isOk).toBe(true);
+    if (!inspected.isOk) return;
+    expect(inspected.value.escalations.some((e) => e.trigger === "reasoner-failure")).toBe(true);
+    expect(inspected.value.task.status).toBe("paused");
   });
 
   it("C4 — reasoning token cost is recorded on the execution and drives spent", async () => {
@@ -1108,7 +1118,8 @@ describe("delegation drives a bounded supervision tree (H4)", () => {
       { delegate: { goal: "sub", agentName: "child-agent" } },
       "done",
     ];
-    // The child's model fails outright (an Err is never a completion).
+    // The child hard-fails by requesting an action that does not exist (a logic
+    // failure, distinct from a transient model error which would retry+escalate).
     const reasoner: ReasonerPort = {
       reason: async ({ agentRole }) => {
         if (agentRole === "Parent") {
@@ -1116,7 +1127,7 @@ describe("delegation drives a bounded supervision tree (H4)", () => {
           if (next === undefined || next === "done") return Ok({ kind: "done" });
           return Ok({ kind: "delegate", delegation: next.delegate });
         }
-        return Err("child model exploded");
+        return Ok({ kind: "act", request: { actionName: "does-not-exist", input: {} } });
       },
     };
     const delta = await createDeltaEngine({ store, reasoner });

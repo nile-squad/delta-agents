@@ -35,7 +35,9 @@ import { snapshotFromTask, snapshotToJson } from "../state-space/task-state";
 import { isOverBudget, addCosts, remainingCost } from "../shared/cost";
 import { discoverActions } from "../state-space/discover-actions";
 import { runGateway } from "../execution/execution-gateway";
-import { applyPostStepGovernance, getApprovalStatusForAction, requestApproval } from "../oversight";
+import { applyPostStepGovernance, getApprovalStatusForAction, requestApproval, raiseEscalation } from "../oversight";
+import { retryWithJitter, defaultRetryOptions } from "../infra";
+import type { RetryOptions } from "../infra";
 import { dispatchCommunication, makeContextCommunicate } from "../comms";
 import { retrieveContext, makeContextRemember } from "../memory";
 import { computeActionValue } from "../governance";
@@ -117,6 +119,7 @@ const stepTask = async ({
   reasoner,
   registry,
   store,
+  reasonerRetry,
 }: {
   task: Task;
   agent: Agent;
@@ -125,6 +128,7 @@ const stepTask = async ({
   reasoner: ReasonerPort;
   registry: Registry;
   store: StoragePort;
+  reasonerRetry: RetryOptions;
 }): Promise<StepOutcome> => {
   // 1. Discover legal actions for the agent in the current state.
   const agentActionsResult = registry.getActionsForAgent(agent.name);
@@ -165,7 +169,13 @@ const stepTask = async ({
   // 2. Ask the reasoner what to do next. Delegation targets are every other
   // deployed agent (an agent does not delegate to itself; the supervision tree
   // and budget scoping bound the rest).
-  const reasonResult = await reasoner.reason({
+  //
+  // The reasoner is the least reliable part of the system: a model call can fail
+  // with a network error, a maxed-out rate limit, malformed JSON, or simply not
+  // calling a tool. Each step is retried with jittered exponential backoff so a
+  // transient failure does not sink the task (spec: resilience at the model
+  // boundary). The same input is replayed on each attempt.
+  const reasonInput = {
     task: { ...task, risk: snapshot.risk, trust: snapshot.trust, updatedAt: new Date() },
     availableActions: rankedActions.map((a) => a.name),
     availableAgents: registry.listAgents().filter((name) => name !== agent.name),
@@ -174,11 +184,29 @@ const stepTask = async ({
     agentRole: agent.role,
     rolePrompt: agent.rolePrompt,
     ...(retrieved.context.length > 0 ? { context: retrieved.context } : {}),
+  };
+  const reasonResult = await retryWithJitter({
+    fn: () => reasoner.reason(reasonInput),
+    options: reasonerRetry,
   });
 
-  // An Err is a genuine model/API failure or safety refusal — never completion.
+  // Retries exhausted. A persistent model/API failure is exactly the kind of
+  // unknown that human oversight exists for (principle 8): escalate rather than
+  // silently fail. The escalation record is TaskID-attributable and the task is
+  // paused (the scheduler persists a blocked outcome as "paused"), so a human can
+  // inspect the failure and resume once the upstream issue is resolved.
   if (reasonResult.isErr) {
-    return { kind: "failed", snapshot, reason: `reasoner failed: ${reasonResult.error}` };
+    await raiseEscalation({
+      taskId: task.id,
+      trigger: "reasoner-failure",
+      reason: `reasoner failed after ${reasonerRetry.maxAttempts} attempt(s): ${reasonResult.error}`,
+      store,
+    });
+    return {
+      kind: "blocked",
+      snapshot,
+      reason: `reasoner failed after ${reasonerRetry.maxAttempts} attempt(s), escalated for human review: ${reasonResult.error}`,
+    };
   }
 
   const decision = reasonResult.value;
@@ -298,12 +326,14 @@ export const runScheduler = async ({
   registry,
   store,
   maxSteps,
+  reasonerRetry = defaultRetryOptions,
 }: {
   root: Runner;
   reasoner: ReasonerPort;
   registry: Registry;
   store: StoragePort;
   maxSteps: number;
+  reasonerRetry?: RetryOptions;
 }): Promise<SendResult> => {
   const rootId = root.task.rootId;
   const runners: Runner[] = [root];
@@ -559,6 +589,7 @@ export const runScheduler = async ({
         reasoner,
         registry,
         store,
+        reasonerRetry,
       });
       runner.step++;
       runner.snapshot = outcome.snapshot;
