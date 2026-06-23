@@ -183,7 +183,14 @@ export const runWorkflow = async ({
 
   let currentState: typeof state = { ...state, currentWorkflow: workflow.name };
 
+  // Phases proven complete by a prior run (from the resume snapshot's checkpoint)
+  // are skipped so a recovered workflow does not re-execute finished, possibly
+  // side-effectful phases. On a fresh send this set is empty (mid-workflow resume).
+  const alreadyDone = new Set(state.completedPhases ?? []);
+
   for (const phase of workflow.phases) {
+    if (alreadyDone.has(phase.name)) continue;
+
     const phaseResult = await runPhaseSupervised({
       phase,
       actionRegistry,

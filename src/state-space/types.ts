@@ -50,6 +50,22 @@ export type TaskStateSnapshot = {
   // pause/resume — a message is consumed exactly once (spec §Queueing Model,
   // invariant 9). Persisted inside the checkpoint JsonRecord, not a DB column.
   consumedMessages?: string[];
+
+  // ── Workflow resume state ────────────────────────────────────────────────
+  // Names of phases in the current workflow that have already completed. A
+  // resume skips these instead of re-running them, so a checkpointed workflow
+  // does not re-execute side-effectful phases on recovery (mid-workflow resume).
+  // Only phases that wrote a checkpoint are recorded, so the skip set is exactly
+  // what the store can prove finished.
+  completedPhases?: string[];
+
+  // The send-time inputs for a workflow task, carried on the snapshot so a
+  // resumed workflow re-runs faithfully. The deterministic (reasoner-less)
+  // workflow path has no other source for them after a process restart, so they
+  // are persisted in the checkpoint rather than held only in the send call.
+  // Values must be JSON-serializable (they round-trip through the checkpoint).
+  workflowInput?: Record<string, unknown>;
+  workflowActionInputs?: Record<string, Record<string, string | number | boolean | null>>;
 };
 
 // Result of a legality check. Includes a reason when illegal so the caller

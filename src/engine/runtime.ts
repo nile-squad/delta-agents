@@ -138,6 +138,7 @@ export const runWorkflowTask = async ({
   actionInputs,
   registry,
   store,
+  startingSnapshot,
 }: {
   task: Task;
   agent: Agent;
@@ -147,8 +148,38 @@ export const runWorkflowTask = async ({
   actionInputs?: Record<string, Record<string, string | number | boolean | null>>;
   registry: Registry;
   store: StoragePort;
+  /** Resume state reconstructed from a checkpoint. When present, completed phases
+   *  are skipped and the persisted send-time input is reused (resumeTask path). */
+  startingSnapshot?: TaskStateSnapshot;
 }): Promise<SendResult> => {
-  const snapshot = snapshotFromTask(task);
+  // On a fresh send, start from the task record. On resume, start from the
+  // checkpoint snapshot so completedPhases and the original input survive.
+  const base = startingSnapshot ?? snapshotFromTask(task);
+
+  // The effective inputs are the call's inputs on a fresh send, or the inputs
+  // persisted on the snapshot when resuming (the call has none on resume).
+  const effectiveInput = input ?? base.workflowInput;
+  const effectiveActionInputs = actionInputs ?? base.workflowActionInputs;
+
+  const snapshot: TaskStateSnapshot = {
+    ...base,
+    completedPhases: base.completedPhases ?? [],
+    workflowInput: effectiveInput,
+    workflowActionInputs: effectiveActionInputs,
+  };
+
+  // Capture the send-time input in a checkpoint up front (fresh send only). A
+  // workflow can block on the approval pre-flight BEFORE any phase runs and thus
+  // before any phase checkpoint exists; without this, a resume after that block
+  // would have no record of the input and could not re-run the workflow faithfully.
+  if (startingSnapshot === undefined) {
+    await store.saveCheckpoint({
+      id: checkpointId(),
+      taskId: task.id,
+      state: snapshotToJson(snapshot),
+      createdAt: new Date(),
+    });
+  }
 
   // The agent must declare the workflow — nothing outside its definition is
   // reachable (spec §Bounded State-Space Model).
@@ -238,7 +269,7 @@ export const runWorkflowTask = async ({
     actionRegistry,
     state: snapshot,
     getApprovalStatus: (name) => approvalStatuses.get(name) ?? "none",
-    inputFor: (name) => actionInputs?.[name] ?? input ?? {},
+    inputFor: (name) => effectiveActionInputs?.[name] ?? effectiveInput ?? {},
     store,
     communicate: makeContextCommunicate({ agent, taskId: task.id, agentName: agent.name, store }),
     remember: makeContextRemember({ store, taskId: task.id, agentName: agent.name }),
@@ -343,6 +374,25 @@ export const resumeTask = async ({
 
   const updateResult = await store.updateTask(taskId, { status: "running", updatedAt: new Date() });
   if (updateResult.isErr) return Err(`failed to mark task as running: ${updateResult.error}`);
+
+  // C-a coexistence holds on resume too: a workflow task re-enters the
+  // deterministic workflow engine (reasoner-less), NOT the reasoner loop. The
+  // reconstructed snapshot carries completedPhases (finished phases are skipped)
+  // and the persisted send-time input, so the workflow resumes faithfully from
+  // the latest checkpoint instead of restarting reasoning from scratch.
+  if (task.workflow !== undefined) {
+    const result = await runWorkflowTask({
+      task,
+      agent,
+      workflowName: task.workflow,
+      input: startingSnapshot.workflowInput,
+      actionInputs: startingSnapshot.workflowActionInputs,
+      registry,
+      store,
+      startingSnapshot,
+    });
+    return Ok(result);
+  }
 
   const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot });
   return Ok(result);

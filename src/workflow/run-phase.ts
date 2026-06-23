@@ -230,17 +230,28 @@ const completePhase = async (
   snapshot: RunPhaseInput["state"],
   store: RunPhaseInput["store"],
 ): Promise<PhaseResult> => {
+  // Record this phase as completed BEFORE the checkpoint is written, so the
+  // persisted snapshot proves the phase finished. On resume, runWorkflow skips
+  // every phase in completedPhases instead of re-running it (mid-workflow resume,
+  // prevents double-execution of side-effectful phases).
+  const advanced: RunPhaseInput["state"] = {
+    ...snapshot,
+    completedPhases: snapshot.completedPhases?.includes(phase.name)
+      ? snapshot.completedPhases
+      : [...(snapshot.completedPhases ?? []), phase.name],
+  };
+
   if (phase.checkpoint) {
     const ckpt: Checkpoint = {
       id: checkpointId(),
-      taskId: snapshot.taskId,
+      taskId: advanced.taskId,
       phase: phase.name,
-      state: snapshotToJson(snapshot),
+      state: snapshotToJson(advanced),
       createdAt: new Date(),
     };
     await store.saveCheckpoint(ckpt);
   }
 
   await runHook(phase.hooks?.after, phaseCtx);
-  return { status: "completed", snapshot };
+  return { status: "completed", snapshot: advanced };
 };
