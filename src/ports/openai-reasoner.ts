@@ -36,6 +36,13 @@ export type OpenAIReasonerConfig = {
   /** OpenAI API key. Falls back to OPENAI_API_KEY environment variable. */
   apiKey?: string;
   /**
+   * Base URL for the API. Defaults to the OpenAI endpoint. Set this to point at
+   * any OpenAI-compatible provider, for example OpenRouter
+   * ("https://openrouter.ai/api/v1"). The reasoner only uses chat completions
+   * with tool calling, so any compatible endpoint works unchanged.
+   */
+  baseURL?: string;
+  /**
    * Chat completions model. Defaults to "gpt-4o-mini" — cost-effective
    * and sufficiently capable for governed action selection.
    */
@@ -408,6 +415,7 @@ const parseToolCall = (
 export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): ReasonerPort => {
   const client = new OpenAI({
     apiKey: config.apiKey,
+    ...(config.baseURL !== undefined ? { baseURL: config.baseURL } : {}),
     ...(config.fetch !== undefined ? { fetch: config.fetch } : {}),
   });
 

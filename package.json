@@ -20,6 +20,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "build": "vitest run && tsc --noEmit && tsup",
+    "bundle": "tsup",
+    "test:e2e": "tsup && vitest run --config vitest.e2e.config.ts",
     "prepublishOnly": "pnpm build"
   },
   "engines": {

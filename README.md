@@ -234,6 +234,13 @@ import { createOpenAIReasoner, createMockReasoner } from "delta-agents";
 // Production: OpenAI chat completions.
 const reasoner = createOpenAIReasoner({ model: "gpt-4o" });
 
+// Any OpenAI-compatible provider via baseURL, for example OpenRouter.
+const reasoner = createOpenAIReasoner({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: "https://openrouter.ai/api/v1",
+  model: "openai/gpt-4o-mini",
+});
+
 // Testing: scripted deterministic responses.
 const reasoner = createMockReasoner({
   responses: [{ actionName: "lookup-customer", input: { customerId: "C-42" } }],
