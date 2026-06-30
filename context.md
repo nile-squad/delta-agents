@@ -491,6 +491,11 @@ See the authoritative Tech Stack section above for the rules. Summary:
 
 Installed:
 - `slang-ts` — Result, Option, match, matchAll, safeTry, pipe, atom, println, panic (re-exported from src/index.ts). Every function returns `Ok`/`Err`; callers check and forward; throw only for critical, system-halting failures.
+  **Utilize slang-ts idioms throughout the internal codebase — prefer them over raw undefined/null checks:**
+  - `option(value)` wraps any possibly-absent value: truthy → `Some<T>`, null/undefined/"" → `None`. Use on `Map.get()`, `Array.find()`, and optional config fields. Access `.isSome`/`.isNone` for narrowing, `.value` for the inner value, `.unwrap().else(fallback)` for fallback patterns instead of `?? fallback`.
+  - `match`/`matchAll` for exhaustive union dispatch instead of if/else chains on `kind` fields.
+  - `safeTry` for async try/catch blocks that produce a `Result`.
+  - `pipe` for readable data-transformation chains.
 - `zod` — schema validation for actions (every executable action has a validation schema)
 - `ms` + `@types/ms` — convert human time strings to ms and back (`ms('2h')` → 7200000, `ms(7200000)` → "2h"). Use for any internal duration arithmetic or budget/timeout values.
 - `date-fns` + `date-fns-tz` — all date, time, and timezone formatting/parsing. Use for any user-facing date/time display.
