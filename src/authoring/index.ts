@@ -10,7 +10,6 @@ export type {
   SupervisionPolicyDef,
   Workflow,
   Skill,
-  SkillLoader,
   ChannelType,
   Channel,
   DataSourceOwnership,

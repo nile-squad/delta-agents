@@ -210,20 +210,48 @@ Both are scoped at the engine, not just hidden from the model: a delegation or m
 
 ## Skills
 
-An agent can carry skills: named, reusable capability descriptions with a `path` to their content (a playbook, a policy, a prompt snippet). Active skills are surfaced to the reasoner. The library does not assume a filesystem, so to load a skill's `path` content you provide a loader; without one, skills are still surfaced by name and description.
+A skill is a named capability description stored as a folder on disk. The folder must contain a `SKILL.md` file; if it is missing the skill is skipped (non-fatal). The engine reads `SKILL.md` internally — no `loadSkill` loader is needed on the engine config.
 
 ```ts
-import { readFile } from "node:fs/promises";
+import { type Skill } from "delta-agents";
 
-const delta = await createDeltaEngine({
-  apiKey: process.env.OPENAI_API_KEY,
-  models: [{ name: "default", model: "gpt-4o-mini", default: true }],
-  loadSkill: async (skill) => {
-    try {
-      return Ok(await readFile(skill.path, "utf8"));
-    } catch (e) {
-      return Err(String(e)); // non-fatal: the skill is still offered by name
-    }
+const refundSkill: Skill = {
+  name: "refunds",
+  description: "Handles customer refund requests",
+  folder: "./skills/refunds/",  // must contain SKILL.md
+};
+```
+
+Skills are scoped at three levels. At each level, only the declared skills are active:
+
+- **Agent level** — skills listed on the agent are active throughout every step of the free reasoner loop.
+- **Phase level** — skills listed on a phase are active only while that phase runs. Pass the skill name as a string to resolve against the agent's declared skills.
+- **Action level** — skills listed on an action override the phase-level set for that action's invocation. Accepts a skill name string (resolved against the agent's skills) or an inline `Skill` object.
+
+```ts
+const agent = delta.agent({
+  name: "support-agent",
+  skills: [refundSkill],          // available in the free reasoner loop
+  // ...
+});
+
+const phase: Phase = {
+  name: "handle-request",
+  description: "Process the refund",
+  actions: ["process-refund"],
+  checkpoint: false,
+  skills: ["refunds"],            // string ref resolved against agent skills
+};
+
+const action = delta.action({
+  name: "process-refund",
+  description: "Execute the refund",
+  schema: z.object({}),
+  skills: ["refunds"],            // overrides phase-level for this action
+  fn: async (input, ctx) => {
+    // ctx.availableSkills carries { name, description, content } for each active skill
+    const guide = ctx.availableSkills?.[0]?.content;
+    return Ok("done");
   },
 });
 ```
@@ -404,7 +432,7 @@ The TaskID is the unit of governance. Authorization, budgeting, auditing, checkp
 | `DataSource` | A named, owned store of governed CRUD operations. External sources are less trusted by default. |
 | `Agent` | A role with its actions, workflows, data sources, skills, and channels. |
 | `Channel` | An inbound or outbound communication surface. |
-| `Skill` | A reusable capability description attached to an agent. |
+| `Skill` | A named capability description backed by a folder containing `SKILL.md`. Scoped at agent, phase, or action level; content is loaded by the engine and exposed via `ctx.availableSkills`. |
 | `ModelDef` | A named model with its provider config, endpoint, API key, and options. |
 | `ModelOptions` | Provider options forwarded to the model API: temperature, topP, maxTokens. |
 

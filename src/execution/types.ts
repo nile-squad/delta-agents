@@ -46,6 +46,8 @@ export type GatewayInput = {
   communicate?: ActionContext["communicate"];
   /** Memory-write helper threaded onto the ActionContext (ctx.remember). */
   remember?: ActionContext["remember"];
+  /** Skills active at this action's invocation point. Threaded onto ctx.availableSkills. */
+  availableSkills?: ActionContext["availableSkills"];
 };
 
 export type GatewaySuccess = {

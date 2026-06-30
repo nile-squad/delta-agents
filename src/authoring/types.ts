@@ -21,6 +21,13 @@ export type ActionContext = {
   agentName: string;
   phase?: string;
   /**
+   * Skills active at this action's invocation point. In the free reasoner loop
+   * this is the agent's full skill set; in a workflow it is scoped to the action's
+   * or phase's declared skills. Each entry's content is loaded from its SKILL.md.
+   * Absent when no skills are active or the engine is running without a filesystem.
+   */
+  availableSkills?: Array<{ name: string; description: string; content?: string }>;
+  /**
    * Send a message through one of the agent's bound channels, from inside an
    * action fn, hook, or workflow phase. Routes through the same governed dispatch
    * as the reasoner's `communicate` decision (resolves the channel, records a
@@ -83,6 +90,8 @@ export type Action<TInput extends Record<string, unknown> = Record<string, unkno
   };
   hooks?: Hooks;
   fn: ActionFn<TInput>;
+  /** Skills active only when this action runs (overrides phase-level skills). */
+  skills?: (string | Skill)[];
 };
 
 /**
@@ -115,6 +124,8 @@ export type Phase = {
   checkpoint: boolean;
   supervision?: SupervisionPolicyDef;
   hooks?: Hooks;
+  /** Skills active for all actions in this phase (overridable per-action via Action.skills). */
+  skills?: (string | Skill)[];
 };
 
 export type SupervisionPolicyDef = {
@@ -146,20 +157,9 @@ export type Workflow = {
 export type Skill = {
   name: string;
   description: string;
-  path: string;
-  active: boolean;
+  /** Path to the skill's folder. Must contain a SKILL.md file to be usable. */
+  folder: string;
 };
-
-/**
- * Loads a skill's content from its `path`. The library deliberately does not
- * assume a filesystem (it may run on Node, an edge runtime, or the browser), so
- * the consumer provides the loader: in Node it wraps `fs.readFile`, elsewhere a
- * fetch or a bundled lookup. When configured on the engine, the content of each
- * active skill is loaded and surfaced to the reasoner alongside the skill's
- * name and description. An Err is non-fatal: the skill is still offered by name,
- * just without its loaded content.
- */
-export type SkillLoader = (skill: Skill) => Promise<Result<string, string>>;
 
 /**
  * Who owns the data a DataSource reads and writes.

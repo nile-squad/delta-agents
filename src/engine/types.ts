@@ -15,7 +15,7 @@ import type { Cost, Task, Execution, Checkpoint, ApprovalRequest, EscalationReco
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort } from "../ports/reasoner-port";
 import type { RetryOptions } from "../infra";
-import type { Action, Workflow, Agent, DataSource, SkillLoader } from "../authoring/types";
+import type { Action, Workflow, Agent, DataSource } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 
 /**
@@ -100,14 +100,6 @@ export type DeltaEngineConfig = {
    * Partial overrides merge over the defaults (3 attempts, 200ms base, 5s cap).
    */
   reasonerRetry?: Partial<RetryOptions>;
-  /**
-   * Loads the content of an agent's active skills so it is surfaced to the
-   * reasoner (not just the skill name and description). The library does not
-   * assume a filesystem, so the consumer provides the loader (wrapping
-   * `fs.readFile` in Node, a fetch elsewhere). When omitted, skills are still
-   * surfaced by name and description; their `path` content is not loaded.
-   */
-  loadSkill?: SkillLoader;
 };
 
 export type SendInput = {

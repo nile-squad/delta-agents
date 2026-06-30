@@ -194,12 +194,14 @@ Closes the "net-new spec features" gap for channels + skills (memory retrieval i
   workflow phase send through the same governed dispatch. Hooks never authorize (inv 22), so a
   `requiresApproval` channel is NOT sendable via ctx.communicate (returns Err → use the reasoner
   path). Threaded engine→runGateway→ctx and runWorkflowTask→runWorkflow→runPhase→ctx.
-- **E3 — skills.** `agent.skills` was fully dormant; active skills (name+description) are now
-  surfaced to the reasoner (`ReasonerInput.availableSkills`) and listed in the OpenAI prompt.
-  **E-remaining (deferred):** loading skill *content* from `Skill.path` (needs a platform-specific
-  file loader the library should not assume — could be an optional engine `skillLoader` config);
+- **E3 — skills (complete).** Full skills DX landed. `Skill` now has `folder` (not `path`), no
+  `active` flag. `agent.skills`, `phase.skills`, and `action.skills` all accept `(string | Skill)[]`.
+  The engine reads `SKILL.md` from each skill folder internally (`node:fs/promises`); skills without
+  SKILL.md are silently skipped. `ActionContext.availableSkills` is set so action fns can access skill
+  content. Scoping: free loop = all agent skills; phase = phase.skills; action = action.skills
+  (overrides phase). `SkillLoader` and `loadSkill` removed from public surface entirely.
   `Channel.retrieveMessages`/`replyMessage` not yet driven; root `index.ts` still exports only
-  slang-ts (full public-API export pass is Package J). 601 tests pass under vitest.
+  slang-ts (full public-API export pass is Package J). 681 tests pass under vitest.
 
 ## Package F — On-demand memory retrieval (DONE 2026-06-21, libsql)
 Implements spec principle 4 ("memory is retrieved, not carried") + invariant 8 (memory access
@@ -442,7 +444,7 @@ The project is a clean slate. Old @nilejs/future code (actor/concurrency library
 
 ## Key Types (from spec)
 
-**Authoring types:** Action (name, description, schema, optional risk 1-5, optional estimatedCost, requiresApproval, prerequisites, hooks, fn returning slang Result), Workflow (name, description, version, phases, estimatedCost), Phase (name, description, actions, checkpoint, supervision), Agent (name, description, role, rolePrompt, model, contextWindow, actions, workflows, skills, channels, team), Skill, DataSource, Channel
+**Authoring types:** Action (name, description, schema, optional risk 1-5, optional estimatedCost, requiresApproval, prerequisites, hooks, fn, optional skills:(string|Skill)[]), Workflow (name, description, version, phases, estimatedCost), Phase (name, description, actions, checkpoint, supervision, optional skills:(string|Skill)[]), Agent (name, description, role, rolePrompt, model, contextWindow, actions, workflows, skills:Skill[], channels, team), Skill (name, description, folder), DataSource, Channel
 
 **Runtime types:** Task (id, rootId, parentId, status, goal, assignedAgent, workflow, currentPhase, budget, risk, trust, createdAt, updatedAt), TaskTree (rootTaskId, activeChildren, queuedChildren, maxConcurrency: 2), Execution, Checkpoint, ApprovalRequest, RiskState (staticRisk, currentRisk, predictedRisk, confidence, escalated), TrustState (score, successfulExecutions, failedExecutions, surpriseEvents), Message, Queue, SupervisionPolicy
 

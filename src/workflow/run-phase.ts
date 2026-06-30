@@ -24,6 +24,7 @@
 import type { ActionContext } from "../authoring/types";
 import type { Checkpoint } from "../shared/types";
 import type { PhaseResult, RunPhaseInput } from "./types";
+import { buildAvailableSkills, resolveSkillRefs } from "../skills";
 import { runGateway } from "../execution/execution-gateway";
 import { runHook } from "../execution/run-hooks";
 import { applyPostStepGovernance } from "../oversight";
@@ -43,12 +44,19 @@ export const runPhase = async ({
   communicate,
   remember,
   startIndex,
+  agentSkills,
 }: RunPhaseInput): Promise<PhaseResult> => {
+  // Resolve phase-level skills once. Each action may override with its own set.
+  const phaseSkills = await buildAvailableSkills(
+    resolveSkillRefs(phase.skills ?? [], agentSkills ?? []),
+  );
+
   const phaseCtx: ActionContext = {
     taskId: state.taskId,
     executionId: executionId(),
     agentName: state.agentName,
     phase: phase.name,
+    ...(phaseSkills.length > 0 ? { availableSkills: phaseSkills } : {}),
     ...(communicate !== undefined ? { communicate } : {}),
     ...(remember !== undefined ? { remember } : {}),
   };
@@ -108,6 +116,9 @@ export const runPhase = async ({
       };
     }
 
+    const actionSkills = action.skills !== undefined
+      ? await buildAvailableSkills(resolveSkillRefs(action.skills, agentSkills ?? []))
+      : phaseSkills;
     const gwResult = await runGateway({
       action,
       rawInput: inputFor(actionName),
@@ -116,6 +127,7 @@ export const runPhase = async ({
       store,
       communicate,
       remember,
+      ...(actionSkills.length > 0 ? { availableSkills: actionSkills } : {}),
     });
 
     if (gwResult.isErr) {

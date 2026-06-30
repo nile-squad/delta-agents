@@ -12,7 +12,10 @@
  * Covers: invariants 1, 2, 8, 9, 25, 26; prohibition 4.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { z } from "zod";
 import { Ok, Err } from "slang-ts";
 import { createDeltaEngine } from "../../src/engine";
@@ -1357,10 +1360,23 @@ describe("agents communicate through bound channels (Package E)", () => {
 
 // ── Skills surfaced to the reasoner (Package E3) ──────────────────────────────
 
-describe("active skills are surfaced to the reasoner (Package E3)", () => {
-  it("passes active skills (name + description) and omits inactive ones", async () => {
+// Temp dirs for skill folders; cleaned up after the suite.
+let e3TmpDir: string;
+afterAll(() => { if (e3TmpDir) rmSync(e3TmpDir, { recursive: true, force: true }); });
+
+describe("skills are surfaced to the reasoner via SKILL.md (Package E3)", () => {
+  it("surfaces skills whose folder contains SKILL.md; omits those without", async () => {
+    e3TmpDir = mkdtempSync(join(tmpdir(), "delta-e3-"));
+    // refunds: has SKILL.md → surfaced
+    const refundsFolder = join(e3TmpDir, "refunds");
+    mkdirSync(refundsFolder, { recursive: true });
+    writeFileSync(join(refundsFolder, "SKILL.md"), "Refund rules.", "utf-8");
+    // legacy: no SKILL.md → omitted
+    const legacyFolder = join(e3TmpDir, "legacy");
+    mkdirSync(legacyFolder, { recursive: true });
+
     const store = createInMemoryStore();
-    let seenSkills: Array<{ name: string; description: string }> | undefined;
+    let seenSkills: Array<{ name: string; description: string; content?: string }> | undefined;
     const reasoner: ReasonerPort = {
       reason: async (input) => { seenSkills = input.availableSkills; return Ok({ kind: "done" }); },
     };
@@ -1374,14 +1390,16 @@ describe("active skills are surfaced to the reasoner (Package E3)", () => {
       rolePrompt: ".",
       actions: [act],
       skills: [
-        { name: "refunds", description: "process customer refunds", path: "/skills/refunds.md", active: true },
-        { name: "legacy", description: "deprecated capability", path: "/skills/legacy.md", active: false },
+        { name: "refunds", description: "process customer refunds", folder: refundsFolder },
+        { name: "legacy", description: "deprecated capability", folder: legacyFolder },
       ],
     }));
 
     const result = await delta.send({ goal: "go", agentName: "skilled-agent" });
     expect(result.isOk).toBe(true);
-    expect(seenSkills).toEqual([{ name: "refunds", description: "process customer refunds" }]);
+    expect(seenSkills).toEqual([
+      { name: "refunds", description: "process customer refunds", content: "Refund rules." },
+    ]);
   });
 });
 

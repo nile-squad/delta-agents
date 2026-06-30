@@ -10,7 +10,7 @@
  * arguments are supplied (e.g. from reasoner output in Phase 8).
  */
 
-import type { Phase, Workflow, Action, ActionContext } from "../authoring/types";
+import type { Phase, Workflow, Action, ActionContext, Skill } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ApprovalStatus } from "../execution/types";
@@ -72,6 +72,8 @@ export type RunPhaseInput = {
    *  resume from the failed action instead of re-running from the top.
    *  Defaults to 0 (run the whole phase). */
   startIndex?: number;
+  /** The agent's full declared skill set, used to resolve phase/action skill refs. */
+  agentSkills?: Skill[];
 };
 
 export type RunWorkflowInput = {
@@ -85,4 +87,6 @@ export type RunWorkflowInput = {
   communicate?: ActionContext["communicate"];
   /** Memory-write helper exposed to workflow/phase/action hooks via ctx.remember. */
   remember?: ActionContext["remember"];
+  /** The agent's full declared skill set, used to resolve phase/action skill refs. */
+  agentSkills?: Skill[];
 };

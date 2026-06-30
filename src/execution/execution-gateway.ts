@@ -45,6 +45,7 @@ export const runGateway = async ({
   stepIndex = 0,
   communicate,
   remember,
+  availableSkills,
 }: GatewayInput): Promise<Result<GatewaySuccess, string>> => {
   // ── 1. Schema validation ────────────────────────────────────────────────
   // Must be the first check. An invalid schema means the reasoner sent bad
@@ -85,6 +86,7 @@ export const runGateway = async ({
     executionId: excId,
     agentName: state.agentName,
     phase: state.currentPhase,
+    ...(availableSkills !== undefined ? { availableSkills } : {}),
     ...(communicate !== undefined ? { communicate } : {}),
     ...(remember !== undefined ? { remember } : {}),
   };
