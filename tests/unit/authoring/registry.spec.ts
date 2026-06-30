@@ -87,12 +87,6 @@ describe("Registry — workflows and phases", () => {
     expect(result.isErr).toBe(true);
   });
 
-  it("registers and retrieves a phase", () => {
-    const registry = createRegistry();
-    registry.registerPhase(makePhase("investigation"));
-    const result = registry.getPhase("investigation");
-    expect(result.isOk).toBe(true);
-  });
 });
 
 describe("Registry — agents", () => {

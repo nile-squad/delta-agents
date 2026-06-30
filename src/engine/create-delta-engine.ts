@@ -30,7 +30,6 @@ import { createOpenAIReasoner } from "../ports/openai-reasoner";
 import { createRegistry } from "../authoring/registry";
 import { makeDefineAction } from "../authoring/define-action";
 import { makeDefineWorkflow } from "../authoring/define-workflow";
-import { makeDefinePhase } from "../authoring/define-phase";
 import { makeDefineAgent } from "../authoring/define-agent";
 import { makeDefineDataSource } from "../authoring/define-data-source";
 import type { Agent } from "../authoring/types";
@@ -141,7 +140,6 @@ export const createDeltaEngine = async ({
   // ── Authoring methods ────────────────────────────────────────────────────
   const action = makeDefineAction({ registry });
   const workflow = makeDefineWorkflow({ registry });
-  const phase = makeDefinePhase({ registry });
   const dataSource = makeDefineDataSource({ registry });
   const agent = makeDefineAgent({ registry, modelNames });
 
@@ -295,5 +293,5 @@ export const createDeltaEngine = async ({
     return store.getLatestTaskByAgent(agentName);
   };
 
-  return { action, workflow, phase, dataSource, agent, deploy, send, approve, pause, resume, inspect, lastTask };
+  return { action, workflow, dataSource, agent, deploy, send, approve, pause, resume, inspect, lastTask };
 };

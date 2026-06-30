@@ -37,7 +37,7 @@ describe("workflow resume: routes through the workflow engine (#2)", () => {
         return Ok("done");
       },
     });
-    const phase = delta.phase({ name: "only", description: "single phase", actions: ["step"], checkpoint: true });
+    const phase = { name: "only", description: "single phase", actions: ["step"], checkpoint: true };
     const wf = delta.workflow({ name: "approve-wf", description: "needs approval", version: "1.0.0", phases: [phase] });
     const agent = delta.agent({
       name: "wf-agent",
@@ -100,13 +100,13 @@ describe("workflow resume: routes through the workflow engine (#2)", () => {
       },
     });
     // One phase, two actions: [a, flaky]. It escalates after a succeeds and flaky fails.
-    const phase = delta.phase({
+    const phase = {
       name: "two-step",
       description: "two actions, escalates on failure",
       actions: ["a", "flaky"],
       checkpoint: true,
-      supervision: { strategy: "escalate", maxRetries: 0 },
-    });
+      supervision: { strategy: "escalate" as const, maxRetries: 0 },
+    };
     const wf = delta.workflow({ name: "single-phase", description: "one phase", version: "1.0.0", phases: [phase] });
     const agent = delta.agent({
       name: "mp-agent",
@@ -159,15 +159,15 @@ describe("workflow resume: routes through the workflow engine (#2)", () => {
       },
     });
 
-    const p1 = delta.phase({ name: "p1", description: "first", actions: ["a"], checkpoint: true });
+    const p1 = { name: "p1", description: "first", actions: ["a"], checkpoint: true };
     // p2 escalates on failure, which pauses the task after p1 has completed.
-    const p2 = delta.phase({
+    const p2 = {
       name: "p2",
       description: "second",
       actions: ["flaky"],
       checkpoint: true,
-      supervision: { strategy: "escalate", maxRetries: 0 },
-    });
+      supervision: { strategy: "escalate" as const, maxRetries: 0 },
+    };
     const wf = delta.workflow({ name: "two-phase", description: "ordered", version: "1.0.0", phases: [p1, p2] });
     const agent = delta.agent({
       name: "mw-agent",

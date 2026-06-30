@@ -26,7 +26,6 @@ export { createRegistry } from "./registry";
 export { validateAction, validatePhase, validateWorkflow, validateAgent, validateDataSource } from "./validate";
 
 export { makeDefineAction } from "./define-action";
-export { makeDefinePhase } from "./define-phase";
 export { makeDefineWorkflow } from "./define-workflow";
 export { makeDefineDataSource, ownershipAdjustedRisk, EXTERNAL_RISK_FLOOR } from "./define-data-source";
 export { makeDefineAgent } from "./define-agent";

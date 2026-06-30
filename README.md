@@ -80,20 +80,20 @@ const customerSupport = delta.workflow({
   description: "Standard customer support procedure",
   version: "1",
   phases: [
-    delta.phase({
+    {
       name: "investigation",
       description: "Look up the customer record",
       actions: ["lookup-customer"],
       checkpoint: true,
       supervision: { strategy: "retry", maxRetries: 3 },
-    }),
-    delta.phase({
+    },
+    {
       name: "communication",
       description: "Send a response to the customer",
       actions: ["notify-customer"],
       checkpoint: true,
       supervision: { strategy: "escalate", maxRetries: 0 },
-    }),
+    },
   ],
 });
 
@@ -183,13 +183,13 @@ Each workflow phase can declare a supervision policy. When a phase fails, the en
 | `abort-tree` | Abort the entire task tree from the root. |
 
 ```ts
-delta.phase({
+{
   name: "risky-step",
   description: "Step with retry on transient failures",
   actions: ["call-external-api"],
   checkpoint: true,
   supervision: { strategy: "retry", maxRetries: 5 },
-});
+}
 ```
 
 ## Teams

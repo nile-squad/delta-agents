@@ -37,12 +37,12 @@ describe("data source operations run through the gateway (#3)", () => {
       },
     });
 
-    const phase = delta.phase({
+    const phase = {
       name: "fetch",
       description: "read the user",
       actions: ["user-db.retrieve"],
       checkpoint: true,
-    });
+    };
     const wf = delta.workflow({ name: "read-user", description: "reads a user", version: "1.0.0", phases: [phase] });
 
     const agent = delta.agent({

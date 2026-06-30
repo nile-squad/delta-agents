@@ -10,7 +10,7 @@
  * (spec §Bounded State-Space Model, principle 2).
  */
 
-import type { Action, Workflow, Phase, Agent, DataSource } from "./types";
+import type { Action, Workflow, Agent, DataSource } from "./types";
 import { Err, Ok } from "slang-ts";
 import type { Result } from "slang-ts";
 
@@ -18,7 +18,6 @@ export type Registry = {
   // Registration (called by define-* factories)
   registerAction: (action: Action) => Result<Action, string>;
   registerWorkflow: (workflow: Workflow) => Result<Workflow, string>;
-  registerPhase: (phase: Phase) => Result<Phase, string>;
   registerAgent: (agent: Agent) => Result<Agent, string>;
   registerDataSource: (dataSource: DataSource) => Result<DataSource, string>;
 
@@ -39,7 +38,6 @@ export type Registry = {
   // Lookup (called by engine at runtime)
   getAction: (name: string) => Result<Action, string>;
   getWorkflow: (name: string) => Result<Workflow, string>;
-  getPhase: (name: string) => Result<Phase, string>;
   getAgent: (name: string) => Result<Agent, string>;
   getDataSource: (name: string) => Result<DataSource, string>;
 
@@ -70,7 +68,6 @@ export type Registry = {
 export const createRegistry = (): Registry => {
   const actions = new Map<string, Action>();
   const workflows = new Map<string, Workflow>();
-  const phases = new Map<string, Phase>();
   const agents = new Map<string, Agent>();
   const dataSources = new Map<string, DataSource>();
   /**
@@ -98,14 +95,6 @@ export const createRegistry = (): Registry => {
       return Ok(workflow);
     },
 
-    registerPhase: (phase) => {
-      if (phases.has(phase.name)) {
-        return Err(`phase "${phase.name}" is already registered`);
-      }
-      phases.set(phase.name, phase);
-      return Ok(phase);
-    },
-
     registerAgent: (agent) => {
       if (agents.has(agent.name)) {
         return Err(`agent "${agent.name}" is already registered`);
@@ -130,11 +119,6 @@ export const createRegistry = (): Registry => {
     getWorkflow: (name) => {
       const workflow = workflows.get(name);
       return workflow !== undefined ? Ok(workflow) : Err(`workflow "${name}" not found in registry`);
-    },
-
-    getPhase: (name) => {
-      const phase = phases.get(name);
-      return phase !== undefined ? Ok(phase) : Err(`phase "${name}" not found in registry`);
     },
 
     getAgent: (name) => {

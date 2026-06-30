@@ -447,9 +447,39 @@ The project is a clean slate. Old @nilejs/future code (actor/concurrency library
 **Runtime types:** Task (id, rootId, parentId, status, goal, assignedAgent, workflow, currentPhase, budget, risk, trust, createdAt, updatedAt), TaskTree (rootTaskId, activeChildren, queuedChildren, maxConcurrency: 2), Execution, Checkpoint, ApprovalRequest, RiskState (staticRisk, currentRisk, predictedRisk, confidence, escalated), TrustState (score, successfulExecutions, failedExecutions, surpriseEvents), Message, Queue, SupervisionPolicy
 
 ## DX Pattern (from spec)
-Factory functions everywhere, no classes. The engine itself is created by a factory: `const delta = createDeltaEngine({ ... })` returns a single plain object that is the ENTIRE surface — both authoring and runtime hang off it as methods. There are NO standalone imports beyond `createDeltaEngine`. Authoring methods (define definitions): `delta.action({...})`, `delta.workflow({...})`, `delta.phase({...})`, `delta.agent({...})`. Runtime methods (drive execution): `delta.deploy(agent)`, `delta.send(taskId, message)`, `delta.approve(approvalId)`, `delta.pause(taskId)`, `delta.resume(taskId)`, `delta.inspect(taskId)`. Read as verbs. No `new`, no inheritance, no global singleton. The exact method set is not fixed; the shape is fixed (one factory returning one object whose methods are the whole surface). Developer never creates Task, Checkpoint, TrustState, or TaskTree. Delta owns the runtime.
+Factory functions everywhere, no classes. The engine itself is created by a factory: `const delta = createDeltaEngine({ ... })` returns a single plain object that is the ENTIRE surface — both authoring and runtime hang off it as methods. There are NO standalone imports beyond `createDeltaEngine`. Authoring methods (define definitions): `delta.action({...})`, `delta.workflow({...})`, `delta.agent({...})`. Runtime methods (drive execution): `delta.deploy(agent)`, `delta.send(taskId, message)`, `delta.approve(approvalId)`, `delta.pause(taskId)`, `delta.resume(taskId)`, `delta.inspect(taskId)`. Read as verbs. No `new`, no inheritance, no global singleton. The exact method set is not fixed; the shape is fixed (one factory returning one object whose methods are the whole surface). Developer never creates Task, Checkpoint, TrustState, or TaskTree. Delta owns the runtime.
 
-**Single object is a DX facade, not module coupling.** Internally each capability lives in its own module (`action`, `workflow`, `phase`, `agent`, deploy, send, approve, supervision, checkpointing, etc., in their own domain folders). `createDeltaEngine` imports those separate items and assembles them onto one returned object. The unification is purely the developer-facing surface. The modules themselves stay decoupled — do NOT couple module implementations just because the DX presents one object. Each method delegates to its own module; the facade only wires them together (and shares engine config/context to them).
+**Phases are plain objects — no `delta.phase()`.** Phases are passed directly as plain objects in the `phases` array of `delta.workflow()`. The `Phase` type enforces shape at compile time; `validateWorkflow` validates each phase inline when the workflow is registered. `delta.phase()` no longer exists — there is one clear way to define a phase.
+
+```ts
+delta.workflow({
+  name: "support",
+  description: "...",
+  version: "1",
+  phases: [
+    { name: "investigate", description: "...", actions: ["lookup"], checkpoint: true },
+    { name: "respond", description: "...", actions: ["notify"], checkpoint: true, supervision: { strategy: "escalate", maxRetries: 0 } },
+  ],
+});
+```
+
+**Models are defined on the engine, not wired per-call.** `createDeltaEngine` accepts `models: ModelDef[]` (plus engine-level `endpoint`, `apiKey`, `options` defaults). Agents reference a model by name via `agent.model`; omitting it uses the model marked `default: true`. `createOpenAIReasoner` is internal — not a public export. For testing, pass `reasoner: createMockReasoner(...)` as an override that bypasses models entirely.
+
+```ts
+const delta = await createDeltaEngine({
+  apiKey: process.env.OPENAI_API_KEY,
+  models: [
+    { name: "fast", model: "gpt-4o-mini", default: true },
+    { name: "smart", model: "gpt-4o", options: { temperature: 0.3 } },
+    { name: "local", model: "llama3.2", endpoint: "http://localhost:11434/v1", apiKey: "ollama" },
+  ],
+});
+
+const agent = delta.agent({ name: "researcher", model: "smart", ... });
+// delta.agent() throws immediately if the model name is not in models
+```
+
+**Single object is a DX facade, not module coupling.** Internally each capability lives in its own module (`action`, `workflow`, `agent`, deploy, send, approve, supervision, checkpointing, etc., in their own domain folders). `createDeltaEngine` imports those separate items and assembles them onto one returned object. The unification is purely the developer-facing surface. The modules themselves stay decoupled — do NOT couple module implementations just because the DX presents one object. Each method delegates to its own module; the facade only wires them together (and shares engine config/context to them).
 
 **Anticipated risk and cost:** An action's `risk` (1-5) and `estimatedCost` are both optional priors, not requirements and not ceilings. Delta can derive its own estimates; declared values seed the Kalman estimator with a calibrated prior (faster convergence) and carry human judgement about danger/irreversibility into the governed loop. The engine continuously refines from evidence and may raise risk above the declared level — a low declared risk never overrides observed danger. See spec section "Anticipated Risk and Cost", invariant 23, prohibition 20.
 

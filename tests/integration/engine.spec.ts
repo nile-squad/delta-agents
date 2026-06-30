@@ -723,8 +723,8 @@ describe("workflow tasks run deterministically through the engine (H2)", () => {
     const a2 = delta.action({ name: "a2", description: "test action", schema: z.object({}), fn: async () => { order.push("a2"); return Ok("ok"); } });
     const b1 = delta.action({ name: "b1", description: "test action", schema: z.object({}), fn: async () => { order.push("b1"); return Ok("ok"); } });
 
-    const phase1 = delta.phase({ name: "phase-1", description: "first", actions: ["a1", "a2"], checkpoint: true });
-    const phase2 = delta.phase({ name: "phase-2", description: "second", actions: ["b1"], checkpoint: false });
+    const phase1 = { name: "phase-1", description: "first", actions: ["a1", "a2"], checkpoint: true };
+    const phase2 = { name: "phase-2", description: "second", actions: ["b1"], checkpoint: false };
     const wf = delta.workflow({ name: "two-phase", description: "ordered", version: "1.0.0", phases: [phase1, phase2] });
 
     const ag = delta.agent({ name: "wf-agent", description: "d", role: "r", rolePrompt: ".", actions: [a1, a2, b1], workflows: [wf] });
@@ -751,12 +751,12 @@ describe("workflow tasks run deterministically through the engine (H2)", () => {
     const approve = delta.action({ name: "approve", description: "test action", schema: z.object({}), fn: async () => { ran.push("approve"); return Ok("ok"); } });
     const reject = delta.action({ name: "reject", description: "test action", schema: z.object({}), fn: async () => { ran.push("reject"); return Ok("ok"); } });
 
-    const decide = delta.phase({
+    const decide = {
       name: "decide",
       description: "branch",
       actions: [{ action: "check", onSuccess: "approve", onFailure: "reject" }, "approve", "reject"],
       checkpoint: false,
-    });
+    };
     const wf = delta.workflow({ name: "branching", description: "routes", version: "1.0.0", phases: [decide] });
     const ag = delta.agent({ name: "branch-agent", description: "d", role: "r", rolePrompt: ".", actions: [check, approve, reject], workflows: [wf] });
     delta.deploy(ag);
@@ -774,7 +774,7 @@ describe("workflow tasks run deterministically through the engine (H2)", () => {
     const delta = await createDeltaEngine({ store });
     const act = delta.action({ name: "act", description: "test action", schema: z.object({}), fn: noop });
     const other = delta.action({ name: "other", description: "test action", schema: z.object({}), fn: noop });
-    const ph = delta.phase({ name: "p", description: "p", actions: ["other"], checkpoint: false });
+    const ph = { name: "p", description: "p", actions: ["other"], checkpoint: false };
     delta.workflow({ name: "undeclared", description: "x", version: "1.0.0", phases: [ph] });
     // Agent declares no workflows.
     const ag = delta.agent({ name: "no-wf-agent", description: "d", role: "r", rolePrompt: ".", actions: [act, other] });
@@ -800,13 +800,13 @@ describe("workflow supervision recovers or surfaces failure (H1)", () => {
       schema: z.object({}),
       fn: async () => { attempts++; return Err("transient") as unknown as ReturnType<typeof noop>; },
     });
-    const ph = delta.phase({
+    const ph = {
       name: "flaky-phase",
       description: "retried",
       actions: ["flaky"],
       checkpoint: false,
-      supervision: { strategy: "retry", maxRetries: 2 },
-    });
+      supervision: { strategy: "retry" as const, maxRetries: 2 },
+    };
     const wf = delta.workflow({ name: "retry-wf", description: "retries", version: "1.0.0", phases: [ph] });
     const ag = delta.agent({ name: "retry-agent", description: "d", role: "r", rolePrompt: ".", actions: [flaky], workflows: [wf] });
     delta.deploy(ag);
@@ -835,13 +835,13 @@ describe("workflow supervision recovers or surfaces failure (H1)", () => {
       schema: z.object({}),
       fn: async () => Err("kaboom") as unknown as ReturnType<typeof noop>,
     });
-    const ph = delta.phase({
+    const ph = {
       name: "boom-phase",
       description: "escalates",
       actions: ["boom"],
       checkpoint: false,
-      supervision: { strategy: "escalate", maxRetries: 0 },
-    });
+      supervision: { strategy: "escalate" as const, maxRetries: 0 },
+    };
     const wf = delta.workflow({ name: "escalate-wf", description: "escalates", version: "1.0.0", phases: [ph] });
     const ag = delta.agent({ name: "escalate-agent", description: "d", role: "r", rolePrompt: ".", actions: [boom], workflows: [wf] });
     delta.deploy(ag);
@@ -869,7 +869,7 @@ describe("workflow approval pre-flight (C-a)", () => {
 
     const prep = delta.action({ name: "prep", description: "test action", schema: z.object({}), fn: async () => { ran.push("prep"); return Ok("ok"); } });
     const pay = delta.action({ name: "pay", description: "needs sign-off", schema: z.object({}), requiresApproval: true, fn: async () => { ran.push("pay"); return Ok("ok"); } });
-    const ph = delta.phase({ name: "pay-phase", description: "p", actions: ["prep", "pay"], checkpoint: false });
+    const ph = { name: "pay-phase", description: "p", actions: ["prep", "pay"], checkpoint: false };
     const wf = delta.workflow({ name: "pay-wf", description: "pays", version: "1.0.0", phases: [ph] });
     const ag = delta.agent({ name: "pay-agent", description: "d", role: "r", rolePrompt: ".", actions: [prep, pay], workflows: [wf] });
     delta.deploy(ag);
@@ -919,7 +919,7 @@ describe("per-action workflow inputs (H3)", () => {
       fn: async ({ shared }) => { receivedInputs["act-three"] = { shared }; return Ok("ok"); },
     });
 
-    const ph = delta.phase({ name: "p", description: "p", actions: ["act-one", "act-two", "act-three"], checkpoint: false });
+    const ph = { name: "p", description: "p", actions: ["act-one", "act-two", "act-three"], checkpoint: false };
     const wf = delta.workflow({ name: "multi-input-wf", description: "per-action inputs", version: "1.0.0", phases: [ph] });
     const ag = delta.agent({ name: "input-agent", description: "d", role: "r", rolePrompt: ".", actions: [act1, act2, act3], workflows: [wf] });
     delta.deploy(ag);
@@ -1343,7 +1343,7 @@ describe("agents communicate through bound channels (Package E)", () => {
         return Ok("ok");
       },
     });
-    const ph = delta.phase({ name: "notify-phase", description: "p", actions: ["wf-notify"], checkpoint: false });
+    const ph = { name: "notify-phase", description: "p", actions: ["wf-notify"], checkpoint: false };
     const wf = delta.workflow({ name: "notify-wf", description: "w", version: "1.0.0", phases: [ph] });
     delta.deploy(delta.agent({ name: "wf-notifier", description: "d", role: "r", rolePrompt: ".", actions: [step], workflows: [wf], channels: [channel] }));
 
@@ -1457,7 +1457,7 @@ describe("value-guided execution (Package G)", () => {
       estimatedCost: { tokens: 5_000, durationMs: 0 },
       fn: async () => { ran = true; return Ok("ok"); },
     });
-    const ph = delta.phase({ name: "p", description: "p", actions: ["expensive"], checkpoint: false });
+    const ph = { name: "p", description: "p", actions: ["expensive"], checkpoint: false };
     const wf = delta.workflow({ name: "pricey-wf", description: "w", version: "1.0.0", phases: [ph] });
     delta.deploy(delta.agent({ name: "mpc-agent", description: "d", role: "r", rolePrompt: ".", actions: [expensive], workflows: [wf] }));
 
@@ -1484,7 +1484,7 @@ describe("value-guided execution (Package G)", () => {
       estimatedCost: { tokens: 1, durationMs: 0, memory: 5_000 },
       fn: async () => { ran = true; return Ok("ok"); },
     });
-    const ph = delta.phase({ name: "p", description: "p", actions: ["heavy"], checkpoint: false });
+    const ph = { name: "p", description: "p", actions: ["heavy"], checkpoint: false };
     const wf = delta.workflow({ name: "mem-wf", description: "w", version: "1.0.0", phases: [ph] });
     delta.deploy(delta.agent({ name: "mem-budget-agent", description: "d", role: "r", rolePrompt: ".", actions: [heavy], workflows: [wf] }));
 

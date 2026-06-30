@@ -133,6 +133,14 @@ export const validateWorkflow = (workflow: Workflow): Result<Workflow, string> =
   if (!Array.isArray(workflow.phases) || workflow.phases.length === 0) {
     return Err(`workflow "${workflow.name}": phases list must be non-empty`);
   }
+  // Validate each phase inline — phases are plain objects embedded in the
+  // workflow, not separately registered, so validation happens here.
+  for (const phase of workflow.phases) {
+    const phaseResult = validatePhase(phase);
+    if (phaseResult.isErr) {
+      return Err(`workflow "${workflow.name}": ${phaseResult.error}`);
+    }
+  }
   return Ok(workflow);
 };
 

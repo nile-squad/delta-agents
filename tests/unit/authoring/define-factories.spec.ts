@@ -14,7 +14,6 @@ import { z } from "zod";
 import {
   createRegistry,
   makeDefineAction,
-  makeDefinePhase,
   makeDefineWorkflow,
   makeDefineAgent,
 } from "../../../src/authoring";
@@ -28,7 +27,6 @@ const buildDelta = () => {
   return {
     registry,
     action: makeDefineAction({ registry }),
-    phase: makeDefinePhase({ registry }),
     workflow: makeDefineWorkflow({ registry }),
     agent: makeDefineAgent({ registry }),
   };
@@ -86,56 +84,15 @@ describe("delta.action", () => {
   });
 });
 
-describe("delta.phase", () => {
-  it("registers a valid phase and returns it", () => {
-    const delta = buildDelta();
-    const phase = delta.phase({
-      name: "investigation",
-      description: "Investigation phase",
-      actions: ["lookup-customer"],
-      checkpoint: true,
-    });
-    expect(phase.name).toBe("investigation");
-    expect(delta.registry.getPhase("investigation").isOk).toBe(true);
-  });
-
-  it("throws on empty actions list", () => {
-    const delta = buildDelta();
-    expect(() =>
-      delta.phase({ name: "empty", description: "Empty", actions: [], checkpoint: false }),
-    ).toThrow(/non-empty/);
-  });
-
-  it("throws on duplicate phase name", () => {
-    const delta = buildDelta();
-    delta.phase({ name: "ph", description: "Phase", actions: ["a"], checkpoint: false });
-    expect(() =>
-      delta.phase({ name: "ph", description: "Duplicate", actions: ["a"], checkpoint: false }),
-    ).toThrow(/already registered/);
-  });
-
-  it("throws when branch target is not in the phase's action list", () => {
-    const delta = buildDelta();
-    expect(() =>
-      delta.phase({
-        name: "bad-branch",
-        description: "Bad branch",
-        checkpoint: false,
-        actions: [{ action: "step-a", onSuccess: "ghost-step" }],
-      }),
-    ).toThrow(/"ghost-step" is not declared/);
-  });
-});
-
 describe("delta.workflow", () => {
   it("registers a valid workflow and returns it", () => {
     const delta = buildDelta();
-    const ph = delta.phase({
+    const ph = {
       name: "investigation",
       description: "Look up customer",
       actions: ["lookup-customer"],
       checkpoint: true,
-    });
+    };
     const wf = delta.workflow({
       name: "customer-support",
       description: "Customer support workflow",
@@ -155,10 +112,41 @@ describe("delta.workflow", () => {
 
   it("throws on duplicate workflow name", () => {
     const delta = buildDelta();
-    const ph = delta.phase({ name: "ph", description: "Phase", actions: ["a"], checkpoint: false });
+    const ph = { name: "ph", description: "Phase", actions: ["a"], checkpoint: false };
     const wfDef = { name: "wf", description: "Wf", version: "1.0.0", phases: [ph] };
     delta.workflow(wfDef);
     expect(() => delta.workflow(wfDef)).toThrow(/already registered/);
+  });
+
+  it("throws when a phase has an empty actions list", () => {
+    const delta = buildDelta();
+    expect(() =>
+      delta.workflow({
+        name: "empty-actions-wf",
+        description: "has a phase with no actions",
+        version: "1.0.0",
+        phases: [{ name: "p", description: "d", actions: [], checkpoint: false }],
+      }),
+    ).toThrow(/non-empty/);
+  });
+
+  it("throws when a branch target is not in the phase's action list", () => {
+    const delta = buildDelta();
+    expect(() =>
+      delta.workflow({
+        name: "bad-branch-wf",
+        description: "has a bad branch",
+        version: "1.0.0",
+        phases: [
+          {
+            name: "p",
+            description: "d",
+            checkpoint: false,
+            actions: [{ action: "step-a", onSuccess: "ghost-step" }],
+          },
+        ],
+      }),
+    ).toThrow(/"ghost-step" is not declared/);
   });
 });
 
