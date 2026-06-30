@@ -216,3 +216,116 @@ describe("skill scoping in workflows", () => {
     expect(capturedCtx[0]?.map((s) => s.name)).toEqual(["action-sk"]);
   });
 });
+
+describe("authoring-time skill ref validation", () => {
+  it("throws at delta.agent() when an action's skill string ref is not declared on the agent", async () => {
+    const delta = await createDeltaEngine({ reasoner: { reason: async () => Ok({ kind: "done" }) } });
+    const act = delta.action({
+      name: "act",
+      description: "work",
+      schema: z.object({}),
+      fn: async () => Ok("ok"),
+      skills: ["unknown-skill"], // string ref — not in agent.skills
+    });
+    expect(() =>
+      delta.agent({
+        name: "bad-agent",
+        description: "d",
+        role: "r",
+        rolePrompt: ".",
+        actions: [act],
+        // agent.skills is empty — the ref "unknown-skill" cannot resolve
+      }),
+    ).toThrow(/undeclared skill "unknown-skill"/);
+  });
+
+  it("throws at delta.agent() when a workflow phase's skill string ref is not declared on the agent", async () => {
+    const delta = await createDeltaEngine({ reasoner: { reason: async () => Ok({ kind: "done" }) } });
+    const act = delta.action({ name: "act", description: "work", schema: z.object({}), fn: async () => Ok("ok") });
+    const wf = delta.workflow({
+      name: "wf",
+      description: "wf",
+      version: "1",
+      phases: [
+        {
+          name: "p1",
+          description: "phase",
+          checkpoint: false,
+          actions: ["act"],
+          skills: ["ghost-skill"], // string ref — not in agent.skills
+        },
+      ],
+    });
+    expect(() =>
+      delta.agent({
+        name: "bad-agent",
+        description: "d",
+        role: "r",
+        rolePrompt: ".",
+        actions: [act],
+        workflows: [wf],
+      }),
+    ).toThrow(/undeclared skill "ghost-skill"/);
+  });
+
+  it("accepts string skill refs that match declared agent.skills names", async () => {
+    const base = mkdtempSync(join(tmpdir(), "delta-skills-valid-"));
+    try {
+      const folder = join(base, "sk");
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, "SKILL.md"), "skill content", "utf-8");
+
+      const delta = await createDeltaEngine({ reasoner: { reason: async () => Ok({ kind: "done" }) } });
+      const act = delta.action({
+        name: "act",
+        description: "work",
+        schema: z.object({}),
+        fn: async () => Ok("ok"),
+        skills: ["my-skill"], // string ref matching agent.skills entry below
+      });
+      expect(() =>
+        delta.agent({
+          name: "good-agent",
+          description: "d",
+          role: "r",
+          rolePrompt: ".",
+          actions: [act],
+          skills: [{ name: "my-skill", description: "valid skill", folder }],
+        }),
+      ).not.toThrow();
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts inline Skill objects in action.skills without requiring agent.skills declaration", async () => {
+    const base = mkdtempSync(join(tmpdir(), "delta-skills-inline-"));
+    try {
+      const folder = join(base, "sk");
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, "SKILL.md"), "skill content", "utf-8");
+
+      const delta = await createDeltaEngine({ reasoner: { reason: async () => Ok({ kind: "done" }) } });
+      const act = delta.action({
+        name: "act",
+        description: "work",
+        schema: z.object({}),
+        fn: async () => Ok("ok"),
+        // Inline Skill object — bypasses name-ref validation
+        skills: [{ name: "inline-skill", description: "inline", folder }],
+      });
+      expect(() =>
+        delta.agent({
+          name: "inline-agent",
+          description: "d",
+          role: "r",
+          rolePrompt: ".",
+          actions: [act],
+          // No agent.skills needed when using inline Skill objects
+        }),
+      ).not.toThrow();
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});

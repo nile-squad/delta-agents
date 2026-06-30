@@ -340,9 +340,14 @@ const stepTask = async ({
   const remember = makeContextRemember({ store, taskId: task.id, agentName: agent.name });
   // Per-action skills override the agent-level set when declared; otherwise the
   // full agent skill set (already built for the reasoner above) is forwarded.
-  const actionAvailableSkills = action.skills !== undefined
-    ? await buildAvailableSkills(resolveSkillRefs(action.skills, agent.skills ?? []))
-    : availableSkills;
+  let actionAvailableSkills = availableSkills;
+  if (action.skills !== undefined) {
+    const refsResult = resolveSkillRefs(action.skills, agent.skills ?? []);
+    if (refsResult.isErr) {
+      return { kind: "failed", snapshot, reason: `skill resolution failed for action "${action.name}": ${refsResult.error}` };
+    }
+    actionAvailableSkills = await buildAvailableSkills(refsResult.value);
+  }
   const gwResult = await runGateway({ action, rawInput: input, state: snapshot, approvalStatus, store, reasoningCost, stepIndex: step, communicate, remember, availableSkills: actionAvailableSkills });
 
   if (gwResult.isErr) {

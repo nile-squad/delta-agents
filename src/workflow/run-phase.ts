@@ -47,9 +47,15 @@ export const runPhase = async ({
   agentSkills,
 }: RunPhaseInput): Promise<PhaseResult> => {
   // Resolve phase-level skills once. Each action may override with its own set.
-  const phaseSkills = await buildAvailableSkills(
-    resolveSkillRefs(phase.skills ?? [], agentSkills ?? []),
-  );
+  const phaseSkillsResult = resolveSkillRefs(phase.skills ?? [], agentSkills ?? []);
+  if (phaseSkillsResult.isErr) {
+    return {
+      status: "failed",
+      snapshot: state,
+      failedReason: `phase "${phase.name}" skill resolution failed: ${phaseSkillsResult.error}`,
+    };
+  }
+  const phaseSkills = await buildAvailableSkills(phaseSkillsResult.value);
 
   const phaseCtx: ActionContext = {
     taskId: state.taskId,
@@ -116,9 +122,21 @@ export const runPhase = async ({
       };
     }
 
-    const actionSkills = action.skills !== undefined
-      ? await buildAvailableSkills(resolveSkillRefs(action.skills, agentSkills ?? []))
-      : phaseSkills;
+    let actionSkills = phaseSkills;
+    if (action.skills !== undefined) {
+      const actionSkillsResult = resolveSkillRefs(action.skills, agentSkills ?? []);
+      if (actionSkillsResult.isErr) {
+        await runHook(phase.hooks?.onError, phaseCtx);
+        return {
+          status: "failed",
+          snapshot: currentState,
+          failedAction: actionName,
+          failedIndex: currentIndex,
+          failedReason: `skill resolution failed for action "${actionName}": ${actionSkillsResult.error}`,
+        };
+      }
+      actionSkills = await buildAvailableSkills(actionSkillsResult.value);
+    }
     const gwResult = await runGateway({
       action,
       rawInput: inputFor(actionName),

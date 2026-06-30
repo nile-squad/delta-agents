@@ -16,6 +16,7 @@
  * - Phase action refs are non-empty
  * - Workflow phases list is non-empty
  * - Agent actions list is non-empty
+ * - Skill string refs on actions and workflow phases resolve to declared agent skills
  */
 
 import type { Result } from "slang-ts";
@@ -229,6 +230,34 @@ export const validateAgent = (
       return Err(
         `agent "${agent.name}": workflow "${wf.name}" must be registered before attaching to an agent`,
       );
+    }
+  }
+
+  // Skill string refs must resolve to skills declared on the agent. An unknown
+  // name ref is a programming error — it will silently produce no skill at runtime,
+  // which is almost never the intent. Inline Skill objects bypass this check because
+  // they are explicit definitions, not symbolic references.
+  const declaredSkillNames = new Set((agent.skills ?? []).map((s) => s.name));
+
+  for (const action of agent.actions) {
+    for (const ref of action.skills ?? []) {
+      if (typeof ref === "string" && !declaredSkillNames.has(ref)) {
+        return Err(
+          `agent "${agent.name}": action "${action.name}" references undeclared skill "${ref}" — add it to agent.skills first`,
+        );
+      }
+    }
+  }
+
+  for (const wf of agent.workflows ?? []) {
+    for (const phase of wf.phases) {
+      for (const ref of phase.skills ?? []) {
+        if (typeof ref === "string" && !declaredSkillNames.has(ref)) {
+          return Err(
+            `agent "${agent.name}": workflow "${wf.name}" phase "${phase.name}" references undeclared skill "${ref}" — add it to agent.skills first`,
+          );
+        }
+      }
     }
   }
 
