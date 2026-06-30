@@ -11,18 +11,14 @@
  * governance decision.
  */
 
-import { Ok, Err, option } from "slang-ts";
+import { Ok, Err, option, safeTry } from "slang-ts";
 import type { Result } from "slang-ts";
 import type { HookFn, ActionContext } from "../authoring/types";
 
 /**
- * Run a single hook, catching thrown exceptions separately from returned Err.
+ * Run a single hook, catching thrown exceptions and returned Err alike.
  * Returns Ok(void) when the hook is absent or succeeds.
  * Returns Err(message) if the hook throws or returns its own Err.
- *
- * Note: we use a manual try-catch rather than safeTry because safeTry
- * evaluates Result return values — it would unwrap the hook's Result and lose
- * the isOk/isErr distinction we need to surface the correct error prefix.
  */
 export const runHook = async (
   hook: HookFn | undefined,
@@ -31,12 +27,6 @@ export const runHook = async (
   const hookOpt = option(hook);
   if (hookOpt.isNone) return Ok(undefined);
 
-  let result: Result<unknown, string>;
-  try {
-    result = await hookOpt.value(ctx);
-  } catch (e) {
-    return Err(`hook threw: ${e instanceof Error ? e.message : String(e)}`);
-  }
-  if (result.isErr) return Err(`hook returned Err: ${result.error}`);
-  return Ok(undefined);
+  const result = await safeTry(async () => hookOpt.value(ctx));
+  return result.isErr ? Err(`hook failed: ${result.error}`) : Ok(undefined);
 };

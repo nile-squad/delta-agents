@@ -493,7 +493,8 @@ export const runScheduler = async ({
       if (parentOpt.isSome) {
         const refund = remainingCost(runner.snapshot.budget, runner.snapshot.spent);
         parentOpt.value.snapshot = { ...parentOpt.value.snapshot, spent: remainingCost(parentOpt.value.snapshot.spent, refund) };
-        if (parentOpt.value.result !== null) parentOpt.value.result = { ...parentOpt.value.result, snapshot: parentOpt.value.snapshot };
+        const parentResultOpt = option(parentOpt.value.result);
+        if (parentResultOpt.isSome) parentOpt.value.result = { ...parentResultOpt.value, snapshot: parentOpt.value.snapshot };
       }
       const treeResult = await store.getTaskTree(rootId);
       if (treeResult.isOk) {
@@ -744,23 +745,23 @@ export const runScheduler = async ({
 
   const childResults = runners.filter((r) => r.task.id !== rootId).map((r) => r.result);
 
-  const failedChild = childResults.find((r) => r !== null && r.status === "failed");
-  if (failedChild != null) {
+  const failedChildOpt = option(childResults.find((r) => r !== null && r.status === "failed"));
+  if (failedChildOpt.isSome) {
     await store.updateTask(rootId, { status: "failed", updatedAt: new Date() });
     return {
       ...rootResult,
       status: "failed",
-      reason: `delegated subtask "${failedChild.taskId}" failed: ${failedChild.reason ?? "(no reason)"}`,
+      reason: `delegated subtask "${failedChildOpt.value.taskId}" failed: ${failedChildOpt.value.reason ?? "(no reason)"}`,
     };
   }
 
-  const blockedChild = childResults.find((r) => r !== null && r.status === "blocked");
-  if (blockedChild != null) {
+  const blockedChildOpt = option(childResults.find((r) => r !== null && r.status === "blocked"));
+  if (blockedChildOpt.isSome) {
     await store.updateTask(rootId, { status: "paused", updatedAt: new Date() });
     return {
       ...rootResult,
       status: "blocked",
-      reason: `delegated subtask "${blockedChild.taskId}" is blocked awaiting human oversight: ${blockedChild.reason ?? "(no reason)"}`,
+      reason: `delegated subtask "${blockedChildOpt.value.taskId}" is blocked awaiting human oversight: ${blockedChildOpt.value.reason ?? "(no reason)"}`,
     };
   }
 

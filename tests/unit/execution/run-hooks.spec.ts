@@ -48,7 +48,7 @@ describe("runHook — hook returns Err", () => {
 
   it("result error is prefixed so the gateway can attribute the source", async () => {
     const result = await runHook(async () => Err("db unavailable"), ctx);
-    if (result.isErr) expect(result.error).toMatch(/hook returned Err/);
+    if (result.isErr) expect(result.error).toMatch(/hook failed/);
   });
 });
 
@@ -61,12 +61,12 @@ describe("runHook — hook throws", () => {
     expect(result.isErr).toBe(true);
   });
 
-  it("error is prefixed with 'hook threw' so the gateway can distinguish throws from Err returns", async () => {
+  it("error is prefixed with 'hook failed' regardless of whether the hook threw or returned Err", async () => {
     const result = await runHook(
       async () => { throw new Error("network timeout"); },
       ctx,
     );
-    if (result.isErr) expect(result.error).toMatch(/hook threw/);
+    if (result.isErr) expect(result.error).toMatch(/hook failed/);
   });
 
   it("catching a throw does not grant the hook governance authority — result is just Err(message)", async () => {

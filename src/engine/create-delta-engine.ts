@@ -171,32 +171,35 @@ export const createDeltaEngine = async ({
     // agent's major task — it must not block a new major send or have a major
     // goal mis-attached to it.
     const latestResult = await store.getLatestTaskByAgent(agentName);
-    if (latestResult.isOk && latestResult.value !== null) {
-      const existing = latestResult.value;
-      const isMajor = existing.parentId === undefined;
-      if (isMajor && (existing.status === "running" || existing.status === "pending")) {
-        const message: Message = {
-          id: messageId(),
-          taskId: existing.id,
-          sender: "caller",
-          receiver: agentName,
-          payload: goal,
-          createdAt: new Date(),
-        };
-        const queued = await store.saveMessage(message);
-        if (queued.isErr) {
-          return Err(
-            `send failed: agent "${agentName}" is busy and the message could not be queued: ${queued.error}`,
-          );
+    if (latestResult.isOk) {
+      const taskOpt = option(latestResult.value);
+      if (taskOpt.isSome) {
+        const existing = taskOpt.value;
+        const isMajor = existing.parentId === undefined;
+        if (isMajor && (existing.status === "running" || existing.status === "pending")) {
+          const message: Message = {
+            id: messageId(),
+            taskId: existing.id,
+            sender: "caller",
+            receiver: agentName,
+            payload: goal,
+            createdAt: new Date(),
+          };
+          const queued = await store.saveMessage(message);
+          if (queued.isErr) {
+            return Err(
+              `send failed: agent "${agentName}" is busy and the message could not be queued: ${queued.error}`,
+            );
+          }
+          return Ok({
+            taskId: existing.id,
+            status: "queued",
+            snapshot: snapshotFromTask(existing),
+            reason:
+              `agent "${agentName}" is busy on task "${existing.id}" — ` +
+              `message queued, no new task created (invariant 26)`,
+          });
         }
-        return Ok({
-          taskId: existing.id,
-          status: "queued",
-          snapshot: snapshotFromTask(existing),
-          reason:
-            `agent "${agentName}" is busy on task "${existing.id}" — ` +
-            `message queued, no new task created (invariant 26)`,
-        });
       }
     }
 
