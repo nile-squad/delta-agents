@@ -1,16 +1,13 @@
 import { readFile } from "node:fs/promises";
-import { Ok, Err, option } from "slang-ts";
+import { Ok, Err, option, safeTry } from "slang-ts";
 import type { Result } from "slang-ts";
 import type { Skill } from "../authoring/types";
 
 export type AvailableSkill = { name: string; description: string; content?: string };
 
 const loadSkillContent = async (folder: string): Promise<string | undefined> => {
-  try {
-    return await readFile(`${folder}/SKILL.md`, "utf-8");
-  } catch {
-    return undefined;
-  }
+  const r = await safeTry(async () => readFile(`${folder}/SKILL.md`, "utf-8"));
+  return r.isOk ? r.value : undefined;
 };
 
 /**

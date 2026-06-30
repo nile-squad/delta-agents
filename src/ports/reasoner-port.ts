@@ -123,6 +123,22 @@ export type ReasonerInput = {
   rolePrompt: string;
   /** Retrieved memory/context injected by the memory retrieval step. */
   context?: string;
+  /**
+   * Engine-level org instructions baked into the system message prefix. The
+   * OpenAI reasoner fills this from its construction config; tests inject it
+   * directly to exercise the cacheable prefix without a real reasoner.
+   */
+  systemPrompt?: string;
+  /**
+   * Current time injected into the user message for time awareness. Built by the
+   * engine before each reason() call. Keeps the system message cacheable.
+   */
+  currentTimestamp?: { iso: string; humanized: string; timezone: string };
+  /**
+   * Prior conversation transcript with relative time labels, loaded from the
+   * message store. Gives the model time-gap awareness across the conversation.
+   */
+  priorMessages?: Array<{ sender: string; content: string; relativeTime: string }>;
 };
 
 export type ReasonerPort = {

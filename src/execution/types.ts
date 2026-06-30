@@ -48,6 +48,16 @@ export type GatewayInput = {
   remember?: ActionContext["remember"];
   /** Skills active at this action's invocation point. Threaded onto ctx.availableSkills. */
   availableSkills?: ActionContext["availableSkills"];
+  /**
+   * Workflow-level narrative, threaded onto ActionContext.storyline for action
+   * fn and hooks. Absent in the free reasoner loop (no workflow context).
+   */
+  storyline?: ActionContext["storyline"];
+  /**
+   * Phase-level narrative beat, threaded onto ActionContext.phaseStoryline for
+   * action fn and hooks. Absent in the free reasoner loop and at workflow scope.
+   */
+  phaseStoryline?: ActionContext["phaseStoryline"];
 };
 
 export type GatewaySuccess = {

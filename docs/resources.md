@@ -57,4 +57,4 @@ The execution gateway is schema-first: every operation must carry a schema (inva
 - Operation names are not auto-namespaced. Two data sources that each define an operation literally named `retrieve` would collide in the registry. Namespace by convention (`user-db.retrieve`, `orders.retrieve`).
 - A DataSource is authoring-time state held in the registry; nothing about it is written to the storage port.
 
-See [delta-agents.spec.md](../delta-agents.spec.md) for the canonical specification.
+See [delta-agents.spec.md](../internal/delta-agents.spec.md) for the canonical specification.

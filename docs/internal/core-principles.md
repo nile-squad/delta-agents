@@ -4,7 +4,7 @@ The eight principles the framework is built on, each paired with how the engine 
 
 The one sentence the rest follows from: the model reasons, the engine governs. Every principle below is a way of keeping enforcement in the deterministic engine and out of the probabilistic model.
 
-See [delta-agents.spec.md](../../delta-agents.spec.md) for the canonical specification and [architecture.md](../architecture.md) for the system structure.
+See [delta-agents.spec.md](./delta-agents.spec.md) for the canonical specification and [architecture.md](../architecture.md) for the system structure.
 
 ## 1. The Engine Owns Enforcement
 

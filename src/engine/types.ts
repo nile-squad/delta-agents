@@ -100,6 +100,17 @@ export type DeltaEngineConfig = {
    * Partial overrides merge over the defaults (3 attempts, 200ms base, 5s cap).
    */
   reasonerRetry?: Partial<RetryOptions>;
+  /**
+   * Global org instructions passed to all agents. Static content baked into the
+   * system message prefix for prompt cache hits. Must NOT contain time or varying
+   * content — anything that changes per call breaks the cacheable prefix.
+   */
+  systemPrompt?: string;
+  /**
+   * Timezone for humanized time in reasoner messages (e.g. "Africa/Lagos").
+   * Defaults to the system timezone. Grounds agents with time awareness.
+   */
+  timezone?: string;
 };
 
 export type SendInput = {

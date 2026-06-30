@@ -19,7 +19,7 @@
  * Covers: invariants 1, 3, 4, 18, 19, 22; prohibitions 1, 2, 9, 17, 18.
  */
 
-import { Ok, Err } from "slang-ts";
+import { Ok, Err, safeTry } from "slang-ts";
 import type { Result } from "slang-ts";
 import type { GatewayInput, GatewaySuccess } from "./types";
 import type { ActionContext } from "../authoring/types";
@@ -46,6 +46,8 @@ export const runGateway = async ({
   communicate,
   remember,
   availableSkills,
+  storyline,
+  phaseStoryline,
 }: GatewayInput): Promise<Result<GatewaySuccess, string>> => {
   // ── 1. Schema validation ────────────────────────────────────────────────
   // Must be the first check. An invalid schema means the reasoner sent bad
@@ -89,6 +91,8 @@ export const runGateway = async ({
     ...(availableSkills !== undefined ? { availableSkills } : {}),
     ...(communicate !== undefined ? { communicate } : {}),
     ...(remember !== undefined ? { remember } : {}),
+    ...(storyline !== undefined ? { storyline } : {}),
+    ...(phaseStoryline !== undefined ? { phaseStoryline } : {}),
   };
 
   // ── 5. Before hook ─────────────────────────────────────────────────────
@@ -115,17 +119,10 @@ export const runGateway = async ({
   await store.saveExecution(initialExecution);
 
   // ── 7. Run fn() ────────────────────────────────────────────────────────
-  // Manual try-catch preserves the Result passthrough: fn's Ok/Err arrives
-  // intact. safeTry is not used here because it evaluates Result return values
-  // and would unwrap them, losing fnResult.isOk and breaking trust accounting.
-  // A thrown error is a contract violation — treated as fn returning Err
-  // (prohibition 18: never infer success from the absence of a throw).
-  let fnResult: Result<unknown, string>;
-  try {
-    fnResult = await action.fn(validatedInput, ctx);
-  } catch (e) {
-    fnResult = Err(`fn threw: ${e instanceof Error ? e.message : String(e)}`);
-  }
+  // safeTry normalizes fn's Result return intact (Ok→Ok, Err→Err) and converts
+  // any throw to Err — a thrown error is a contract violation, treated as fn
+  // returning Err (prohibition 18: never infer success from absence of a throw).
+  const fnResult = await safeTry(async () => action.fn(validatedInput, ctx));
 
   const endedAt = new Date();
   const durationMs = endedAt.getTime() - startedAt.getTime();

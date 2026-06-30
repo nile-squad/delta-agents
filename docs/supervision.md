@@ -2,7 +2,7 @@
 
 When a workflow phase fails, the engine applies a declared supervision policy to decide what to do next. This document covers the supervision strategies and their exact observable behavior, how retry budget is counted, the bounded supervision tree and its slot mechanics, and how checkpointing and recovery connect to the strategies.
 
-See [delta-agents.spec.md](../delta-agents.spec.md) for the canonical specification.
+See [delta-agents.spec.md](../internal/delta-agents.spec.md) for the canonical specification.
 
 ## Declaring a Supervision Policy
 

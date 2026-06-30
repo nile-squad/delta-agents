@@ -50,6 +50,8 @@ export const createDeltaEngine = async ({
   reasoner: configReasoner,
   maxStepsPerTask = 100,
   reasonerRetry: configReasonerRetry,
+  systemPrompt: configSystemPrompt,
+  timezone: configTimezone,
 }: DeltaEngineConfig = {}): Promise<DeltaEngine> => {
   const store = configStore ?? createInMemoryStore();
   const registry = createRegistry();
@@ -121,6 +123,7 @@ export const createDeltaEngine = async ({
       temperature: modelOpt.value.options?.temperature ?? configOptions?.temperature,
       topP: modelOpt.value.options?.topP ?? configOptions?.topP,
       maxTokens: modelOpt.value.options?.maxTokens ?? configOptions?.maxTokens,
+      ...(configSystemPrompt !== undefined ? { systemPrompt: configSystemPrompt } : {}),
     });
     reasonerCache.set(agentDef.name, resolved);
     return resolved;
@@ -246,7 +249,7 @@ export const createDeltaEngine = async ({
     // free reasoner loop.
     const result = workflowName !== undefined
       ? await runWorkflowTask({ task, agent: agentDef, workflowName, input, actionInputs, registry, store })
-      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, reasonerRetry });
+      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, reasonerRetry, timezone: configTimezone });
 
     return Ok(result);
   };
@@ -285,6 +288,7 @@ export const createDeltaEngine = async ({
       store,
       maxSteps: maxStepsPerTask,
       reasonerRetry,
+      timezone: configTimezone,
     });
   };
 

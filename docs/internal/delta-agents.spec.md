@@ -509,6 +509,52 @@ Phase completion creates a recovery boundary.
 
 ---
 
+# Storylines
+
+A storyline is a free-prose narrative of the ideal user flow. It lives on `Workflow` (the experiential arc) and `Phase` (a beat within that arc).
+
+At runtime, the engine threads storylines onto `ActionContext` so action functions and hooks can read the narrative and shape their behavior — tone, pacing, what to emphasize, how to respond.
+
+* `Workflow.storyline` — the whole-arc narrative. Becomes `ctx.storyline`.
+* `Phase.storyline` — this phase's beat within the arc. Becomes `ctx.phaseStoryline`.
+
+Storylines are optional and free-form. They reach the agent through a single channel (`ActionContext`) — no duplicate injection into the reasoner. In the free reasoner loop (no workflow), both fields are `undefined`.
+
+Storylines are authoring content, not runtime state. They are plumbed fresh from the workflow and phase definitions on each call, never persisted in the task snapshot or checkpoint.
+
+Why:
+
+A `description` says what a workflow does. A `storyline` says how it should feel to the user. The distinction lets a developer declare the experiential arc without coupling it to the functional contract — the engine enforces the functional contract regardless, the storyline guides the agent's behavior within that enforcement.
+
+---
+
+# System Prompt and Time Awareness
+
+Two engine-level options ground every agent in shared context and time.
+
+## System Prompt
+
+`DeltaEngineConfig.systemPrompt` — global org instructions passed to all agents. Static content baked into the system message prefix so it hits the model's prompt cache.
+
+* Must not contain time or varying content — anything that changes per call breaks the cacheable prefix.
+* Agent-specific instructions stay on `agent.rolePrompt`.
+* The system message structure is: `[systemPrompt] → [agent role + rolePrompt] → [governance instructions]` — all static, all cacheable.
+
+## Time Awareness
+
+`DeltaEngineConfig.timezone` — grounds agents with time awareness. The engine injects:
+
+* **Current time** (humanized + ISO + timezone) into the user message on every `reason()` call.
+* **Prior messages** loaded from the message store, formatted as a transcript with relative time labels ("4 hours ago") so the model can perceive time gaps across the conversation.
+
+All varying content lives in the user message — never in the system message — to preserve the prompt cache prefix.
+
+Why:
+
+Agents without time awareness cannot reason about recency, urgency, or sequence. A static system prompt gives every agent shared org context without per-call cost. Relative time on prior messages lets the model perceive that a user message arrived 4 hours ago without parsing raw timestamps.
+
+---
+
 # Action Prerequisites
 
 An action may declare prerequisites.
@@ -943,6 +989,11 @@ type Workflow = {
 
   description: string;
 
+  // Narrative of the ideal user flow — the experiential arc.
+  // Phase storylines are beats within this arc. Guides action
+  // functions and hooks on how events should unfold experientially.
+  storyline?: string;
+
   version: string;
 
   phases: Phase[];
@@ -962,6 +1013,11 @@ type Phase = {
   name: string;
 
   description: string;
+
+  // Narrative of the ideal user flow for this phase — a beat
+  // within the workflow's storyline arc. Guides action functions
+  // and hooks on how events should unfold experientially.
+  storyline?: string;
 
   // Sequential by default. A branch node overrides the next
   // action based on the prior action's Result or a guard.
@@ -995,6 +1051,35 @@ type Branch = {
   when?: (ctx: ActionContext) => boolean;
 };
 ```
+
+---
+
+### ActionContext
+
+```ts
+// Context injected into action fn, hooks, and branch guards at runtime.
+// The engine assembles this — the developer never constructs it.
+type ActionContext = {
+  taskId: string;
+  executionId: string;
+  agentName: string;
+  phase?: string;
+
+  // The workflow-level narrative arc, when running inside a workflow.
+  // Absent in the free reasoner loop (no workflow context).
+  storyline?: string;
+
+  // The current phase's narrative beat, when running inside a workflow.
+  // Absent in the free reasoner loop.
+  phaseStoryline?: string;
+
+  availableSkills?: Array<{ name: string; description: string; content?: string }>;
+  communicate?: (channelType: string, body: string) => Promise<ResultType>;
+  remember?: (content: string, kind?: string) => Promise<ResultType>;
+};
+```
+
+Storylines reach action functions and hooks through this single channel — no duplicate injection. In the free reasoner loop (no workflow), both `storyline` and `phaseStoryline` are `undefined`.
 
 ---
 
@@ -1309,6 +1394,59 @@ type SupervisionPolicy = {
 
 ---
 
+### DeltaEngineConfig
+
+```ts
+type DeltaEngineConfig = {
+  store?: StoragePort;
+  endpoint?: string;
+  apiKey?: string;
+  options?: ModelOptions;
+  models?: ModelDef[];
+  reasoner?: ReasonerPort;
+  maxStepsPerTask?: number;
+  reasonerRetry?: Partial<RetryOptions>;
+
+  // Global org instructions passed to all agents. Static content
+  // baked into the system message prefix for prompt cache hits.
+  // Must NOT contain time or varying content — anything that changes
+  // per call breaks the cacheable prefix.
+  systemPrompt?: string;
+
+  // Timezone for humanized time in reasoner messages (e.g. "Africa/Lagos").
+  // Defaults to the system timezone. Grounds agents with time awareness.
+  timezone?: string;
+};
+```
+
+### ReasonerInput
+
+```ts
+// What the engine passes to the reasoner on each reason() call.
+type ReasonerInput = {
+  task: Task;
+  availableActions: string[];
+  availableAgents?: string[];
+  availableChannels?: string[];
+  availableSkills?: Array<{ name: string; description: string; content?: string }>;
+  agentRole: string;
+  rolePrompt: string;
+  context?: string;
+
+  // Current time injected into the user message for time awareness.
+  // Built by the engine before each reason() call. Keeps the system
+  // message cacheable.
+  currentTimestamp?: { iso: string; humanized: string; timezone: string };
+
+  // Prior conversation transcript with relative time labels, loaded
+  // from the message store. Gives the model time-gap awareness across
+  // the conversation.
+  priorMessages?: Array<{ sender: string; content: string; relativeTime: string }>;
+};
+```
+
+---
+
 # Delta DX
 
 Delta is created through a factory function, never a class. A developer imports the package, calls `createDeltaEngine`, and receives an engine object whose methods are the entire runtime surface. There is no `new`, no inheritance, no global singleton the developer has to wire up.
@@ -1319,6 +1457,9 @@ import { createDeltaEngine } from "delta-agents";
 const delta = createDeltaEngine({
   // model provider, persistence, logging, and defaults
   // are configured once, here.
+  systemPrompt: "You are an Acme Corp agent. Always be helpful and concise.",
+  timezone: "Africa/Lagos",
+  models: [{ name: "fast", model: "gpt-4o-mini", default: true }],
 });
 ```
 

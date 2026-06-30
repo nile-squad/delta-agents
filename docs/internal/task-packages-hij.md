@@ -2,7 +2,7 @@
 
 > **For the implementing agent.** This is a precise, file-by-file work order. Follow it exactly.
 > Claude (reviewer) will audit each package after you finish it. Work one package at a time and
-> run the full test suite + typecheck before declaring a package done. The master plan is `task.md`;
+> run the full test suite + typecheck before declaring a package done. The master plan is `./task.md`;
 > this file is the active handoff for the remaining packages.
 >
 > **Runtime/tooling:** use `pnpm`. Tests: `pnpm vitest run` (vitest is canonical, NOT `bun test`).
@@ -245,10 +245,10 @@ actionInputs?: Record<string, Record<string, string | number | boolean | null>>;
   (authoring / runtime / adapters / result-utils). Verify with a smoke test that imports the public
   names from `../../src` and constructs an engine.
 
-- **J2 — README.** Write `README.md` from `delta-agents.spec.md` + `context.md`: the
+- **J2 — README.** Write `README.md` from `./delta-agents.spec.md` + `context.md`: the
   "model reasons, engine governs" thesis, install, a minimal `agent`/`action`/`send` example, the
   two-tier authoring/runtime API, supervision strategies, and the cost model (multi-axis:
-  tokens/durationMs/memory/latency). Follow `COPYWRITING.md` (no em dashes, no emojis, full words).
+  tokens/durationMs/memory/latency). Follow `./COPYWRITING.md` (no em dashes, no emojis, full words).
 
 - **J3 — real-DB pass.** The drizzle/libsql store (`src/ports/drizzle-store.ts`, `db/models/`) has
   only been exercised against in-memory. Add an integration test that runs the migration and a

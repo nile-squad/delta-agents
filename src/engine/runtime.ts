@@ -62,6 +62,7 @@ export const runSendLoop = async ({
   maxSteps = MAX_STEPS_DEFAULT,
   startingSnapshot,
   reasonerRetry,
+  timezone,
 }: {
   task: Task;
   agent: Agent;
@@ -71,6 +72,8 @@ export const runSendLoop = async ({
   maxSteps?: number;
   startingSnapshot?: TaskStateSnapshot;
   reasonerRetry?: RetryOptions;
+  /** Timezone for humanized time in reasoner user messages; falls back to system tz in the scheduler. */
+  timezone?: string;
 }): Promise<SendResult> => {
   const root = makeRunner({
     task,
@@ -78,7 +81,7 @@ export const runSendLoop = async ({
     snapshot: startingSnapshot ?? snapshotFromTask(task),
     maxSteps,
   });
-  return runScheduler({ root, reasoner, registry, store, maxSteps, reasonerRetry });
+  return runScheduler({ root, reasoner, registry, store, maxSteps, reasonerRetry, timezone });
 };
 
 // ── Workflow task driver (C-a) ──────────────────────────────────────────────
@@ -354,6 +357,7 @@ export const resumeTask = async ({
   store,
   maxSteps,
   reasonerRetry,
+  timezone,
 }: {
   taskId: string;
   agent: Agent;
@@ -362,6 +366,8 @@ export const resumeTask = async ({
   store: StoragePort;
   maxSteps?: number;
   reasonerRetry?: RetryOptions;
+  /** Timezone for humanized time in reasoner user messages; falls back to system tz in the scheduler. */
+  timezone?: string;
 }): Promise<Result<SendResult, string>> => {
   const taskResult = await store.getTask(taskId);
   if (taskResult.isErr) return Err(`cannot resume: task "${taskId}" not found`);
@@ -401,7 +407,7 @@ export const resumeTask = async ({
     return Ok(result);
   }
 
-  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, reasonerRetry });
+  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, reasonerRetry, timezone });
   return Ok(result);
 };
 

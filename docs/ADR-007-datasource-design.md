@@ -26,4 +26,4 @@ Building the feature therefore required deciding the contract. This record state
 - Operation names are the developer's responsibility (the examples namespace them, for example `user-db.retrieve`). The engine does not auto-namespace, so two data sources that both define an operation named `retrieve` would collide in the registry; namespacing by convention avoids it. Auto-namespacing is a possible future refinement.
 - Persistence: a DataSource is authoring-time state in the registry, like an action or workflow. Nothing about it is written to the storage port.
 
-See [resources.md](./resources.md) for the developer-facing documentation and [delta-agents.spec.md](../delta-agents.spec.md) for the canonical specification.
+See [resources.md](./resources.md) for the developer-facing documentation and [delta-agents.spec.md](../internal/delta-agents.spec.md) for the canonical specification.

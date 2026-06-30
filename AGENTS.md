@@ -8,6 +8,7 @@
 - Domain folders with barrel `index.ts`: `/users/get-users.ts, update-users.ts → index.ts`
 - JSDoc for all public APIs (explain WHY not what). Comments only where intent unclear
 - Critical/missing-dep errors → `throw` (language-native). Runtime/user errors → handle gracefully using project's error handling + logging patterns
+- **Logs must carry resolving context — never swallow the cause.** Every log/`handleError` on a failure path must include enough to diagnose it without a repro: the underlying error/cause, the identifying ids (userId, accountId, transactionId, reference…), and `atFunction`. **Banned: bare `catch {}` or `catch { return handleError({ message }) }` that discards the thrown error.** Capture the error and log it (`logger.error({ atFunction, data: { ...ids, error }, message })`). The user-facing message stays humanized; the *log* keeps full technical detail. A log that only says "Failed to send verification code" with no cause is a bug.
 - Code for humans: readability over cleverness. Many small functions > one monolith
 
 ## Patterns
@@ -22,6 +23,7 @@
 - Defensive: anticipate failure. Critical harm → throw fast. Known failure paths → handle gracefully
 - **A slight delay is better than a race condition**: for all retry/polling paths use `retryFnWithJitter` (`packages/backend/src/utils/retry-fn-with-jitter.ts`) — never write raw `sleep` + manual backoff. Jitter prevents thundering-herd spikes when multiple callers retry simultaneously. For concurrent fire-and-forget work, prefer explicit queue-and-dequeue over free-floating async.
 - **Humanized user-facing messages & time**: any message or duration that reaches a user (SDK error, API error, UI text, toast) must be humanized. Error text states the outcome and a next step in plain language with NO internal mechanics — no `polling`, `nonce`, `HMAC`/`signature verification`, library names, internal field names, or raw error/stack dumps (e.g. "Timed out waiting for the transaction status to update", not "Polling timeout: exceeded maximum duration"). Any time or duration shown to a user is in human units ("about 2 minutes", "a few seconds"), never raw milliseconds or ISO timestamps — use the humanize-duration helper. Internal logs and debugging surfaces keep full technical detail; the categorized error model (`category`/`retryable`) carries the machine signal, the message stays human.
+- **Security is enforced, not forecasted**: never warn users about security consequences before an action — just enforce them silently. No "Wrong password? You will be signed out" pre-warnings, no "for security" explanations in error toasts. The user experiences the consequence (e.g. redirected to login); they don't need to be told it's coming or why. Security measures that are announced can be gamed; silent enforcement is safer and cleaner UX.
 
 ## React
 
@@ -29,6 +31,7 @@
 - Prop drilling max 2 levels. Use context/state management beyond
 - Check `data?.length > 0` before `.map()`. `useMemo`, `useCallback`, `React.memo`
 - Build complex UIs from small, focused components
+- **No lazy or basic UI**: despite following our design system, lazy or too basic UI is not acceptable. If it's not delightful to the user experience or accessible, it ain't worth shipping. Use the shadcn component library (Calendar, Popover, Card, etc.) instead of plain HTML inputs (`<input type="date">`, bare `<Input>` with no visual container). Auth steps (password, OTP) should be centered cards with proper visual treatment — not a plain input dumped in a modal body. Disabled buttons must have inline feedback explaining why, not silent dead ends.
 
 ## Philosophy
 
@@ -101,7 +104,7 @@ When a problem recurs or fixes don't stick, don't apply more patches. Break it d
 - Trace full implementation before making assumptions. Systematic, not piecemeal
 - Verify actual call signatures and payload shapes before implementing. Trace and confirm, don't assume
 - When unsure about a convention, ask. Don't guess and have to undo
-- `task.md` for work >30min. `context.md` at task end with learnings, new patterns, tradeoffs — future agents need this
+- `docs/internal/task.md` for work >30min. `context.md` at task end with learnings, new patterns, tradeoffs — future agents need this
 - List all modified files after task, confirm backed up
 
 ## Token Economics
@@ -119,7 +122,7 @@ When a problem recurs or fixes don't stick, don't apply more patches. Break it d
 - Tests must be self-contained — every value a test asserts on must be set up by the test itself (mock, fixture, or seed). Never assert on data that depends on persistent DB state or pre-existing records. If the DB is reset, every test must still pass. Tests that read "expected" values from a live DB and assert on them are an anti-pattern.
 - No unapproved features, stubs, or unneeded comments. Focus on task scope only
 - Real fixes, no shims/hacks/workarounds. Ask before taking easy way
-- Legacy code: ask owner before change, test current behavior, document in task.md
+- Legacy code: ask owner before change, test current behavior, document in docs/internal/task.md
 - Don't assume bugs — investigate original intention
 - Features or modules that get added should ideally also be easy to remove or turn off
 

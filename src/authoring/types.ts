@@ -21,6 +21,16 @@ export type ActionContext = {
   agentName: string;
   phase?: string;
   /**
+   * The workflow-level narrative arc, when running inside a workflow. Absent in
+   * the free reasoner loop (no workflow context).
+   */
+  storyline?: string;
+  /**
+   * The current phase's narrative beat, when running inside a workflow. Absent
+   * in the free reasoner loop.
+   */
+  phaseStoryline?: string;
+  /**
    * Skills active at this action's invocation point. In the free reasoner loop
    * this is the agent's full skill set; in a workflow it is scoped to the action's
    * or phase's declared skills. Each entry's content is loaded from its SKILL.md.
@@ -126,6 +136,12 @@ export type Phase = {
   hooks?: Hooks;
   /** Skills active for all actions in this phase (overridable per-action via Action.skills). */
   skills?: (string | Skill)[];
+  /**
+   * Narrative of the ideal user flow for this phase — a beat within the
+   * workflow's storyline arc. Guides action functions and hooks on how events
+   * should unfold experientially.
+   */
+  storyline?: string;
 };
 
 export type SupervisionPolicyDef = {
@@ -152,6 +168,12 @@ export type Workflow = {
   phases: Phase[];
   estimatedCost?: Cost;
   hooks?: Hooks;
+  /**
+   * Narrative of the ideal user flow for the whole workflow — the experiential
+   * arc. Phase storylines are beats within this arc. Guides action functions
+   * and hooks on how events should unfold experientially.
+   */
+  storyline?: string;
 };
 
 export type Skill = {

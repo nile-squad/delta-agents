@@ -48,6 +48,13 @@ const delta = await createDeltaEngine({
   models: [
     { name: "fast", model: "gpt-4o-mini", default: true },
   ],
+  // Global org instructions — static, baked into the system message prefix
+  // so it hits the model's prompt cache. Must not contain time or varying
+  // content (that goes in the user message, not here).
+  systemPrompt: "You are an Acme Corp agent. Always be helpful and concise.",
+  // Timezone for humanized time in reasoner messages. Grounds agents with
+  // time awareness. Defaults to the system timezone.
+  timezone: "Africa/Lagos",
 });
 
 // Define an action: a named, schema-validated, governed operation.
@@ -75,14 +82,18 @@ const notifyCustomer = delta.action({
 });
 
 // Define a workflow: an ordered procedure composed of phases.
+// The storyline field describes the ideal user flow — a narrative the action
+// functions and hooks read at runtime to shape how events unfold.
 const customerSupport = delta.workflow({
   name: "customer-support",
   description: "Standard customer support procedure",
+  storyline: "Customer contacts support, agent looks up the record, resolves the issue, and confirms satisfaction before closing.",
   version: "1",
   phases: [
     {
       name: "investigation",
       description: "Look up the customer record",
+      storyline: "Gather the customer's context quickly and accurately — no back-and-forth.",
       actions: ["lookup-customer"],
       checkpoint: true,
       supervision: { strategy: "retry", maxRetries: 3 },
@@ -90,6 +101,7 @@ const customerSupport = delta.workflow({
     {
       name: "communication",
       description: "Send a response to the customer",
+      storyline: "Respond clearly and confirm the customer is satisfied before closing.",
       actions: ["notify-customer"],
       checkpoint: true,
       supervision: { strategy: "escalate", maxRetries: 0 },
@@ -255,6 +267,59 @@ const action = delta.action({
   },
 });
 ```
+
+## Storylines
+
+A storyline is a free-prose narrative of the ideal user flow. It lives on `Workflow` (the experiential arc) and `Phase` (a beat within that arc). At runtime, the engine threads them onto `ActionContext` so action functions and hooks can read the narrative and shape their behavior — tone, pacing, what to emphasize, how to respond.
+
+```ts
+const onboarding = delta.workflow({
+  name: "onboarding",
+  description: "Guide a new user through setup",
+  storyline: "User signs up, agent welcomes them, walks through one key feature, confirms they're ready, and leaves the door open for questions.",
+  phases: [
+    {
+      name: "welcome",
+      description: "Greet the user",
+      storyline: "Greet warmly, keep it short, invite the first step — don't dump the whole manual.",
+      actions: ["send-welcome"],
+      checkpoint: true,
+    },
+  ],
+});
+
+const sendWelcome = delta.action({
+  name: "send-welcome",
+  description: "Send the welcome message",
+  schema: z.object({ userId: z.string() }),
+  fn: async ({ userId }, ctx) => {
+    // ctx.storyline — the workflow-level arc
+    // ctx.phaseStoryline — this phase's beat
+    const tone = ctx.phaseStoryline ?? "friendly and concise";
+    return Ok("sent");
+  },
+});
+```
+
+Storylines are optional and free-form. They reach action functions and hooks through a single channel (`ActionContext`) — no duplicate injection. In the free reasoner loop (no workflow), both fields are `undefined`.
+
+## System Prompt and Time Awareness
+
+Two engine-level options ground every agent in shared context and time:
+
+**`systemPrompt`** — global org instructions passed to all agents. Static content baked into the system message prefix so it hits the model's prompt cache. Must not contain time or varying content — anything that changes per call breaks the cacheable prefix. Agent-specific instructions stay on `agent.rolePrompt`.
+
+**`timezone`** — grounds agents with time awareness. The engine injects the current time (humanized + ISO + timezone) into the user message on every reasoner call, and loads prior messages with relative time labels ("4 hours ago") so the model can perceive time gaps across the conversation.
+
+```ts
+const delta = await createDeltaEngine({
+  systemPrompt: "You are an Acme Corp agent. Always be helpful and concise.",
+  timezone: "Africa/Lagos",
+  models: [{ name: "fast", model: "gpt-4o-mini", default: true }],
+});
+```
+
+The system message structure is: `[systemPrompt] → [agent role + rolePrompt] → [governance instructions]` — all static, all cacheable. The user message carries the varying content: current time, prior conversation transcript, task goal, available actions.
 
 ## Cost Model
 
@@ -427,8 +492,8 @@ The TaskID is the unit of governance. Authorization, budgeting, auditing, checkp
 | Type | Purpose |
 |------|---------|
 | `Action` | A single executable operation with a validation schema, optional anticipated risk and cost, optional prerequisites, and lifecycle hooks. |
-| `Workflow` | An ordered set of phases describing a procedure. |
-| `Phase` | A stage of a workflow with its actions, checkpoint flag, and supervision policy. |
+| `Workflow` | An ordered set of phases describing a procedure. Optional `storyline` narrates the ideal user flow. |
+| `Phase` | A stage of a workflow with its actions, checkpoint flag, and supervision policy. Optional `storyline` narrates this phase's beat within the workflow arc. |
 | `DataSource` | A named, owned store of governed CRUD operations. External sources are less trusted by default. |
 | `Agent` | A role with its actions, workflows, data sources, skills, and channels. |
 | `Channel` | An inbound or outbound communication surface. |
@@ -451,7 +516,7 @@ The TaskID is the unit of governance. Authorization, budgeting, auditing, checkp
 
 Pre-1.0. The specification is stable. The core engine, governance math, supervision strategies, workflow execution, delegation, channels, memory retrieval, and human oversight are all implemented and tested. The API shape is final. Breaking changes before 1.0 will be documented.
 
-Install with `pnpm add delta-agents` to use the current build. The canonical specification is [delta-agents.spec.md](./delta-agents.spec.md).
+Install with `pnpm add delta-agents` to use the current build. The canonical specification is [delta-agents.spec.md](./docs/internal/delta-agents.spec.md).
 
 ## License
 

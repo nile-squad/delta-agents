@@ -74,6 +74,11 @@ export type RunPhaseInput = {
   startIndex?: number;
   /** The agent's full declared skill set, used to resolve phase/action skill refs. */
   agentSkills?: Skill[];
+  /**
+   * Workflow-level narrative, plumbed from runWorkflow so phase hooks and
+   * action fns receive it. Threaded onto ActionContext.storyline.
+   */
+  storyline?: string;
 };
 
 export type RunWorkflowInput = {

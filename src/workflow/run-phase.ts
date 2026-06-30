@@ -46,6 +46,7 @@ export const runPhase = async ({
   remember,
   startIndex,
   agentSkills,
+  storyline,
 }: RunPhaseInput): Promise<PhaseResult> => {
   // Resolve phase-level skills once. Each action may override with its own set.
   const phaseSkillsResult = resolveSkillRefs(phase.skills ?? [], agentSkills ?? []);
@@ -66,6 +67,8 @@ export const runPhase = async ({
     ...(phaseSkills.length > 0 ? { availableSkills: phaseSkills } : {}),
     ...(communicate !== undefined ? { communicate } : {}),
     ...(remember !== undefined ? { remember } : {}),
+    ...(storyline !== undefined ? { storyline } : {}),
+    ...(phase.storyline !== undefined ? { phaseStoryline: phase.storyline } : {}),
   };
 
   // Phase before hook — observes only, never authorizes (invariant 22, prohibition 17).
@@ -148,6 +151,8 @@ export const runPhase = async ({
       communicate,
       remember,
       ...(actionSkills.length > 0 ? { availableSkills: actionSkills } : {}),
+      ...(storyline !== undefined ? { storyline } : {}),
+      ...(phase.storyline !== undefined ? { phaseStoryline: phase.storyline } : {}),
     });
 
     if (gwResult.isErr) {

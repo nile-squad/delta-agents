@@ -186,6 +186,7 @@ export const runWorkflow = async ({
     phase: undefined,
     ...(communicate !== undefined ? { communicate } : {}),
     ...(remember !== undefined ? { remember } : {}),
+    ...(workflow.storyline !== undefined ? { storyline: workflow.storyline } : {}),
   };
 
   // Workflow before hook.
@@ -229,6 +230,7 @@ export const runWorkflow = async ({
       remember,
       agentSkills,
       ...(startIndex !== undefined ? { startIndex } : {}),
+      ...(workflow.storyline !== undefined ? { storyline: workflow.storyline } : {}),
     });
 
     currentState = phaseResult.snapshot;

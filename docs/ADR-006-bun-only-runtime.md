@@ -24,4 +24,4 @@ The source uses extensionless barrel imports (for example `import { runWorkflow 
 - esbuild requires its platform binary, so its install script is approved in `pnpm-workspace.yaml`. pnpm v11 reads build-script approvals there, not from `package.json`.
 - If a future feature needs true in-process actor isolation, this decision is revisited. For the current stateless engine it is not needed.
 
-See [delta-agents.spec.md](../delta-agents.spec.md) for the canonical specification.
+See [delta-agents.spec.md](../internal/delta-agents.spec.md) for the canonical specification.

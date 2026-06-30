@@ -2,7 +2,7 @@
 
 Delta Agents is a deterministic autonomous control plane. This document describes how it is structured, how a task flows through it, and why the design makes the guarantees it does.
 
-See [delta-agents.spec.md](../delta-agents.spec.md) for the canonical specification.
+See [delta-agents.spec.md](../internal/delta-agents.spec.md) for the canonical specification.
 
 ## The Central Separation
 

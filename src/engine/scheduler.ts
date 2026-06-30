@@ -47,6 +47,8 @@ import { computeActionValue } from "../governance";
 import { enforceSubtaskScope, requestSlot, releaseSlot, abortEntireTree } from "../supervision";
 import { initialRiskState, initialTrust } from "../governance";
 import { taskId, checkpointId, messageId } from "../shared/id";
+import { formatInTimeZone } from "date-fns-tz";
+import { formatDistanceToNow } from "date-fns";
 
 // ── Step outcome ────────────────────────────────────────────────────────────
 
@@ -123,6 +125,7 @@ const stepTask = async ({
   registry,
   store,
   reasonerRetry,
+  timezone,
 }: {
   task: Task;
   agent: Agent;
@@ -132,6 +135,8 @@ const stepTask = async ({
   registry: Registry;
   store: StoragePort;
   reasonerRetry: RetryOptions;
+  /** Timezone for humanized time in reasoner user messages. Falls back to the system tz. */
+  timezone?: string;
 }): Promise<StepOutcome> => {
   // 1. Discover legal actions for the agent in the current state.
   const agentActionsResult = registry.getActionsForAgent(agent.name);
@@ -203,6 +208,33 @@ const stepTask = async ({
   // skills without a SKILL.md are omitted entirely (convention: SKILL.md required).
   const availableSkills = await buildAvailableSkills(agent.skills ?? []);
 
+  // ── Time awareness (user message only — keeps the system prefix cacheable) ──
+  // Current time: ISO for machine + humanized for the model + tz for grounding.
+  // Prior conversation: messages on this task with relative-time labels so the
+  // model can reason about gaps across the conversation. A transient store read
+  // failure is swallowed — an empty prior-messages list is fine, the rest of
+  // the step must still proceed.
+  const now = new Date();
+  const tz = timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const currentTimestamp = {
+    iso: now.toISOString(),
+    humanized: formatInTimeZone(now, tz, "h:mm a zzz"),
+    timezone: tz,
+  };
+
+  const msgsResult = await store.getMessages(task.id);
+  let priorMessages: Array<{ sender: string; content: string; relativeTime: string }> = [];
+  if (msgsResult.isOk) {
+    priorMessages = msgsResult.value
+      .slice()
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .map((m) => ({
+        sender: m.sender,
+        content: typeof m.payload === "string" ? m.payload : JSON.stringify(m.payload),
+        relativeTime: formatDistanceToNow(m.createdAt, { addSuffix: true }),
+      }));
+  }
+
   const reasonInput = {
     task: { ...task, risk: snapshot.risk, trust: snapshot.trust, updatedAt: new Date() },
     availableActions: rankedActions.map((a) => a.name),
@@ -211,6 +243,8 @@ const stepTask = async ({
     availableSkills,
     agentRole: agent.role,
     rolePrompt: agent.rolePrompt,
+    currentTimestamp,
+    ...(priorMessages.length > 0 ? { priorMessages } : {}),
     ...(reasonContext.length > 0 ? { context: reasonContext } : {}),
   };
   const reasonResult = await retryWithJitter({
@@ -404,6 +438,7 @@ export const runScheduler = async ({
   store,
   maxSteps,
   reasonerRetry = defaultRetryOptions,
+  timezone,
 }: {
   root: Runner;
   reasoner: ReasonerPort;
@@ -411,6 +446,8 @@ export const runScheduler = async ({
   store: StoragePort;
   maxSteps: number;
   reasonerRetry?: RetryOptions;
+  /** Timezone for humanized time in reasoner user messages; falls back to system tz in stepTask. */
+  timezone?: string;
 }): Promise<SendResult> => {
   const rootId = root.task.rootId;
   const runners: Runner[] = [root];
@@ -669,6 +706,7 @@ export const runScheduler = async ({
         registry,
         store,
         reasonerRetry,
+        timezone,
       });
       runner.step++;
       runner.snapshot = outcome.snapshot;

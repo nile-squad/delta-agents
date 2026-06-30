@@ -2,7 +2,7 @@
 
 This document covers the governance math the engine runs on every action step, the signals it produces, and the audit surface available to callers. All of these mechanisms are live in the execution path.
 
-See [delta-agents.spec.md](../delta-agents.spec.md) for the canonical specification.
+See [delta-agents.spec.md](../internal/delta-agents.spec.md) for the canonical specification.
 
 ## Execution Health: Kalman State Estimation
 

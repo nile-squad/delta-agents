@@ -18,7 +18,7 @@
  * channel built from the same thread so the agent can reply in-context.
  */
 
-import { Ok, Err } from "slang-ts";
+import { Ok, Err, safeTry } from "slang-ts";
 import type { Channel, ChannelType } from "../authoring/types";
 
 /**
@@ -49,11 +49,7 @@ export const createChatSdkChannel = ({
   enabled: true,
   ...(requiresApproval !== undefined ? { requiresApproval } : {}),
   sendMessage: async (message) => {
-    try {
-      await thread.post(message);
-      return Ok(undefined);
-    } catch (e) {
-      return Err(`chat-sdk post failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    const r = await safeTry(async () => { await thread.post(message); });
+    return r.isErr ? Err(`chat-sdk post failed: ${r.error}`) : Ok(undefined);
   },
 });

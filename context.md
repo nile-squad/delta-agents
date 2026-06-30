@@ -1,573 +1,170 @@
 # Project Context: delta-agents
 
-## Audit (2026-06-19) — live-path vs. spec
+## Context Rules
 
-Phases 0–10 built a sound, individually-tested library of governance primitives, but
-the live execution path (`createDeltaEngine` → `runSendLoop` → `runGateway`) only wires
-in a fraction of them. Two layers that don't meet. Findings, by severity:
+### What belongs here
+- **Architecture decisions & rationale** — why things are the way they are
+- **Established patterns & idioms** — conventions discovered during implementation (hard to glean from code alone)
+- **Non-obvious tradeoffs** — what was sacrificed and why
+- **Current state summary** — what's implemented, what's deferred/catalogued
+- **Critical decisions** — build tools, dependency choices, design forks
+- **System overview** — high-level architecture, key types, DX pattern
 
-**Critical (FIXED 2026-06-19 — `status:"completed"` is now trustworthy):**
-- **C1 [FIXED] — escalated task was marked `completed`.** Escalation now stops the loop:
-  persists `status:"paused"` + escalation record, returns `SendResult.status:"blocked"`.
-  `runtime.ts` escalation block. Test: engine.spec "C1 ... escalates and blocks".
-- **C2 [FIXED] — reasoner failure was marked `completed`.** `ReasonerPort.reason` now returns
-  `ReasonerDecision = {kind:"act",request} | {kind:"done",reason?}`. `Ok(done)`→completed,
-  `Ok(act)`→run, `Err`→**failed**. Mock: exhausted script→`done` (not Err); `alwaysFail`→Err.
-  OpenAI: added `finish_task` tool alongside `request_action`. Test: "C2 ... marks failed".
-- **C3 [FIXED] — empty discovery = "done" even when budget-exhausted.** Loop-end now checks
-  `isOverBudget` → `failed` ("budget exhausted") as a backstop for the resume-already-over-budget
-  case (mid-loop over-budget is caught first by escalation budget-violation → blocked). Test:
-  "C3 ... resuming over budget fails".
-- **C4 [FIXED] — token cost hard-coded 0.** `ActionRequest.reasoningCost` carries model tokens;
-  OpenAI adapter reads `response.usage.total_tokens`; gateway folds into execution cost +
-  snapshot spent → token budget enforcement is real. Test: "C4 ... token cost is recorded".
-  Note: a `done`-turn's own model tokens are still unaccounted (no execution to attach to) — minor leak.
+### What does NOT belong here
+- **Changelogs** — git log exists for this. No per-item fix descriptions, commit hashes, or test names
+- **Test details** — test file paths, test names, assertion descriptions, test counts
+- **Implementation diaries** — "step by step how we fixed X" — belongs in git history
+- **Per-package breakdowns** — once a package is wired, its changelog is noise
+- **Duplicates of AGENTS.md** — conventions already stated there should not be restated verbatim
 
-**High (subsystems built+tested, never called by live path — confirmed by import trace):**
-- **H1 [FIXED 2026-06-20 — Package C] Supervision now enforced at phase granularity.**
-  `run-workflow.ts` `runPhaseSupervised` wraps each phase: a failed phase with a declared
-  `supervision` policy applies `applyStrategy({policy, retryCount:0})` deterministically
-  (prohibition 10): retry/restart/resume re-run the phase up to `maxRetries` via `retryWithJitter`
-  (AGENTS.md: never raw sleep+backoff; baseDelayMs:5, maxDelayMs:50); escalate → `raiseEscalation`
-  (trigger `workflow-failure`) + pause + `blocked`; abort-* → `abortTask` + failed; give-up →
-  failed. Recovery boundary is the phase (re-run whole phase), not per-action — matches spec
-  §Supervision Model. Tests: engine.spec "workflow supervision recovers or surfaces failure (H1)"
-  (retry-exhausted→failed, escalate→blocked+workflow-failure escalation).
-- **H2 [FIXED 2026-06-20 — Package C] Workflows/phases/branching now drive execution (C-a model).**
-  `SendInput` gained `workflow?` + `input?`; a task with an assigned workflow runs deterministically
-  (reasoner-less) via `runWorkflowTask` (engine/runtime.ts) → `runWorkflow`; a workflow-less task
-  still uses the free reasoner loop (C-a coexistence). `runWorkflowTask` validates the agent
-  declares the workflow, builds the action registry from `agent.actions`, pre-flights approvals
-  for the whole workflow (any unapproved requiresApproval action → block + auto-request, mirrors
-  the loop's per-action gate), feeds a single shared `input` bag to every action via `inputFor`,
-  and maps WorkflowResult→SendResult (completed/blocked/failed). `create-delta-engine.ts` branches
-  on `workflow !== undefined`; `Task.workflow` is set. **Key H1/H3 reconciliation (design):** in
-  `run-phase.ts`, post-step governance is split by outcome — a *successful* step runs full
-  post-step governance (escalate on drift, shared with the free loop) but a *failed* step only
-  persists trust/risk and routes to supervision. Escalating on failure from post-step would
-  pre-empt the supervision policy (H1) and the branch `onFailure` route, and was timing-flaky
-  (cold-start optimism 1.0 vs observed 0.0 → surprise 1.0 only when durationMs rounds ≥1ms).
-  Tests: engine.spec "workflow tasks run deterministically (H2)" (phase order, branch routing,
-  undeclared-workflow→failed) + "workflow approval pre-flight (C-a)".
-- **H3 [FIXED 2026-06-19 — Package A] Governance math wired into the live loop.** New pure
-  module `src/governance/step-signals.ts` (`assembleStepSignals`) composes friction + Kalman
-  health + Bayesian surprise; gateway feeds the result to `updateRisk` (was hardcoded zeros) and
-  returns `surpriseMagnitude`; runtime forwards it to `checkEscalation`. `TaskStateSnapshot`
-  gained `kalman?: KalmanState` (persists in checkpoints, survives pause/resume). Progress proxy
-  for the hornless free loop = `completedActions / (stepIndex+1)`. The `bayesian-surprise`
-  escalation branch is now reachable (integration test proves it fires). Still dormant from H3's
-  original list: `value.ts` (Bellman/MPC `projectHorizon`, `computeActionValue`) and
-  `isTrustDegraded` — not yet wired; surprise→trust ("surprise" TrustUpdateOutcome) also not yet
-  used (gateway still success/failure only). Tests: engine.spec "governance math drives the live
-  loop (H3)" + `tests/unit/governance/step-signals.spec.ts` (8 unit).
-- **H4 [FIXED 2026-06-20 — Package D] Delegation drives a bounded supervision tree.**
-  New `ReasonerDecision` kind `"delegate"` (`{ goal, agentName, budget? }`) — the reasoner signals
-  delegation explicitly (NOT a magic action through the gateway). The send loop was refactored into
-  a step-able loop + a deterministic round-robin scheduler (`src/engine/scheduler.ts`): `stepTask`
-  advances one task one reasoner→gateway step; `runScheduler` advances every runnable task once per
-  pass ("spawn + poll later" — a delegation registers a child and returns, parent keeps stepping;
-  up to two children run interleaved). `runSendLoop` is now a thin wrapper building the root runner.
-  Boundedness is structural: `requestSlot` caps active children at 2 (inv 15), extras queue FIFO and
-  `releaseSlot`-promote on a slot free (inv 16), `enforceSubtaskScope` clamps child budget to parent
-  remaining (inv 18), child snapshot carries `parentBudget`/`parentSpent` (legality guard now live),
-  root failure/block cascades `abortEntireTree` (inv 17). Child `spent` folds back into parent on
-  settle. Tests: engine.spec "delegation drives a bounded supervision tree (H4)" (parentId+rootId,
-  budget clamp, 3rd delegation queues+promotes, unknown-agent→parent fails).
-  **Audit-round-2 fixes (2026-06-20):** D1 — the scheduler now aggregates the subtree outcome into
-  the root result and root task record: a delegated child that settled failed→root failed, blocked→
-  root blocked (was: parent reported `completed` while a child was blocked/failed; free-loop
-  delegation had no failure handling). Tests: H4 "delegated subtask that fails surfaces parent as
-  failed (D1)" + "blocked on approval surfaces parent as blocked (D1)". D2 — a child's
-  `parentBudget`/`parentSpent` is refreshed from the parent's *live* spend each pass (invariant 18
-  now enforced under interleaving, not a stale delegation-time copy), and a subtask starved by an
-  exhausted parent budget settles failed, not completed. D4 — `drainMessages` now checkpoints the
-  `consumedMessages` snapshot so the caller-message drain is idempotent across resume (test asserts
-  the latest checkpoint carries the consumed id).
-  **OpenAI delegate tool [DONE 2026-06-20]:** `ReasonerInput` gained `availableAgents?: string[]`;
-  the scheduler passes every deployed agent except self. The OpenAI adapter offers a `delegate_task`
-  tool (goal + `agent_name` enum-constrained to availableAgents + optional budget) whenever there is
-  ≥1 other agent, parses it into a `delegate` decision, and steers the model via the system/user
-  prompt. Tests: openai-reasoner.spec "delegation" (parse, budget passthrough, off-list→Err, tool
-  offered only when agents available).
-  **Child budget reservation [DONE 2026-06-21]:** `handleDelegate` now debits the parent's `spent`
-  by the granted child budget up front (reservation), and `settle` refunds the unused remainder
-  (`remainingCost(child.budget, child.spent)`) when the child finishes. Net parent spend across
-  delegate+settle equals the child's real spend, but during the child's life the parent's headroom
-  is reduced — so concurrent delegations draw from a shrinking pool and two children can never each
-  be granted the parent's full remaining. Invariant 18 is now *structural* at delegation time, not
-  just enforced after the fact (the D2 live parentSpent-refresh + starved-subtask check remain as
-  defensive belt-and-suspenders). Test: engine.spec "reserves each child's budget so concurrent
-  delegations cannot collectively exceed parent scope" (parent 100, two children request 80 each →
-  granted 80 + 20).
-  **H4-remaining (deferred):** a pure-supervisor agent with zero actions hits the
-  discovery gate (available=0 → natural-done) before it can delegate, so a supervisor needs ≥1 action
-  today; resume does not reload mid-flight children from an existing tree.
-  **D3 — RESOLVED 2026-06-20 (owner ruling):** the per-agent concurrency model is per pool — an
-  agent owns at most **1 major (top-level `send`) task**, separately at most **2 active subtasks**
-  (delegations, bounded by the binary supervision tree), and an **unlimited queue**. So invariant 26
-  is `send`/major-task-only; delegation is exempt from it and bounded by the 2-active-subtask rule
-  instead (current `handleDelegate` behaviour is correct, no per-agent guard needed). Fix applied:
-  the `send` busy-guard now fires only when the agent's latest task is a *major* task
-  (`parentId === undefined`) — a running subtask no longer makes the agent look busy or get a major
-  goal mis-attached. Test: engine.spec invariant-26 "a running SUBTASK does not block a new major
-  task". (Note: the 2-active bound is enforced per-tree today, which coincides with per-agent under
-  the synchronous one-tree-per-send model.)
-- **H5a [FIXED 2026-06-19 — Package B] Busy-agent `send` now queues instead of rejecting.**
-  Per spec §No New Task When Work Is Pending: when an agent already has a running/pending task,
-  `send` saves a `Message` (sender:"caller", payload:goal) attributable to the existing task
-  (invariant 9) and returns `Ok({ status:"queued", taskId: existingId, ... })` — no second task
-  (invariant 26 / prohibition 21). Return-shape decision: added `"queued"` to `SendResult.status`
-  (means "attached to existing task," distinct from the existing task's own lifecycle status).
-  `create-delta-engine.ts` send busy-branch. Test: engine.spec invariant-26 "queues the inbound
-  goal onto the existing task". NOTE: messages are persisted+attributable but NOT yet consumed —
-  nothing drains the queue when the agent frees up; the reasoner doesn't see queued messages.
-  That consumption/drain path is **H5b**, deferred with H4 (supervisor/agent comms).
-- **H5b [PARTIAL 2026-06-20 — Package D] Queued caller messages are now drained.** When a runner
-  reaches natural-done, `drainMessages` folds any unconsumed `sender:"caller"` Messages into the
-  task goal (`[queued] ...`) and keeps the task running to handle them; consumed ids persist on the
-  snapshot (`TaskStateSnapshot.consumedMessages`) so the drain is idempotent across pause/resume
-  (inv 9). The subtask queue drains via `releaseSlot` promotion (see H4). Test: engine.spec "queued
-  caller messages are drained into the task (H5b)". **Still deferred:** the `Channel` authoring type
-  (whatsapp/email/etc.) is unused — outbound agent↔supervisor comms over real channels is unbuilt;
-  the `Queue` entity (`saveQueue`/`getQueue`) is still unused (the FIFO bookkeeping lives in
-  `TaskTree.queuedChildren` + Messages, not the `Queue` type).
+### Principles
+- Context must be **accurate** (wrong context > no context) and **current** (stale entries removed)
+- Future agents need to understand the project in 5 minutes, not 30
+- If you can read it from code, it doesn't need to be here
+- Only document what's **non-obvious** from reading source files
 
-Storage note: all 8 entities already have working store methods in BOTH adapters (in-memory +
-Drizzle), so no remaining H-item needs new DB schema. New persisted state (H1 retry counters,
-done) rides inside the checkpoint `TaskStateSnapshot` JsonRecord.
+## Current State (as of 2026-06-22)
 
-H-series sequence (scoped): A=H3 [DONE de8b1d0], B=H5a [DONE e94124b], C=H2+H1 [DONE 1b4fc15 — C-a
-coexistence: task-assigned workflow runs deterministically/reasoner-less; workflow-less task uses
-the free loop], D=H4+H5b [DONE — owner chose: trigger=new `ReasonerDecision` kind `"delegate"`;
-concurrency=spawn+poll-later interleaving scheduler (`src/engine/scheduler.ts`); drain=both subtask
-promotion + caller-message consumption]. **All H-series items now wired.** Remaining work is the
-deferrals catalogued under each H-item above (OpenAI delegate tool, Channel comms, budget
-reservation, per-action reasoner inputs, value.ts Bellman/MPC, isTrustDegraded, surprise→trust).
-C reconciliation (DONE): shared `applyPostStepGovernance` helper
-(`src/oversight/post-step.ts`) gives BOTH the free loop and the workflow path identical escalation
-+ trust/risk persistence; placed in oversight to avoid an engine↔workflow import cycle.
-**C-remaining (deferred):** per-action reasoner-filled inputs (only a single shared `input` bag
-today); workflow approval round-trip resume (a blocked-on-approval workflow re-runs from the start
-on resume — no mid-workflow checkpoint resume yet); workflow pause/resume correctness. Commits so
-far: a7c86dd (critical C1-C4), de8b1d0 (Package A/H3), e94124b (Package B/H5a), Package C pending
-commit.
+All packages A–J are implemented and tested (~690 tests pass). Public surface at `src/index.ts`. `dist/` loads under plain Node. Full spec in `docs/internal/delta-agents.spec.md`.
 
-**Medium:** **M1 [FIXED 2026-06-21]** `pauseTask` now rejects a terminal (completed/failed/aborted)
-task — pausing one could let a later resume re-enter the loop and re-run finished work, undoing the
-C1–C4 honest-status property. Tests: engine.spec "pause returns Err for a terminal (completed) task
-(M1)" + the pause/resume tests reworked to seed a non-terminal/checkpointed task instead of pausing
-a completed one. M2 `resumeTask` accepts `"pending"` but error says `(expected "paused")` (cosmetic).
-M3 duration budget excludes reasoner latency (only `fn()` timed). M4 `ReasonerInput.context`
-(retrieved memory) never populated — spec principle 4 (on-demand memory retrieval) unimplemented.
+All H-series subsystems are wired into the live path. Remaining work is catalogued below, not whole subsystems.
 
-**Low/DX:** L1 `deploy` is a no-op assertion. L2 gateway writes execution row twice/action.
-L3 task+checkpoint persisted every step (2 writes/step). L4 lingering `Record<string,unknown>`/
-`as unknown as` casts vs. the "no unknown" rule. **L5 [FIXED 2026-06-21]** OpenAI adapter now sends
-`max_completion_tokens` (not the deprecated `max_tokens`) and forwards `temperature` only when
-explicitly configured (newer gpt-5.x / o-series reasoning models reject a non-default temperature).
+### What's implemented
+- **C1-C4 (status honesty):** escalation stops loop -> `paused`+`blocked` (not `completed`). Reasoner failure -> `failed`. Budget exhaustion -> `failed`. Token cost fully wired.
+- **H1 (supervision):** per-phase supervision on workflow failure via `applyStrategy` + `retryFnWithJitter`. Recovery boundary = phase.
+- **H2 (workflow execution):** `SendInput.workflow` drives deterministic (reasoner-less) execution. Free loop for workflow-less tasks. Shared `applyPostStepGovernance` for both paths (in `oversight/post-step.ts` to avoid engine<->workflow import cycle).
+- **H3 (governance math):** `assembleStepSignals` (friction + Kalman + Bayesian surprise) wired into live loop. Kalman state survives pause/resume.
+- **H4 (delegation):** `ReasonerDecision.kind:"delegate"` -> bounded supervision tree. Scheduler: step-able loop + round-robin (max 2 active children, FIFO queue). Parent budget reserved at grant, refunded on settle. Parent blocked/failed cascades abort to tree.
+- **H5a (busy queue):** agent busy -> `SendResult.status:"queued"`, message attributable to existing task.
+- **H5b (message drain):** natural-done drains unconsumed caller messages into task goal. Idempotent via checkpointed `consumedMessages`.
+- **E1-E3 (comms + skills):** `ReasonerDecision.kind:"communicate"` -> channel dispatch with optional approval. Chat SDK bridged structurally (no dep). `ActionContext.communicate()` for declarative path. Skills: `folder`-based, engine reads `SKILL.md` internally, scoped by agent/phase/action.
+- **F (memory retrieval):** `Memory` type + `memories` table (libsql). `retrieveContext` before each `reason()` call. `ctx.remember()` for write. Keyword ranking (no embeddings).
+- **G (optimization + trust):** surprise erodes trust (>0.4 threshold). Degraded trust (<0.3) escalates. Bellman MPC pre-block on workflow. Action ranking cheapest-first.
+- **Multi-axis Cost:** `Cost` = `{ tokens, durationMs, memory?, latency? }`. Opt-in enforcement. Flows through budget, MPC, subtask scoping.
+- **H1/H3 re-run fidelity:** retry from `failedIndex`, restart from phase entry, resume from checkpoint. Active child rehydration on resume. Per-action workflow inputs (`actionInputs`).
+- **Storylines:** `Workflow.storyline?` + `Phase.storyline?` (free-prose narrative of ideal user flow). Injected into `ActionContext.storyline` + `ActionContext.phaseStoryline` via the execution gateway — single channel, no duplicate injection. Free loop (no workflow) sees `undefined`. NOT persisted in `TaskStateSnapshot` (authoring content, plumbed fresh from definitions).
+- **System prompt + time awareness:** `DeltaEngineConfig.systemPrompt?` (static org instructions, baked into system message prefix for prompt cache) + `DeltaEngineConfig.timezone?` (grounds agents with time awareness). Current time (humanized + ISO + tz) injected into user message per `reason()` call. Prior messages loaded from store with relative time (`formatDistanceToNow`). System message = cacheable prefix only; user message = all varying content. `buildMessages` exported for direct testing.
+- **Package I (correctness):** `deploy()` gates `send()`. All `as unknown` casts centralized to `snapshotFromJson`/`snapshotToJson` (exactly 1 cast in `src/`).
+- **Package J (surface + docs):** Complete public API at `src/index.ts`. README rewritten from shipped surface.
 
-**Test runner (2026-06-21):** vitest is the single canonical runner, run under Node via `pnpm test`
-(→ `vitest run`); `bun test` is no longer used (its runner lacks `vi.runAllTimersAsync`, which the
-retry-with-jitter tests need). `vitest.config.ts` pins `environment: "node"`. Source has no bare
-node-builtin imports to convert to `node:` specifiers (IDs use `nanoid`, not `node:crypto`). The
-bundle step (`bun run bun-build.ts`) still uses bun; that is the bundler, not the test path.
+### What's deferred (catalogued)
+- Per-action reasoner-filled inputs (single shared `input` bag today)
+- Workflow approval round-trip resume (blocked-on-approval re-runs from start)
+- Workflow pause/resume correctness
+- Semantic/embedding memory ranking (needs embed provider)
+- Memory-access audit log (writes attributable; reads not logged)
+- Auto-capture execution outcomes as memories (today explicit via `ctx.remember`)
+- Richer future-cost estimation for `computeActionValue` (uniform term = ranking reduces to immediate cost)
+- MPC horizon in free reasoner loop (only workflow path has declared horizon)
+- `Queue` entity is spec-aligned but NOT engine-driven (engine uses `TaskTree.queuedChildren` + `Message`s)
 
-Critical set C1–C4 + Packages A/B/C/D DONE — all H-series subsystems are wired into the live path.
-Remaining work is the per-H-item deferrals catalogued above, not whole subsystems.
+### Storage
+All 8 entities have working store methods in both adapters (in-memory + Drizzle). No remaining work needs new DB schema. New persisted state rides inside `TaskStateSnapshot` JsonRecord.
 
-## Package E — Comms & Skills (DONE 2026-06-21)
-Closes the "net-new spec features" gap for channels + skills (memory retrieval is Package F).
-- **E1 — reasoner-driven channel comms.** New `ReasonerDecision` kind `communicate` ({channel,
-  body}), parallel to `delegate`. Single dispatch core `src/comms/dispatch.ts`: resolve the agent's
-  enabled channel of that type → optional human-approval gate (`channel.requiresApproval`, reusing
-  the action approval store keyed `channel:<type>`) → `channel.sendMessage` → record a
-  TaskID-attributable Message (inv 9). Scheduler routes the decision (sent→continue,
-  approval→blocked, transport-fail→failed). Mock can script `communicate`; OpenAI gains a
-  `send_message` tool (channel enum), offered only when the agent has a channel.
-- **Chat SDK = message layer, bridged structurally (NO `chat` dependency).**
-  `createChatSdkChannel({ thread })` (`src/comms/chat-sdk-channel.ts`) wraps any object with a
-  `.post(text)` method — every Chat SDK `Thread` — into a delta `Channel`. delta-agents stays
-  transport-agnostic; the bot app installs `chat` and passes its live thread (from an
-  onNewMention/onDirectMessage handler) in. Inbound (platform msg → task) is the bot's Chat SDK
-  handler calling `delta.send`; ties into the H5b caller-message drain.
-- **E2 — declarative comms.** `ActionContext.communicate(channel, body)` lets an action fn, hook, or
-  workflow phase send through the same governed dispatch. Hooks never authorize (inv 22), so a
-  `requiresApproval` channel is NOT sendable via ctx.communicate (returns Err → use the reasoner
-  path). Threaded engine→runGateway→ctx and runWorkflowTask→runWorkflow→runPhase→ctx.
-- **E3 — skills (complete).** Full skills DX landed. `Skill` now has `folder` (not `path`), no
-  `active` flag. `agent.skills`, `phase.skills`, and `action.skills` all accept `(string | Skill)[]`.
-  The engine reads `SKILL.md` from each skill folder internally (`node:fs/promises`); skills without
-  SKILL.md are silently skipped. `ActionContext.availableSkills` is set so action fns can access skill
-  content. Scoping: free loop = all agent skills; phase = phase.skills; action = action.skills
-  (overrides phase). `SkillLoader` and `loadSkill` removed from public surface entirely.
-  `Channel.retrieveMessages`/`replyMessage` not yet driven; root `index.ts` still exports only
-  slang-ts (full public-API export pass is Package J). 681 tests pass under vitest.
+---
 
-## Package F — On-demand memory retrieval (DONE 2026-06-21, libsql)
-Implements spec principle 4 ("memory is retrieved, not carried") + invariant 8 (memory access
-attributable to a TaskID). Backend = libsql (owner choice), behind `StoragePort` so the in-memory
-adapter covers it too.
-- **Model + store.** New `Memory` type ({id, taskId, agentName, kind, content, createdAt}) and a
-  `memories` table (schema.ts + migrate DDL). `StoragePort` gains `saveMemory` +
-  `getMemoriesByAgent(agentName, limit?)` (newest-first); both adapters implement it (drizzle uses
-  `orderBy(desc(createdAt)).limit`). Memories are owned by an agent and scoped by agentName so a
-  later task by the same agent can retrieve earlier knowledge.
-- **Retrieval.** `src/memory/`: pure `rankMemories` (keyword overlap with query, recency tiebreak —
-  no embeddings assumed; semantic ranking is the documented next step), and `retrieveContext`
-  (fetch a recent candidate pool → rank → format into the `ReasonerInput.context` string). The
-  scheduler retrieves before every `reason()` using the task goal as query; OpenAI already injects
-  `context` into the prompt, so no adapter change. Retrieval is best-effort (store error/empty →
-  empty context, never a gate).
-- **Write path.** `ctx.remember(content, kind?)` — like `ctx.communicate`, threaded onto
-  ActionContext (engine→runGateway→ctx and runWorkflowTask→runWorkflow→runPhase→ctx). An action fn,
-  hook, or workflow phase persists a memory attributable to its task (inv 8) and owned by the agent.
-  Tests: `tests/unit/memory/memory.spec.ts` (rank + retrieve + remember), drizzle-store.spec
-  memories block (real libsql roundtrip), engine.spec "memory is retrieved on demand" (full
-  remember→retrieve loop across two tasks). 613 tests pass.
-  **F-remaining (deferred):** semantic/embedding ranking (needs an embed provider); a separate
-  memory-access audit log (writes are attributable; reads happen in-task but aren't separately
-  logged); auto-capture of execution outcomes as memories (today writes are explicit via
-  ctx.remember).
+## Critical Decisions
 
-## Package G — Optimization & trust (DONE 2026-06-21)
-Wires the last dormant governance math into the live path.
-- **G1 — surprise erodes trust.** The gateway previously only ever called `updateTrust` with
-  success/failure, so the `"surprise"` TrustUpdateOutcome and `trust.surpriseEvents` were dead. Now
-  a *significantly* surprising step (`signals.surprise.isSignificant`, threshold 0.4 — below the 0.7
-  escalation bar, so trust erodes before full escalation) uses the `"surprise"` outcome: steeper
-  decay + a recorded surprise event, even when fn returned Ok (unexpected behaviour is a caution
-  signal). Test: gateway "surprise erodes trust (G1)".
-- **G2 — degraded trust escalates.** `isTrustDegraded` (score < 0.3) was exported but gated nothing.
-  New `EscalationTrigger` value `"trust-degradation"`; `EscalationContext` gained `trust?`;
-  `checkEscalation` escalates on degraded trust (priority just below bayesian-surprise);
-  `applyPostStepGovernance` passes `snapshot.trust`. A statistically untrusted agent now gets human
-  review (principle 7/8). Test: oversight "degraded trust escalates (G2)".
-- **G3 — Bellman value + MPC (`value.ts` was uncalled).** `projectHorizon` now drives a *preventive*
-  MPC budget check in `runWorkflowTask`: project the declared `estimatedCost` of the workflow's
-  actions in order (stopping at the first epistemic boundary — an action with no declared cost,
-  prohibition 14) and block+escalate (`budget-violation`) before running if the known projected cost
-  already exceeds budget. `computeActionValue` ranks discoverable actions cheapest-first for the
-  reasoner in the free loop (path selection); unknown-cost actions rank last (conservative). Tests:
-  engine.spec "value-guided execution (G3)" (MPC pre-block, action ordering).
-- **G4 — Queue: documented decision (no code).** The `Queue` entity + `saveQueue`/`getQueue`/
-  `updateQueue` stay as a spec-aligned, persisted, app-available entity, but are intentionally NOT
-  engine-driven: the engine's FIFO is realized via `TaskTree.queuedChildren` (subtasks) and
-  `Message`s (comms), which is sufficient and avoids a redundant parallel queue subsystem.
-  **G-remaining (deferred):** richer per-action future-cost estimation for `computeActionValue` (the
-  expected-future term is uniform per step today, so free-loop ranking reduces to immediate cost);
-  MPC horizon in the free reasoner loop (only the workflow path has a declared horizon to project).
-  619 tests pass under vitest.
+- **Build: Bun -> tsup (esbuild) on Node.** Ships as a library into Node backends; must not require Bun. Extensionless barrel imports + ESM-only deps forced a Node-native bundler. tsup over raw esbuild for `.d.ts` emit.
+- **slang-ts bundled (`noExternal`), not external.** `export * from "slang-ts"` requires build-time resolution; esbuild drops star re-exports of externals. Bundled Result works structurally (no `instanceof`), so consumer's own slang-ts interoperates.
+- **Delegation trigger = `ReasonerDecision` kind, not magic action.** Keeps gateway as a pure action-execution chokepoint.
+- **Queue entity = spec-aligned but engine-unused.** Engine FIFO via `TaskTree.queuedChildren` + `Message`s avoids redundant parallel queue subsystem.
+- **Storyline injection = ActionContext only, not reasoner context.** Workflows are reasoner-less (deterministic execution), so injecting storyline into the reasoner would be dead weight in workflow mode. ActionContext reaches action fns + hooks in both paths via the single gateway chokepoint. Free loop has no storyline source (no workflow) — fields stay `undefined`, no duplication possible. Storyline is authoring content, plumbed through `RunPhaseInput` — NOT persisted in `TaskStateSnapshot` (avoids duplicating long narrative strings in every checkpoint).
+- **System prompt = cacheable prefix, time = user message.** `systemPrompt` is baked into the system message at reasoner creation time (per-agent, cached instance). Time/varying content (current timestamp, prior messages with relative time) goes in the user message only — never the system message — to preserve the prompt cache prefix. `buildMessages` exported for direct testing. `getMessages` called directly (not safeTry-wrapped) because it returns `Result` and never throws — matches existing `getMessagesByReceiver` pattern.
 
-## Cost is a multi-axis resource vector (2026-06-21, owner directive)
-`Cost` is no longer just `{ tokens, durationMs }` — it gained optional `memory?` and `latency?` axes
-("cost is more than tokens and time"). Respected framework-wide because every budget/MPC/scoping
-check funnels through `src/shared/cost.ts`:
-- **Backward-compatible + opt-in enforcement.** The new axes are optional; `addCosts`/`remainingCost`
-  preserve the plain `{tokens,durationMs}` shape when no operand carries them. `isOverBudget`
-  enforces an optional axis ONLY when the *budget* declares a limit for it — an undeclared
-  memory/latency budget is unlimited, not zero (so existing code stays unconstrained).
-- **Flows through the live path:** gateway `actualCost` carries `reasoningCost.memory/latency`;
-  `projectHorizon` (MPC) discounts + projects all four axes, so a workflow projected to exceed a
-  *memory* budget is pre-blocked; `enforceSubtaskScope`/reservation clamp all declared axes.
-- **Latency for comms:** `dispatchCommunication` measures the `sendMessage` round-trip and returns it
-  as a `latency` cost; the scheduler charges it to `spent`. The OpenAI adapter reports API
-  round-trip time as `reasoningCost.latency`.
-- Tests: `tests/unit/shared/cost.spec.ts` (axis arithmetic + opt-in enforcement), engine.spec MPC
-  memory pre-block, comms.spec send-latency cost. 628 tests pass.
-  **Deferred:** memory is not auto-*measured* per action (no reliable per-fn memory probe) — it is
-  respected via declared `estimatedCost.memory` (MPC/budget) and adapter-reported costs; cost-friction
-  (`costRatio`) still scores only tokens+time.
+---
 
-## Package H — Supervision fidelity and per-action inputs (2026-06-22)
-Closes the three gaps in workflow supervision and input routing identified in the handoff blueprint.
+## slang-ts idiom conventions
 
-- **H1 — retry/restart/resume are now observably distinct.** `RunPhaseInput` gained `startIndex` (defaults 0, lets retry resume from the failed action). `run-phase.ts` uses `startIndex ?? 0` for `currentIndex`, guards against `startIndex >= actions.length` (returns completed immediately — prevents silent no-op skips), and emits `failedIndex: currentIndex` on all four action-level failure paths (not on step-limit or before-hook failures — those are not positional). `run-workflow.ts` `runPhaseSupervised` now fetches the latest checkpoint before calling `applyStrategy` (so `checkpointId` is live, not undefined), then builds a per-strategy `reRunInput()` closure:
-  - **retry** — `state: first.snapshot, startIndex: first.failedIndex ?? 0` (resumes from the failed action; prior completedActions survive).
-  - **resume** — checkpoint state + `startIndex: 0` (or fallback to restart when no checkpoint — `applyStrategy` already handles this).
-  - **restart** — `state: input.state, startIndex: 0` (re-runs from phase entry).
-  A local `snapshotFromJson` helper (documented serialization shim — the L4-allowed cast) was added to `run-workflow.ts`. Tests: `tests/unit/workflow/supervision-strategies.spec.ts` (3 tests: retry/restart/resume-no-ckpt all prove their `aCount` invariant and final `status: "completed"`).
+**Patterns — apply everywhere, no exceptions:**
+- `option(map.get(key))` / `option(arr.find(...))` / `option(arr[i])` / `option(arr.shift())` — all lookup results that may be absent go through `option()`. After `.isNone` guard, rebind: `const x = xOpt.value` so TypeScript sees the narrowed type. `option()` handles both `null` and `undefined` as `None`.
+- `safeTry(async () => expr)` replaces every try/catch that should produce a Result. Catches both throws and returned Err. No raw try/catch anywhere in `src/`. For DB adapters: `const r = await safeTry(async () => db.operation()); return r.isErr ? Err(\`context: \${r.error}\`) : Ok(value)`.
+- Inside a `safeTry` callback: return the raw value, never `Ok(...)` or `Err(...)`. safeTry normalizes Result returns automatically. Returning `Err(...)` inside a safeTry whose outer error prefix would double-wrap is a bug — pull the early-return Err outside.
 
-- **H2 — Active child runners rehydrated on resume.** `runScheduler` (`src/engine/scheduler.ts`) now attempts `store.getTaskTree(rootId)` immediately after its inner helpers are defined (before the main loop). When a tree exists, it iterates `tree.activeChildren`: skips ids already in runners, skips terminal tasks (completed/failed/aborted), skips children with missing tasks or unknown agents, and calls `startRunner(childId)` for any remaining non-terminal child. `treeInitialized = true` is set so settle/slot bookkeeping uses the loaded tree. Tests: `tests/integration/resume-tree.spec.ts` (2 tests: child in activeChildren is driven to completion; already-terminal child is NOT re-run).
+**Exclusions — do NOT force option():**
+- Drizzle patch patterns (`if (patch.x !== undefined) vals["x"] = ...`)
+- Type-predicate filters (`.filter((x): x is T => x !== undefined)`) — option() cannot express the type guard.
+- Arithmetic axis checks (`a.x !== undefined || b.x !== undefined`)
+- Spread-conditional patterns for length checks (`...(arr.length > 0 ? {arr} : {})`)
 
-- **H3 — Per-action workflow inputs.** `SendInput` (`src/engine/types.ts`) gained `actionInputs?: Record<string, Record<string, string | number | boolean | null>>`. `runWorkflowTask` (`src/engine/runtime.ts`) accepts and threads `actionInputs`; `inputFor` is now `(name) => actionInputs?.[name] ?? input ?? {}` instead of ignoring the name. `send` (`src/engine/create-delta-engine.ts`) destructures and forwards `actionInputs` to `runWorkflowTask`. Tests: `tests/integration/engine.spec.ts` "per-action workflow inputs (H3)" (1 test: 2 actions get distinct per-action values, 1 action falls back to shared input).
+**Spread-conditional patterns WITH undefined checks use option():**
+`...(x !== undefined ? {x} : {})` -> compute `const xOpt = option(x)` before the object literal, then `...(xOpt.isSome ? { x: xOpt.value } : {})`.
 
-634 tests pass under vitest. Typecheck clean.
-
-## Package I — Correctness cleanups (2026-06-22)
-Audit-driven correctness pass: L1 deploy gating, L2/L3 double-persistence audit, L4 `as unknown` centralization, M2 error message, dead-code removal.
-
-- **L1 [FIXED] — `deploy` now gates `send`.** `deploy()` was a no-op assertion; a defined-but-undeployed agent could silently accept tasks. Fix: `Registry` gained `deployAgent(name)` + `isDeployed(name)`. `deploy()` calls `registry.deployAgent` (errors on unregistered); `send()` checks `registry.isDeployed` before creating a task and returns a clear `Err("... defined but not deployed — call delta.deploy(agent) first")` if the gate fails. Tests: engine.spec "L1 — send returns Err for defined-but-not-deployed" (send-before-deploy → Err, error mentions `delta.deploy`) + "L1 — send succeeds after deploy()".
-
-- **L2 [NO CHANGE — no double write].** `execution-gateway.ts` writes ONE execution row (`saveExecution` with status "running") then UPDATES it (`updateExecution` to "completed"/"failed") — two ops on the same row, not two rows. The existing gateway unit test (`execs.value).toHaveLength(1)`) and provenance test (`executions.length === 2` for two actions) already prove the invariant.
-
-- **L3 [NO CHANGE — no double persistence].** Each post-step path calls `applyPostStepGovernance` (one `updateTask`) OR the failure path calls one direct `updateTask`. No redundant double persistence was found.
-
-- **L4 [FIXED] — `as unknown` casts centralized.** `snapshotFromJson` existed locally in `run-workflow.ts` and `runtime.ts`; `snapshotToJson` existed locally in `scheduler.ts` and `run-phase.ts`. All four were removed and replaced with `snapshotFromJson` + `snapshotToJson` exported from `src/state-space/task-state.ts` (with JSDoc explaining WHY the cast is unavoidable — single serialization boundary). Both are re-exported via the `state-space` barrel. Result: exactly **one** `as unknown` cast in all of `src/`.
-
-- **M2 [FIXED] — resume error message.** `resumeTask` guard message now says `(expected "paused" or "pending")` to match both accepted statuses.
-
-- **Dead code cleanup** — `tests/integration/resume-tree.spec.ts` first test trimmed: removed `rootReasoner`, `childReasoner`, `delta` engine, and the six agent/action registrations that were never used (only `delta2` drives the actual resume). `store` and `childRan` are preserved.
-
-636 tests pass under vitest (634 + 2 new L1 tests). Typecheck clean.
-
-## Package J — Public surface and documentation (J1+J2, 2026-06-22)
-Builds the real public entry point and writes the README from the shipped API.
-
-- **J1 — `src/index.ts` public surface.** Replaced the placeholder slang-ts-only re-export with a complete grouped public API:
-  - *Authoring:* `Action`, `ActionContext`, `ActionFn`, `HookFn`, `Hooks`, `Branch`, `ActionRef`, `Phase`, `SupervisionPolicyDef`, `Workflow`, `Channel`, `ChannelType`, `Skill`, `Agent` (from `src/authoring/types`).
-  - *Runtime:* `createDeltaEngine`, `DeltaEngine`, `DeltaEngineConfig`, `SendInput`, `SendResult`, `InspectResult` (from `src/engine`); `Cost`, `Task`, `SupervisionPolicy`, `Memory` (from `src/shared/types`).
-  - *Adapters:* `createInMemoryStore`, `createDrizzleStore`, `createOpenAIReasoner` + `OpenAIReasonerConfig`, `createMockReasoner` + `MockResponse` + `MockReasonerOptions` (from `src/ports`); `createChatSdkChannel` + `ChatThread` (from `src/comms`).
-  - *Result utilities:* `export * from "slang-ts"` retained.
-  - Every name was verified against its source barrel before being added. Internal governance types (Kalman, Bellman/MPC, trust math, post-step, scheduler internals) are intentionally absent.
-  - Smoke test: `tests/integration/public-api.spec.ts` — 5 tests; imports only from `../../src`; constructs an engine, defines an action and agent, deploys, sends, and inspects; proves all type imports are reachable at compile time.
-
-- **J2 — `README.md`.** Rewrote from `delta-agents.spec.md` and `context.md` covering: thesis ("model reasons, engine governs"), real install line (`pnpm add delta-agents`), a minimal runnable example using the actual API shape, two-tier API tables (authoring vs runtime), supervision strategy table, cost model (multi-axis vector), adapter section, mathematical foundations, and status note. Follows COPYWRITING.md (no em dashes, no emojis, full words, direct prose). The previous README had aspirational/unshipped API examples; the new one reflects the current shipped state.
-
-641 tests pass under vitest (636 + 5 new smoke tests). Typecheck clean.
-
-## Package J — Real-DB lifecycle and Node build (J3+J4, 2026-06-22)
-
-- **J3 — engine-on-real-libsql lifecycle.** `tests/integration/drizzle-store.spec.ts` already
-  covered every StoragePort method against real libsql; the gap was driving the actual engine
-  through it. Added `tests/integration/engine-drizzle-lifecycle.spec.ts` (3 tests) that wires a
-  real libsql **file** store into `createDeltaEngine`: (1) full lifecycle (send -> execute ->
-  checkpoint -> inspect) persisted to disk; (2) cross-instance persistence — a task written by one
-  engine is read back (inspect + lastTask) by a brand-new store instance on the same file, the
-  property an in-memory store cannot show; (3) resume-from-disk — engine A blocks on an approval
-  gate, approves, then a fresh engine B (new connection, same file) resumes the task to completion.
-  Temp DB files are created under the OS temp dir and removed in afterEach (ephemeral test scratch,
-  not project state).
-
-- **J4 — security review + Node build.** Security review found no critical/high issues: single
-  ordered gateway chokepoint (schema-validate first), model output treated as untrusted (guarded
-  JSON.parse, schema validation before fn), parameterized drizzle queries (no SQL injection), no
-  secret logging, fn-throws caught. Low/informational: resume does not re-check `isDeployed`
-  (not exploitable — send is the only task-creation path and it gates), stored-state deserialized
-  with `as` casts at the trusted store boundary, logger sink should be controlled in production.
-
-  Build switched from Bun to Node (owner directive 2026-06-22). See decision record below.
-
-## Critical decisions (2026-06-22)
-
-- **Build: Bun -> tsup (esbuild) on Node.** `bun-build.ts` (Bun.build) replaced by `tsup.config.ts`;
-  `build` script is now `vitest run && tsc --noEmit && tsup`. WHY: delta-agents ships as a library
-  installed into a Node backend, so the build must not require Bun. The source uses extensionless
-  barrel imports, which plain `tsc` cannot emit as Node-resolvable ESM, and a CommonJS emit is
-  impossible because several deps (`nanoid` v5, `openai` v6) are ESM-only — so a Node-native bundler
-  is required. Owner chose tsup over raw esbuild (it emits `.d.ts` in the same pass). New devDep:
-  `tsup`; removed `@types/bun`. esbuild's build script is approved in `pnpm-workspace.yaml`
-  (`onlyBuiltDependencies` / `allowBuilds`) — pnpm v11 no longer reads this from package.json.
-  `tsconfig.build.json` (declaration-only emit) retired to `/trash` since tsup emits the dts.
-- **slang-ts is bundled into the artifact (`noExternal: ["slang-ts"]`), not external.** WHY: the
-  public entry re-exports it with `export * from "slang-ts"` so `Ok`/`Err`/`Result`/`safeTry` are
-  importable from "delta-agents". esbuild silently DROPS a star re-export of an external package
-  (it cannot enumerate names at build time), which shipped a broken surface (only the 6 factory
-  functions, no `Ok`). Bundling slang-ts resolves the star at build time (verified: 22 exports incl.
-  Ok/Err/safeTry/match). slang-ts is tiny and its Result is structural (no `instanceof`), so a
-  consumer's own slang-ts copy interoperates with the bundled one. slang-ts kept in `dependencies`
-  for type-reference safety.
-- Verified: `dist/index.js` loads under plain `node` (not Bun); full `pnpm build` green
-  (644 tests + tsc + tsup).
-
-## slang-ts idiom conventions (learnings, 2026-06-30)
-
-**Patterns established:**
-- `option(map.get(key))` / `option(arr.find(...))` / `option(arr[i])` / `option(arr.shift())` — all lookup results that may be absent go through option(). After `.isNone` guard, rebind: `const x = xOpt.value` so TypeScript sees the narrowed type.
-- `safeTry(async () => fn())` replaces any try/catch that should produce a Result. Catches both throws and returned Err; downstream sees one Err shape. No need to distinguish "threw" vs "returned Err" — both are failures.
-- `option(null)` returns `None` — slang-ts treats null, undefined, "", NaN, ±Infinity all as falsy/None. Null-sentinel patterns use the same idiom.
-
-**Tradeoffs and exclusions:**
-- Drizzle patch patterns (`if (patch.x !== undefined) vals.x = ...`) — left as-is; option() adds nothing when the goal is conditional assignment, not value extraction.
-- Type-predicate filters (`.filter((x): x is T => x !== undefined)`) — option() cannot express this; keep raw.
-- Spread-conditional patterns (`...(x !== undefined ? {x} : {})`) — option() makes these longer without benefit; keep raw.
-- Arithmetic axis checks (`a.x !== undefined || b.x !== undefined`) — multi-condition arithmetic; option() adds noise with no benefit.
-
-691 tests pass under vitest. Typecheck clean.
+---
 
 ## Overview
-Delta Agents is a deterministic autonomous control plane for AI agents. It provides the execution layer that constrains, validates, supervises, and audits agent behavior. The model reasons; the engine governs. The full specification is in `delta-agents.spec.md` (1185 lines) — that is the canonical blueprint for implementation.
+Delta Agents is a shipped, fully-implemented deterministic autonomous control plane for AI agents. Public surface is live in `src/index.ts`. The model reasons; the engine governs. Full specification in `docs/internal/delta-agents.spec.md`.
 
-## Tech Stack (Authoritative, obey every session)
+## Tech Stack (Authoritative — obey exactly. Never add a dep without asking.)
 
-These are the owner's stated decisions. Follow them as written. When you find yourself thinking "I'm sure there's a library for this" or "we'd rather use a library here", stop and ask the owner first. He probably already knows what we should use. Do not add any dependency, especially dev deps, without asking first.
+- **Error handling**: `Ok`/`Err` from `slang-ts`. No throw unless it halts the system. No raw try/catch — use `safeTry`.
+- **Null/undefined**: `option()` from `slang-ts`. Both `null` and `undefined` become `None`.
+- **Database**: Drizzle ORM + libsql (SQLite). `createDrizzleStore` in `src/ports/drizzle-store.ts`. `createInMemoryStore` for tests. Schema in `src/ports/schema.ts`.
+- **Validation**: Zod for action input schemas.
+- **Model APIs**: OpenAI (`src/ports/openai-reasoner.ts`). `createMockReasoner` for tests.
+- **Shape**: No server. Ships as an npm SDK — `import { createDeltaEngine } from "delta-agents"`.
+- **Package manager**: pnpm. **Runtime**: Node.js. **Bundler**: tsup (esbuild).
+- **Dates**: `date-fns` + `date-fns-tz`.
 
-- **Error handling**: Every function returns an `Ok` or `Err` from `slang-ts`. Every caller checks for the error and forwards it. We do not throw unless it is critical and worth halting the entire system.
-- **Logging**: We can have a central logging utility.
-- **Database**: We use Drizzle ORM and SQLite for the database, for keeping memory and anything we need a database for. Keep things simple. All database code strictly lives in the `db/models` folder. We interact with the database only through Drizzle ORM.
-- **Execution model**: We introduce isolated execution later and true actor models later. For now we do it by just having a simple utility with abort and promise ergonomics.
-- **Validation**: We use Zod for validation schemas.
-- **Model APIs**: We use OpenAI for interacting with model APIs.
-- **Shape**: We do not have a server. This library fits into the developer's backend code, just like one would install an SDK.
-- **Package manager and runtime**: We use pnpm for package management but Bun for the runtime.
-- **Dependencies**: Only add other dev dependencies after asking the owner. For anything where we would rather use a library, ask the owner first.
-- **Dates and time**: Use `date-fns` and `date-fns-tz` for handling timezones and time.
+## Quality Bar (Authoritative — correctness is non-negotiable)
+- No logical flaws. Every governance decision must be provably correct.
+- Every core mechanism tested (unit + integration). Tests are self-contained, never skipped, never faked.
+- No `any`, no `unknown`. `type` over `interface`, no `enum`. Explicit return types on public functions.
+- JSDoc on all public APIs (explain WHY, not what).
+- Provenance auditable — every event attributable to a TaskID.
 
-Note: Drizzle, OpenAI, and date-fns/date-fns-tz are not installed yet. Ask before installing.
+---
 
-## Quality Bar (Authoritative, obey every session)
+## Architecture Overview
 
-This is critical software. Its entire reason to exist is enforcing governance, provenance, and safety. A logical flaw here is not a bug, it is a breach of the contract the whole project promises. Treat correctness as non-negotiable.
+**Two-tier API:**
+- **Authoring API** (developer): `Action`, `Workflow`, `Phase`, `Agent`, `DataSource`, `Channel`, `Skill`
+- **Runtime API** (delta owns): `Task`, `TaskTree`, `Execution`, `Checkpoint`, `ApprovalRequest`, `RiskState`, `TrustState`, `Message`, `Queue`, `Memory`, `SupervisionPolicy`
 
-- **No logical flaws.** Every governance decision (authorization, prerequisite gating, budget/risk checks, branching, supervision, checkpointing, trust/risk updates) must be provably correct, not "looks right". Reason through edge cases and failure paths before writing code. If the foundation is wrong, no upper-layer fix holds.
-- **Every core mechanism is tested.** Nothing core ships untested. The state-space transitions, Markov legality checks, prerequisite evaluation, workflow branching, Result contract, hooks, supervision strategies, checkpoint/recovery, trust/risk math, cost-friction detection, and the execution gateway each get tests. Untested core mechanism = not done.
-- **Unit AND integration tests.** Unit tests for each module in isolation. Integration tests for the wired engine (`createDeltaEngine` assembling modules) proving the facade and cross-module flows behave. Both, not one.
-- **Scaling and stress tests where applicable.** Pressure tests, thundering-herd / concurrent-contention tests, queue saturation, bounded-supervision limits under load, retry/jitter behavior. Anything that can be abused or raced gets a test that races it. A slight delay beats a race condition.
-- **Tests are real.** Self-contained (every asserted value set up by the test itself, never read from live/persistent DB state), never skipped, never faked. Fix or delete failing tests, never paper over them. Tests assert against the spec and intent.
-- **Modularity is a correctness property here.** Decoupled modules (see DX facade note below) keep blast radius small and each mechanism independently verifiable. Features should be easy to turn off or remove. Premature abstraction is still banned, but core mechanisms stay isolated and testable.
-- **Type system quality.** No `any`, no `unknown`. Types model the real domain and make illegal states unrepresentable where possible. Explicit return types on public functions. `type` over `interface`, no `enum`. The compiler is a governance ally, lean on it.
-- **JSDoc on all public APIs.** Explain WHY, not what. The authoring methods, the engine factory, and every runtime method carry docs. Public surface without docs is incomplete.
-- **Provenance is auditable.** Every execution event, message, checkpoint, escalation, and trust/risk update is attributable to a TaskID and inspectable. If it cannot be audited, it is not finished.
+**Governance model:** State-space (Markov legality) + Bellman action value + MPC preventive budget + Kalman health + cost friction + Bayesian updating/surprise + asymmetric reputation decay.
 
-Bias: when in doubt, test more and prove more. This is not demo software. Real thing or do not ship it.
+**Task hierarchy:** Master Task (owns budget/risk/trust/audit/checkpoints) -> Subtasks (scoped permissions/budgets; max 2 active, FIFO queue).
 
-## Current State
-The project is a clean slate. Old @nilejs/future code (actor/concurrency library) has been archived to `/tmp/opencode/delta-agents-trash/` (moved outside project to avoid test runner scanning). The project is prepared for a fresh implementation of the delta-agents spec. Entry points (index.ts, src/index.ts) are minimal placeholders re-exporting slang-ts. A smoke test in `tests/smoke.spec.ts` verifies the slang-ts re-export works. No delta-agents source code exists yet.
+**Workflow hierarchy:** Action -> Task -> Workflow/SOP -> Multi-Phase Workflow.
 
-## Spec Location
-- `delta-agents.spec.md` — canonical specification (1185 lines). Contains: principles, decision records, mathematical governance model, task hierarchy, queueing model, workflow hierarchy, checkpointing, supervision model, human oversight, invariants, prohibitions, follow-up work, and type/implementation blueprint with DX examples.
+**Supervision strategies:** retry (from failedIndex), restart (phase entry), resume (from checkpoint), escalate, abort-subtree, abort-entire-tree.
 
-## Architecture Overview (from spec)
+## Key Types
 
-**Two-tier API separation:**
-- **Authoring API** (developer touches): Agent, Workflow, Phase, Action, DataSource, Channel, Skill
-- **Runtime API** (Delta owns): Task, TaskTree, Execution, Checkpoint, Approval, RiskState, TrustState, Message, Queue
+**Authoring:** `Action` (name, description, schema, risk 1-5?, estimatedCost?, requiresApproval?, prerequisites?, hooks?, fn, skills?), `Workflow` (name, description, version, phases, estimatedCost?), `Phase` (name, description, actions, checkpoint, supervision?, skills?), `Agent` (name, description, role, rolePrompt, model?, actions, workflows?, skills?, channels?, team?), `Skill` (name, description, folder), `Channel`
 
-**Governance model:**
-- State-space model: execution is movement through constrained state-space (task, workflow, budget, risk, trust, authorization, delegation states)
-- Markov constraints: legality of next action determined solely by current state
-- Bellman optimization: action value = immediate cost + expected future cost
-- Model predictive control: receding-horizon prediction before execution
-- Kalman state estimation: continuous execution health estimation
-- Cost friction detection: high consumption with low advancement = instability
-- Bayesian updating: trust/confidence/risk continuously updated from evidence
-- Bayesian surprise: divergence between expected and observed outcomes
-- Asymmetric reputation decay: trust increases slowly, decreases rapidly
-- Predictive shadow racing: multiple candidates evaluated before execution
+**Runtime:** `Task` (id, rootId, parentId?, status, goal, assignedAgent, workflow?, currentPhase?, budget, risk, trust, createdAt, updatedAt), `TaskTree` (rootTaskId, activeChildren, queuedChildren, maxConcurrency:2), `Execution`, `Checkpoint`, `ApprovalRequest`, `RiskState`, `TrustState`, `Message`, `Queue`, `Memory`, `SupervisionPolicy`
 
-**Task hierarchy:**
-- Master Task: owns budget, risk, trust, audit, checkpoints
-- Subtasks: inherit governance from parent, scoped permissions/budgets/objectives
-- Supervision tree: bounded — max 1 active parent + 2 active subtasks, rest queued
+**Cost:** multi-axis vector `{ tokens, durationMs, memory?, latency? }`.
 
-**Workflow hierarchy:** Action → Task → Workflow/SOP → Multi-Phase Workflow
+## DX Pattern
 
-**Supervision strategies:** retry, restart, resume from checkpoint, escalate to human, abort subtree, abort entire tree
+Factory functions everywhere, no classes. `createDeltaEngine({...})` returns one plain object — the entire surface. Authoring: `delta.action()`, `delta.workflow()`, `delta.agent()`. Runtime: `delta.deploy()`, `delta.send()`, `delta.approve()`, `delta.pause()`, `delta.resume()`, `delta.inspect()`. Developer never creates Task, Checkpoint, TrustState, or TaskTree. Delta owns the runtime.
 
-**Queueing:** FIFO for pending tasks, subtasks, messages, escalations
+Phases are plain objects in `delta.workflow({ phases: [...] })` — no `delta.phase()`. Models declared on engine (`models: ModelDef[]`), agents reference by name (`agent.model`). `createOpenAIReasoner` is internal; pass `createMockReasoner(...)` in tests.
 
-**23 invariants and 20 prohibitions** defined in the spec — these are the contract.
+Skills: `agent.skills?: Skill[]`. `phase.skills` and `action.skills` accept `(string | Skill)[]`. Engine reads `SKILL.md` from `folder` internally — no consumer-side `loadSkill`. String refs validated at `delta.agent()` time.
 
-## Key Types (from spec)
+## Dependencies (all installed)
 
-**Authoring types:** Action (name, description, schema, optional risk 1-5, optional estimatedCost, requiresApproval, prerequisites, hooks, fn, optional skills:(string|Skill)[]), Workflow (name, description, version, phases, estimatedCost), Phase (name, description, actions, checkpoint, supervision, optional skills:(string|Skill)[]), Agent (name, description, role, rolePrompt, model, contextWindow, actions, workflows, skills:Skill[], channels, team), Skill (name, description, folder), DataSource, Channel
-
-**Runtime types:** Task (id, rootId, parentId, status, goal, assignedAgent, workflow, currentPhase, budget, risk, trust, createdAt, updatedAt), TaskTree (rootTaskId, activeChildren, queuedChildren, maxConcurrency: 2), Execution, Checkpoint, ApprovalRequest, RiskState (staticRisk, currentRisk, predictedRisk, confidence, escalated), TrustState (score, successfulExecutions, failedExecutions, surpriseEvents), Message, Queue, SupervisionPolicy
-
-## DX Pattern (from spec)
-Factory functions everywhere, no classes. The engine itself is created by a factory: `const delta = createDeltaEngine({ ... })` returns a single plain object that is the ENTIRE surface — both authoring and runtime hang off it as methods. There are NO standalone imports beyond `createDeltaEngine`. Authoring methods (define definitions): `delta.action({...})`, `delta.workflow({...})`, `delta.agent({...})`. Runtime methods (drive execution): `delta.deploy(agent)`, `delta.send(taskId, message)`, `delta.approve(approvalId)`, `delta.pause(taskId)`, `delta.resume(taskId)`, `delta.inspect(taskId)`. Read as verbs. No `new`, no inheritance, no global singleton. The exact method set is not fixed; the shape is fixed (one factory returning one object whose methods are the whole surface). Developer never creates Task, Checkpoint, TrustState, or TaskTree. Delta owns the runtime.
-
-**Phases are plain objects — no `delta.phase()`.** Phases are passed directly as plain objects in the `phases` array of `delta.workflow()`. The `Phase` type enforces shape at compile time; `validateWorkflow` validates each phase inline when the workflow is registered. `delta.phase()` no longer exists — there is one clear way to define a phase.
-
-```ts
-delta.workflow({
-  name: "support",
-  description: "...",
-  version: "1",
-  phases: [
-    { name: "investigate", description: "...", actions: ["lookup"], checkpoint: true },
-    { name: "respond", description: "...", actions: ["notify"], checkpoint: true, supervision: { strategy: "escalate", maxRetries: 0 } },
-  ],
-});
-```
-
-**Models are defined on the engine, not wired per-call.** `createDeltaEngine` accepts `models: ModelDef[]` (plus engine-level `endpoint`, `apiKey`, `options` defaults). Agents reference a model by name via `agent.model`; omitting it uses the model marked `default: true`. `createOpenAIReasoner` is internal — not a public export. For testing, pass `reasoner: createMockReasoner(...)` as an override that bypasses models entirely.
-
-```ts
-const delta = await createDeltaEngine({
-  apiKey: process.env.OPENAI_API_KEY,
-  models: [
-    { name: "fast", model: "gpt-4o-mini", default: true },
-    { name: "smart", model: "gpt-4o", options: { temperature: 0.3 } },
-    { name: "local", model: "llama3.2", endpoint: "http://localhost:11434/v1", apiKey: "ollama" },
-  ],
-});
-
-const agent = delta.agent({ name: "researcher", model: "smart", ... });
-// delta.agent() throws immediately if the model name is not in models
-```
-
-**Single object is a DX facade, not module coupling.** Internally each capability lives in its own module (`action`, `workflow`, `agent`, deploy, send, approve, supervision, checkpointing, etc., in their own domain folders). `createDeltaEngine` imports those separate items and assembles them onto one returned object. The unification is purely the developer-facing surface. The modules themselves stay decoupled — do NOT couple module implementations just because the DX presents one object. Each method delegates to its own module; the facade only wires them together (and shares engine config/context to them).
-
-**Anticipated risk and cost:** An action's `risk` (1-5) and `estimatedCost` are both optional priors, not requirements and not ceilings. Delta can derive its own estimates; declared values seed the Kalman estimator with a calibrated prior (faster convergence) and carry human judgement about danger/irreversibility into the governed loop. The engine continuously refines from evidence and may raise risk above the declared level — a low declared risk never overrides observed danger. See spec section "Anticipated Risk and Cost", invariant 23, prohibition 20.
-
-## Dependencies
-
-See the authoritative Tech Stack section above for the rules. Summary:
-
-Installed:
-- `slang-ts` — Result, Option, match, matchAll, safeTry, pipe, atom, println, panic (re-exported from src/index.ts). Every function returns `Ok`/`Err`; callers check and forward; throw only for critical, system-halting failures.
-  **Utilize slang-ts idioms throughout the internal codebase — prefer them over raw undefined/null checks:**
-  - `option(value)` wraps any possibly-absent value: truthy → `Some<T>`, null/undefined/"" → `None`. Use on `Map.get()`, `Array.find()`, and optional config fields. Access `.isSome`/`.isNone` for narrowing, `.value` for the inner value, `.unwrap().else(fallback)` for fallback patterns instead of `?? fallback`.
-  - `match`/`matchAll` for exhaustive union dispatch instead of if/else chains on `kind` fields.
-  - `safeTry` for async try/catch blocks that produce a `Result`.
-  - `pipe` for readable data-transformation chains.
-- `zod` — schema validation for actions (every executable action has a validation schema)
-- `ms` + `@types/ms` — convert human time strings to ms and back (`ms('2h')` → 7200000, `ms(7200000)` → "2h"). Use for any internal duration arithmetic or budget/timeout values.
-- `date-fns` + `date-fns-tz` — all date, time, and timezone formatting/parsing. Use for any user-facing date/time display.
-
-Planned (ask before installing):
-- (none remaining — all planned deps are installed)
-
-Tooling: pnpm for package management, Bun for runtime. No server; ships as an SDK-style library installed into the developer's backend. Isolated execution and true actor models come later; for now a simple abort + promise utility.
-
-## Conventions (from AGENTS.md)
-- No classes/OOP — factory functions only. `createUser()` returns plain object with methods.
-- Named params: `{ name, email }` not `(name, email)`.
-- Max 400 LOC/file.
-- `type` over `interface`, ban `enum`.
-- JSDoc for all public APIs (explain WHY not what).
-- `safeTry` for error handling. No raw try/catch.
-- `.filter().map()` over for loops.
-- Explicit return types on public functions.
-- Domain folders with barrel `index.ts`.
-- kebab-case.ts filenames, verbNoun naming.
-- No `any`, no `unknown`. Types in domain/types.ts.
-- Delete = move to /trash, never rm.
+Key: `slang-ts` (bundled into dist), `zod`, `@libsql/client` + `drizzle-orm`, `openai`, `nanoid`, `ms`, `date-fns` + `date-fns-tz`. See `package.json` for versions.
 
 ## Build & Test
-- Runtime: Bun v1.0+ (primary), Node.js (planned)
-- Test runner: `bun test` (primary), `vitest run` (alternative via vitest.config.ts)
-- Typecheck: `tsc --noEmit`
-- Build: `bun run build` (runs test + typecheck + bun-build.ts + tsc declaration emit)
-- Config: tsconfig.json (strict, ESNext, bundler resolution), tsconfig.build.json (declaration emit), bun-build.ts (Bun bundler), vitest.config.ts
+- **Test runner**: `pnpm test` -> `vitest run`. Do NOT use `bun test`.
+- **Typecheck**: `tsc --noEmit`
+- **Build**: `pnpm build` -> `vitest run && tsc --noEmit && tsup`
+- **Config**: `tsconfig.json` (strict, ESNext, bundler resolution), `tsup.config.ts` (ESM output, slang-ts bundled), `vitest.config.ts` (environment: node)
+- **DB tests**: real libsql file store in temp dirs, cleaned up in afterEach.
 
 ## Boundaries (DO NOT CROSS)
-- Servers: never start without asking user
-- DB: all db commands/decisions → ask user first
+- Servers: never start without asking
+- DB: all db commands/decisions -> ask first
 - Git: ask before any git command
 - .env: never read/edit
 - Installs/stack changes: never without permission
 
 ## Files to Reference
-- `delta-agents.spec.md` — THE spec, read it fully before implementing
+- `docs/internal/delta-agents.spec.md` — THE spec, canonical blueprint
 - `AGENTS.md` — coding rules for the whole team
-- `COPYWRITING.md` — user-facing copy rules (no em dashes, no emojis, full words)
-- `documentation-guidelines.md` — how docs should be done
-- `spec-guidelines.md` — what a spec is
-
-## Documentation (docs/)
-
-The docs/ directory is being repurposed from @nilejs/future to delta-agents. All files are currently stubs with concept outlines. The implementing agent should write full content based on delta-agents.spec.md. Previous @nilejs/future content is in git history.
-
-| File | Status | Should cover |
-|------|--------|--------------|
-| `docs/architecture.md` | Stub | Governance engine, state-space model, task hierarchy, workflow hierarchy, queueing, two-tier API separation |
-| `docs/supervision.md` | Stub | Supervision strategies (retry, restart, resume, escalate, abort), bounded supervision tree, checkpointing, recovery |
-| `docs/diagnostics.md` | Stub | Execution health, cost friction, trust/risk metrics, Bayesian surprise, audit history |
-| `docs/resources.md` | Stub | DataSource authoring type, ownership, contentType, authentication, CRUD actions |
-| `docs/ADR-006-bun-only-runtime.md` | Stub | Runtime decision for delta-agents (previous ADR was Bun-only for actor isolation) |
-
-Removed (purely @nilejs/future-specific, no delta-agents equivalent):
-- `docs/shared-memory.md` — SharedArrayBuffer two-tier communication, no delta-agents equivalent
-- `docs/promise-utilities.proposal.md` — Speculative proposal, no longer relevant
-- `docs/context/fmt-alloc-analysis.md` — Internal @nilejs utility analysis
+- `docs/internal/COPYWRITING.md` — user-facing copy rules
+- `context.md` — THIS FILE. Updated at task end with learnings, patterns, tradeoffs. Keep it accurate: wrong context is worse than no context.

@@ -20,7 +20,7 @@
  *   const reasoner = createOpenAIReasoner({ apiKey: "test", fetch: mockFetch });
  */
 
-import { Ok, Err, option } from "slang-ts";
+import { Ok, Err, option, safeTry } from "slang-ts";
 import type { Result } from "slang-ts";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions/completions";
@@ -66,6 +66,12 @@ export type OpenAIReasonerConfig = {
    * scripted responses without making real HTTP calls.
    */
   fetch?: FetchFn;
+  /**
+   * Global org instructions baked into the system message prefix. Static
+   * content (no time/varying data) so prompt caching is preserved. When set
+   * and non-empty, prepended to the system message before the role + rolePrompt.
+   */
+  systemPrompt?: string;
 };
 
 const DEFAULT_MODEL = "gpt-4o-mini";
@@ -241,15 +247,25 @@ const buildCommunicateTool = (availableChannels: string[]): ChatCompletionTool =
 
 // ── Message builder ───────────────────────────────────────────────────────────
 
-const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
-  const { task, availableActions, availableAgents, availableChannels, availableSkills, agentRole, rolePrompt, context } = input;
+/**
+ * Build the chat-completion message array from a ReasonerInput. Exported so
+ * tests can verify the cacheable prefix and time-awareness wiring directly
+ * without standing up a live reasoner.
+ */
+export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
+  const { task, availableActions, availableAgents, availableChannels, availableSkills, agentRole, rolePrompt, context, systemPrompt, currentTimestamp, priorMessages } = input;
   const canDelegate = availableAgents !== undefined && availableAgents.length > 0;
   const canCommunicate = availableChannels !== undefined && availableChannels.length > 0;
   const hasSkills = availableSkills !== undefined && availableSkills.length > 0;
+  const hasSystemPrompt = systemPrompt !== undefined && systemPrompt.length > 0;
+  const hasPrior = priorMessages !== undefined && priorMessages.length > 0;
 
   const system: ChatCompletionMessageParam = {
     role: "system",
     content: [
+      // systemPrompt first so the cacheable prefix = `[systemPrompt]\n\nYou are ...`.
+      // Time/varying content must NEVER go here — it would break the prefix.
+      ...(hasSystemPrompt ? [systemPrompt, ""] : []),
       `You are ${agentRole}. ${rolePrompt}`,
       "",
       "You are driving a governed execution task. Each turn you must call exactly one tool.",
@@ -268,11 +284,14 @@ const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
     ].join("\n"),
   };
 
-  const userLines = [
-    `Task goal: ${task.goal}`,
-    `Task ID: ${task.id}`,
-    `Available actions: ${availableActions.join(", ")}`,
-  ];
+  const userLines: string[] = [];
+  // Time awareness lives in the user message — never in the system prefix.
+  if (currentTimestamp !== undefined) {
+    userLines.push(`Current time: ${currentTimestamp.humanized} (${currentTimestamp.iso})`);
+  }
+  userLines.push(`Task goal: ${task.goal}`);
+  userLines.push(`Task ID: ${task.id}`);
+  userLines.push(`Available actions: ${availableActions.join(", ")}`);
   if (canDelegate) {
     userLines.push(`Available teammates (to delegate to or mention): ${availableAgents.join(", ")}`);
   }
@@ -286,6 +305,9 @@ const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
         userLines.push(`Skill "${skill.name}" content:\n${skill.content}`);
       }
     }
+  }
+  if (hasPrior) {
+    userLines.push("", "Prior conversation:", ...priorMessages.map((m) => `[${m.relativeTime}] ${m.sender}: ${m.content}`));
   }
   if (context !== undefined && context.length > 0) {
     userLines.push("", "Context:", context);
@@ -325,13 +347,13 @@ const parseBudget = (raw: unknown): Cost | undefined => {
   return { tokens, durationMs };
 };
 
-const parseToolCall = (
+const parseToolCall = async (
   response: OpenAI.Chat.Completions.ChatCompletion,
   availableActions: string[],
   availableAgents: string[],
   availableChannels: string[],
   latencyMs: number,
-): Result<ReasonerDecision, string> => {
+): Promise<Result<ReasonerDecision, string>> => {
   const choiceOpt = option(response.choices[0]);
   if (choiceOpt.isNone) {
     return Err("openai-reasoner: API response contained no choices");
@@ -354,14 +376,9 @@ const parseToolCall = (
   }
   const call = callOpt.value;
 
-  let args: Record<string, unknown>;
-  try {
-    args = JSON.parse(call.function.arguments) as Record<string, unknown>;
-  } catch {
-    return Err(
-      `openai-reasoner: failed to parse tool arguments as JSON: ${call.function.arguments}`,
-    );
-  }
+  const argsResult = await safeTry(async () => JSON.parse(call.function.arguments) as Record<string, unknown>);
+  if (argsResult.isErr) return Err(`openai-reasoner: failed to parse tool arguments as JSON: ${call.function.arguments}`);
+  const args = argsResult.value;
 
   // Explicit completion signal — the goal is satisfied, no further action.
   if (call.function.name === FINISH_TOOL_NAME) {
@@ -486,12 +503,21 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
 
   const model = config.model ?? DEFAULT_MODEL;
   const maxTokens = config.maxTokens ?? DEFAULT_MAX_TOKENS;
+  // systemPrompt is set once at construction — kept in closure so every
+  // reasoner call prepends it to the cacheable system prefix.
+  const systemPrompt = config.systemPrompt;
 
   return {
     reason: async (input: ReasonerInput): Promise<Result<ReasonerDecision, string>> => {
       const { availableActions } = input;
       const availableAgents = input.availableAgents ?? [];
       const availableChannels = input.availableChannels ?? [];
+      // Bind the engine-level systemPrompt into the message build. Per-call
+      // `input.systemPrompt` is ignored — it is a server-side concern, not a
+      // per-turn override (would break the cacheable prefix invariant).
+      const messageInput: ReasonerInput = systemPrompt !== undefined
+        ? { ...input, systemPrompt }
+        : input;
 
       if (availableActions.length === 0) {
         return Err("openai-reasoner: no available actions — nothing to propose");
@@ -504,28 +530,24 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
       if (availableAgents.length > 0) tools.push(buildMentionTool(availableAgents));
       if (availableChannels.length > 0) tools.push(buildCommunicateTool(availableChannels));
 
-      let response: OpenAI.Chat.Completions.ChatCompletion;
       const apiStart = Date.now();
-      try {
-        response = await client.chat.completions.create({
-          model,
-          // `max_completion_tokens` is the current field; `max_tokens` is
-          // deprecated and rejected by newer models. Temperature and top_p are
-          // forwarded only when explicitly configured — newer reasoning models
-          // reject non-default sampling params.
-          max_completion_tokens: maxTokens,
-          ...(config.temperature !== undefined ? { temperature: config.temperature } : {}),
-          ...(config.topP !== undefined ? { top_p: config.topP } : {}),
-          messages: buildMessages(input),
-          tools,
-          tool_choice: "required",
-        });
-      } catch (e) {
-        return Err(`openai-reasoner: API request failed — ${String(e)}`);
-      }
+      const apiResult = await safeTry(async () => client.chat.completions.create({
+        model,
+        // `max_completion_tokens` is the current field; `max_tokens` is
+        // deprecated and rejected by newer models. Temperature and top_p are
+        // forwarded only when explicitly configured — newer reasoning models
+        // reject non-default sampling params.
+        max_completion_tokens: maxTokens,
+        ...(config.temperature !== undefined ? { temperature: config.temperature } : {}),
+        ...(config.topP !== undefined ? { top_p: config.topP } : {}),
+        messages: buildMessages(messageInput),
+        tools,
+        tool_choice: "required",
+      }));
+      if (apiResult.isErr) return Err(`openai-reasoner: API request failed — ${apiResult.error}`);
       const latencyMs = Date.now() - apiStart;
 
-      return parseToolCall(response, availableActions, availableAgents, availableChannels, latencyMs);
+      return await parseToolCall(apiResult.value, availableActions, availableAgents, availableChannels, latencyMs);
     },
   };
 };
