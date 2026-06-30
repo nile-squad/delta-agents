@@ -369,6 +369,16 @@ Builds the real public entry point and writes the README from the shipped API.
 - Verified: `dist/index.js` loads under plain `node` (not Bun); full `pnpm build` green
   (644 tests + tsc + tsup).
 
+## slang-ts idiom pass (2026-06-30)
+Full codebase sweep replacing raw `undefined`/`null` checks and manual try/catch with slang-ts idioms.
+
+- **option() for Map.get() / Array.find() / array index / shift()** — converted in: `authoring/registry.ts` (7 Map.get lookups), `ports/in-memory-store.ts` (all 5 Map.get + updateX patterns), `engine/scheduler.ts` (findRunner → `Option<Runner>`, parent-result null check, failedChild/blockedChild after find), `engine/create-delta-engine.ts` (reasoner cache lookup, model find, `Task | null` from getLatestTaskByAgent), `skills/resolve-skills.ts` (byName.get + loadSkillContent), `comms/dispatch.ts` (.find() for enabled channel), `ports/openai-reasoner.ts` (choices[0], toolCalls[0]), `ports/mock-reasoner.ts` (queue.shift()), `engine/runtime.ts` (actionRegistry.get in workflow approval loop), `workflow/resolve-next.ts` (actions[currentIndex]), `workflow/run-phase.ts` (actionRegistry.get in step loop), `governance/value.ts` (steps[i] in horizon projection loop).
+- **safeTry for try/catch** — `execution/run-hooks.ts`: replaced manual try/catch + Result unwrap with `safeTry(async () => hookOpt.value(ctx))`; unified error prefix to `"hook failed: ..."` (threw and returned-Err are the same failure mode). `AGENTS.md` convention `safeTry for error handling. No raw try/catch` now applies to runHook.
+- **Null parity** — `option(null)` returns `None` (slang-ts treats null, undefined, "", NaN, ±Infinity as falsy/None). All null-sentinel patterns converted alongside undefined checks.
+- **What was NOT changed** — Drizzle patch patterns (`if (patch.x !== undefined) vals.x = ...`) — memory says leave these; type-predicate filters (`.filter(x => x !== undefined)` with `is T` return type); spread-conditional patterns (`...(x !== undefined ? {x} : {})`); arithmetic axis checks (`a.x !== undefined || b.x !== undefined`) — option() adds noise with no benefit in multi-condition arithmetic; compound config guards (`if (configModels === undefined || configModels.length === 0)`).
+
+691 tests pass under vitest. Typecheck clean.
+
 ## Overview
 Delta Agents is a deterministic autonomous control plane for AI agents. It provides the execution layer that constrains, validates, supervises, and audits agent behavior. The model reasons; the engine governs. The full specification is in `delta-agents.spec.md` (1185 lines) — that is the canonical blueprint for implementation.
 

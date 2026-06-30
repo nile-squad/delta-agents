@@ -17,7 +17,7 @@
  * Every record is TaskID-attributable (invariants 1, 8, 9, 13).
  */
 
-import { Ok, Err } from "slang-ts";
+import { Ok, Err, option } from "slang-ts";
 import type { Result } from "slang-ts";
 import type { Task, Checkpoint, ApprovalRequest } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
@@ -213,8 +213,9 @@ export const runWorkflowTask = async ({
   const approvalStatuses = new Map<string, ApprovalStatus>();
   const awaitingApproval: string[] = [];
   for (const name of collectWorkflowActionNames(workflow)) {
-    const action = actionRegistry.get(name);
-    if (action === undefined) continue; // runGateway surfaces the missing-action error.
+    const actionOpt = option(actionRegistry.get(name));
+    if (actionOpt.isNone) continue; // runGateway surfaces the missing-action error.
+    const action = actionOpt.value;
 
     const statusResult = await getApprovalStatusForAction({ taskId: task.id, action: name, store });
     let status: ApprovalStatus = statusResult.isOk ? statusResult.value : "none";

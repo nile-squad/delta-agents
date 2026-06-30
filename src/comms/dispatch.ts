@@ -14,7 +14,7 @@
  *   4. record a TaskID-attributable Message of what was sent.
  */
 
-import { Ok, Err } from "slang-ts";
+import { Ok, Err, option } from "slang-ts";
 import type { Result } from "slang-ts";
 import type { Agent, ActionContext, ChannelType } from "../authoring/types";
 import type { StoragePort } from "../ports/storage-port";
@@ -56,10 +56,11 @@ export const dispatchCommunication = async ({
   phase?: string;
   store: StoragePort;
 }): Promise<CommunicationOutcome> => {
-  const channel = (agent.channels ?? []).find((c) => c.type === channelType && c.enabled);
-  if (channel === undefined) {
+  const channelOpt = option((agent.channels ?? []).find((c) => c.type === channelType && c.enabled));
+  if (channelOpt.isNone) {
     return { kind: "failed", reason: `no enabled channel of type "${channelType}" on agent "${agent.name}"` };
   }
+  const channel = channelOpt.value;
 
   // ── Approval gate (channel-level) ───────────────────────────────────────
   if (channel.requiresApproval === true) {

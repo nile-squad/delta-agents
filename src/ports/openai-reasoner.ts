@@ -20,7 +20,7 @@
  *   const reasoner = createOpenAIReasoner({ apiKey: "test", fetch: mockFetch });
  */
 
-import { Ok, Err } from "slang-ts";
+import { Ok, Err, option } from "slang-ts";
 import type { Result } from "slang-ts";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions/completions";
@@ -332,10 +332,11 @@ const parseToolCall = (
   availableChannels: string[],
   latencyMs: number,
 ): Result<ReasonerDecision, string> => {
-  const choice = response.choices[0];
-  if (choice === undefined) {
+  const choiceOpt = option(response.choices[0]);
+  if (choiceOpt.isNone) {
     return Err("openai-reasoner: API response contained no choices");
   }
+  const choice = choiceOpt.value;
 
   const toolCalls = choice.message.tool_calls;
   if (!toolCalls || toolCalls.length === 0) {
@@ -344,13 +345,14 @@ const parseToolCall = (
     );
   }
 
-  const call = toolCalls[0];
   // Narrow the union: only function-type tool calls carry a .function property.
-  if (call === undefined || call.type !== "function") {
+  const callOpt = option(toolCalls[0]);
+  if (callOpt.isNone || callOpt.value.type !== "function") {
     return Err(
-      `openai-reasoner: unexpected tool type "${call?.type ?? "none"}" — expected "function"`,
+      `openai-reasoner: unexpected tool type "${callOpt.isSome ? callOpt.value.type : "none"}" — expected "function"`,
     );
   }
+  const call = callOpt.value;
 
   let args: Record<string, unknown>;
   try {

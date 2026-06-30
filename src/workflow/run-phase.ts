@@ -21,6 +21,7 @@
  * phase.checkpoint === true (invariant 10: every checkpoint is recoverable).
  */
 
+import { option } from "slang-ts";
 import type { ActionContext } from "../authoring/types";
 import type { Checkpoint } from "../shared/types";
 import type { PhaseResult, RunPhaseInput } from "./types";
@@ -110,8 +111,8 @@ export const runPhase = async ({
     }
 
     const actionName = typeof ref === "string" ? ref : ref.action;
-    const action = actionRegistry.get(actionName);
-    if (action === undefined) {
+    const actionOpt = option(actionRegistry.get(actionName));
+    if (actionOpt.isNone) {
       await runHook(phase.hooks?.onError, phaseCtx);
       return {
         status: "failed",
@@ -121,6 +122,7 @@ export const runPhase = async ({
         failedReason: `action "${actionName}" not found in action registry`,
       };
     }
+    const action = actionOpt.value;
 
     let actionSkills = phaseSkills;
     if (action.skills !== undefined) {

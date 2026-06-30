@@ -19,6 +19,7 @@
  * and avoid committing to expensive trajectories.
  */
 
+import { option } from "slang-ts";
 import type { Cost } from "../shared/types";
 import type { ActionValue } from "./types";
 import { addCosts } from "../shared/cost";
@@ -97,8 +98,9 @@ export const projectHorizon = ({
   let stepsTaken = 0;
 
   for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
-    if (step === undefined) break;
+    const stepOpt = option(steps[i]);
+    if (stepOpt.isNone) break;
+    const step = stepOpt.value;
 
     // Stop before an epistemic boundary — do not predict beyond available evidence.
     if (step.isEpistemicBoundary) {

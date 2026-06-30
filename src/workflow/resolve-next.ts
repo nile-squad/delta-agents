@@ -14,6 +14,7 @@
  *         prohibition 19 (engine never invents a transition).
  */
 
+import { option } from "slang-ts";
 import type { Result } from "slang-ts";
 import type { ActionRef, ActionContext } from "../authoring/types";
 import type { NextStep } from "./types";
@@ -56,10 +57,11 @@ export const resolveNextStep = ({
   /** Available for future guard evaluation extensions. Unused in this function. */
   ctx: ActionContext;
 }): NextStep => {
-  const ref = actions[currentIndex];
-  if (ref === undefined) {
+  const refOpt = option(actions[currentIndex]);
+  if (refOpt.isNone) {
     return { kind: "end-failure", reason: `no action at index ${currentIndex}` };
   }
+  const ref = refOpt.value;
 
   if (typeof ref === "string") {
     if (result.isErr) {

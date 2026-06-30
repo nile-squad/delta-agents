@@ -16,7 +16,7 @@
  * Outcomes).
  */
 
-import { Ok, Err } from "slang-ts";
+import { Ok, Err, option } from "slang-ts";
 import type { ReasonerPort, ActionRequest, DelegationRequest, MentionRequest, CommunicationRequest } from "./reasoner-port";
 
 /**
@@ -56,11 +56,12 @@ export const createMockReasoner = ({
     reason: async ({ availableActions }) => {
       if (alwaysFail !== undefined) return Err(alwaysFail);
 
-      const next = queue.shift();
-      if (next === undefined) {
+      const nextOpt = option(queue.shift());
+      if (nextOpt.isNone) {
         // Script exhausted — the planned work is finished, not failed.
         return Ok({ kind: "done", reason: "mock reasoner: script exhausted" });
       }
+      const next = nextOpt.value;
 
       if ("delegate" in next) {
         return Ok({ kind: "delegate", delegation: next.delegate });
