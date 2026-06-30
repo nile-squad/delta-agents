@@ -303,6 +303,69 @@ const sendWelcome = delta.action({
 
 Storylines are optional and free-form. They reach action functions and hooks through a single channel (`ActionContext`) — no duplicate injection. In the free reasoner loop (no workflow), both fields are `undefined`.
 
+## Prerequisites and Branching
+
+Actions can declare prerequisites and phases can branch on outcomes. Both are declared at authoring time and enforced by the engine at runtime.
+
+### Prerequisites
+
+An action may declare that other actions or workflows must complete before it becomes available. While unsatisfied, the action is not discoverable by the agent and cannot be executed.
+
+```ts
+const processOrder = delta.action({
+  name: "process-order",
+  description: "Process a confirmed order",
+  schema: z.object({ orderId: z.string() }),
+  prerequisites: { actions: ["confirm-order"] },
+  fn: async ({ data }) => {
+    // Only reachable after confirm-order has completed
+    return Ok({ processed: true });
+  },
+});
+```
+
+Prerequisites can also reference workflows:
+
+```ts
+prerequisites: { workflows: ["onboarding-flow"] }
+```
+
+The engine validates prerequisite names at definition time. A typo fails loud, not silent.
+
+### Branching
+
+By default, phase actions run sequentially. A branch node routes to the next action based on the prior action's outcome.
+
+```ts
+const phase = {
+  name: "fulfillment",
+  description: "Fulfill and ship the order",
+  checkpoint: true,
+  actions: [
+    "prepare-shipment",
+    {
+      action: "ship-order",
+      onSuccess: "notify-customer",
+      onFailure: "escalate-to-human",
+    },
+    "notify-customer",
+    "escalate-to-human",
+  ],
+};
+```
+
+A branch can also use a guard condition instead of outcome routing:
+
+```ts
+{
+  action: "check-inventory",
+  when: (ctx) => ctx.agentName === "warehouse-agent",
+  onSuccess: "reserve-stock",
+}
+```
+
+When the guard returns false, the branch is skipped and the next action in the list runs. Branching is declared, not inferred. The engine never invents a transition that was not explicitly declared.
+
 ## System Prompt and Time Awareness
 
 Two engine-level options ground every agent in shared context and time:

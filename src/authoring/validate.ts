@@ -224,6 +224,27 @@ export const validateAgent = (
     }
   }
 
+  // Prerequisite action/workflow names must resolve to registered actions/workflows.
+  // A typo here silently never satisfies at runtime, so we catch it at definition time.
+  for (const action of agent.actions) {
+    if (action.prerequisites) {
+      for (const prereqAction of action.prerequisites.actions ?? []) {
+        if (!knownActionNames.has(prereqAction)) {
+          return Err(
+            `agent "${agent.name}": action "${action.name}" declares prerequisite action "${prereqAction}" that is not registered`,
+          );
+        }
+      }
+      for (const prereqWorkflow of action.prerequisites.workflows ?? []) {
+        if (!knownWorkflowNames.has(prereqWorkflow)) {
+          return Err(
+            `agent "${agent.name}": action "${action.name}" declares prerequisite workflow "${prereqWorkflow}" that is not registered`,
+          );
+        }
+      }
+    }
+  }
+
   // Every workflow attached to the agent must be in the registry.
   for (const wf of agent.workflows ?? []) {
     if (!knownWorkflowNames.has(wf.name)) {
