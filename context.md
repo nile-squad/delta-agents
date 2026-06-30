@@ -369,13 +369,18 @@ Builds the real public entry point and writes the README from the shipped API.
 - Verified: `dist/index.js` loads under plain `node` (not Bun); full `pnpm build` green
   (644 tests + tsc + tsup).
 
-## slang-ts idiom pass (2026-06-30)
-Full codebase sweep replacing raw `undefined`/`null` checks and manual try/catch with slang-ts idioms.
+## slang-ts idiom conventions (learnings, 2026-06-30)
 
-- **option() for Map.get() / Array.find() / array index / shift()** — converted in: `authoring/registry.ts` (7 Map.get lookups), `ports/in-memory-store.ts` (all 5 Map.get + updateX patterns), `engine/scheduler.ts` (findRunner → `Option<Runner>`, parent-result null check, failedChild/blockedChild after find), `engine/create-delta-engine.ts` (reasoner cache lookup, model find, `Task | null` from getLatestTaskByAgent), `skills/resolve-skills.ts` (byName.get + loadSkillContent), `comms/dispatch.ts` (.find() for enabled channel), `ports/openai-reasoner.ts` (choices[0], toolCalls[0]), `ports/mock-reasoner.ts` (queue.shift()), `engine/runtime.ts` (actionRegistry.get in workflow approval loop), `workflow/resolve-next.ts` (actions[currentIndex]), `workflow/run-phase.ts` (actionRegistry.get in step loop), `governance/value.ts` (steps[i] in horizon projection loop).
-- **safeTry for try/catch** — `execution/run-hooks.ts`: replaced manual try/catch + Result unwrap with `safeTry(async () => hookOpt.value(ctx))`; unified error prefix to `"hook failed: ..."` (threw and returned-Err are the same failure mode). `AGENTS.md` convention `safeTry for error handling. No raw try/catch` now applies to runHook.
-- **Null parity** — `option(null)` returns `None` (slang-ts treats null, undefined, "", NaN, ±Infinity as falsy/None). All null-sentinel patterns converted alongside undefined checks.
-- **What was NOT changed** — Drizzle patch patterns (`if (patch.x !== undefined) vals.x = ...`) — memory says leave these; type-predicate filters (`.filter(x => x !== undefined)` with `is T` return type); spread-conditional patterns (`...(x !== undefined ? {x} : {})`); arithmetic axis checks (`a.x !== undefined || b.x !== undefined`) — option() adds noise with no benefit in multi-condition arithmetic; compound config guards (`if (configModels === undefined || configModels.length === 0)`).
+**Patterns established:**
+- `option(map.get(key))` / `option(arr.find(...))` / `option(arr[i])` / `option(arr.shift())` — all lookup results that may be absent go through option(). After `.isNone` guard, rebind: `const x = xOpt.value` so TypeScript sees the narrowed type.
+- `safeTry(async () => fn())` replaces any try/catch that should produce a Result. Catches both throws and returned Err; downstream sees one Err shape. No need to distinguish "threw" vs "returned Err" — both are failures.
+- `option(null)` returns `None` — slang-ts treats null, undefined, "", NaN, ±Infinity all as falsy/None. Null-sentinel patterns use the same idiom.
+
+**Tradeoffs and exclusions:**
+- Drizzle patch patterns (`if (patch.x !== undefined) vals.x = ...`) — left as-is; option() adds nothing when the goal is conditional assignment, not value extraction.
+- Type-predicate filters (`.filter((x): x is T => x !== undefined)`) — option() cannot express this; keep raw.
+- Spread-conditional patterns (`...(x !== undefined ? {x} : {})`) — option() makes these longer without benefit; keep raw.
+- Arithmetic axis checks (`a.x !== undefined || b.x !== undefined`) — multi-condition arithmetic; option() adds noise with no benefit.
 
 691 tests pass under vitest. Typecheck clean.
 
