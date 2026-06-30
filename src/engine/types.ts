@@ -18,10 +18,71 @@ import type { RetryOptions } from "../infra";
 import type { Action, Workflow, Phase, Agent, DataSource, SkillLoader } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 
+/**
+ * Provider options forwarded verbatim to the model API each call.
+ * Omit a field to use the provider's default (e.g. omit temperature for o-series
+ * reasoning models that reject it). Per-model options override engine-level ones.
+ */
+export type ModelOptions = {
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+};
+
+/**
+ * A named model configuration the engine can route agents to.
+ *
+ * `name` is the identifier agents reference via `agent.model`. `model` is the
+ * model ID sent to the provider (e.g. "gpt-4o"). `endpoint` and `apiKey` override
+ * engine-level defaults — useful for mixing providers (OpenAI + OpenRouter +
+ * a local Ollama instance) in one engine. `options` are forwarded to the provider
+ * and merged over the engine-level `options`.
+ */
+export type ModelDef = {
+  name: string;
+  model: string;
+  /** Mark this as the engine default. Agents that omit `model` use this one. Exactly one must be true. */
+  default?: boolean;
+  /** Per-model base URL override. Falls back to the engine-level `endpoint`. */
+  endpoint?: string;
+  /** Per-model API key override. Falls back to the engine-level `apiKey`. */
+  apiKey?: string;
+  /** Per-model provider options. Merged over engine-level `options` (per-model wins). */
+  options?: ModelOptions;
+};
+
 export type DeltaEngineConfig = {
   /** Persistence adapter. Defaults to an isolated in-memory store. */
   store?: StoragePort;
-  /** Reasoning adapter. Defaults to the mock reasoner (Phase 10 adds OpenAI). */
+  /**
+   * Default base URL for all model API calls (OpenAI-compatible).
+   * Per-model `endpoint` overrides this. Defaults to the OpenAI endpoint.
+   */
+  endpoint?: string;
+  /**
+   * Default API key for all model API calls.
+   * Per-model `apiKey` overrides this.
+   */
+  apiKey?: string;
+  /**
+   * Default provider options applied to every model call.
+   * Per-model `options` override these on a per-field basis.
+   */
+  options?: ModelOptions;
+  /**
+   * Named model definitions. At least one must carry `default: true` — that model
+   * is used for agents that do not specify a model. Agent model names are validated
+   * against this list at `delta.agent()` time (an unknown name throws immediately).
+   *
+   * When omitted, the engine falls back to the `reasoner` override (useful for
+   * testing with a mock reasoner without configuring real model access).
+   */
+  models?: ModelDef[];
+  /**
+   * Reasoning adapter override. When set, bypasses the models config entirely and
+   * uses this single adapter for all agents. Intended for testing — inject a mock
+   * reasoner here; normal production usage goes through `models`.
+   */
   reasoner?: ReasonerPort;
   /**
    * Maximum reasoner iterations per task.

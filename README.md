@@ -37,14 +37,17 @@ Requirements: TypeScript 5 or later.
 ## Quick Example
 
 ```ts
-import { createDeltaEngine, createOpenAIReasoner, Ok } from "delta-agents";
+import { createDeltaEngine, Ok } from "delta-agents";
 import { z } from "zod";
 
 // Create the engine once. Adapters and limits are configured here. Creation is
 // awaited so the engine can gate on its store being ready (open a connection,
 // run migrations) before it serves a single request.
 const delta = await createDeltaEngine({
-  reasoner: createOpenAIReasoner({ model: "gpt-4o-mini" }),
+  apiKey: process.env.OPENAI_API_KEY,
+  models: [
+    { name: "fast", model: "gpt-4o-mini", default: true },
+  ],
 });
 
 // Define an action: a named, schema-validated, governed operation.
@@ -213,7 +216,8 @@ An agent can carry skills: named, reusable capability descriptions with a `path`
 import { readFile } from "node:fs/promises";
 
 const delta = await createDeltaEngine({
-  reasoner,
+  apiKey: process.env.OPENAI_API_KEY,
+  models: [{ name: "default", model: "gpt-4o-mini", default: true }],
   loadSkill: async (skill) => {
     try {
       return Ok(await readFile(skill.path, "utf8"));
@@ -263,24 +267,59 @@ const store = await createDrizzleStore("file:./delta.db");
 const store = await createDrizzleStore();
 ```
 
-### Reasoner
+### Models
+
+Models are defined on the engine and referenced by agents. At least one must carry `default: true`.
 
 ```ts
-import { createOpenAIReasoner, createMockReasoner } from "delta-agents";
+const delta = await createDeltaEngine({
+  // Engine-level defaults. Per-model values override these.
+  endpoint: "https://api.openai.com/v1",
+  apiKey: process.env.OPENAI_API_KEY,
+  options: { temperature: 0.1 },
 
-// Production: OpenAI chat completions.
-const reasoner = createOpenAIReasoner({ model: "gpt-4o" });
-
-// Any OpenAI-compatible provider via baseURL, for example OpenRouter.
-const reasoner = createOpenAIReasoner({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  baseURL: "https://openrouter.ai/api/v1",
-  model: "openai/gpt-4o-mini",
+  models: [
+    { name: "fast", model: "gpt-4o-mini", default: true },
+    {
+      name: "smart",
+      model: "gpt-4o",
+      options: { temperature: 0.3, topP: 0.9 },
+    },
+    {
+      name: "local",
+      model: "llama3.2",
+      endpoint: "http://localhost:11434/v1",
+      apiKey: "ollama",
+    },
+    {
+      name: "reasoning",
+      model: "o3-mini",
+      endpoint: "https://openrouter.ai/api/v1",
+      apiKey: process.env.OPENROUTER_API_KEY,
+      // no options — o-series reasoning models reject sampling params
+    },
+  ],
 });
+```
 
-// Testing: scripted deterministic responses.
-const reasoner = createMockReasoner({
-  responses: [{ actionName: "lookup-customer", input: { customerId: "C-42" } }],
+An agent references a model by name. Omitting `model` uses the engine default.
+
+```ts
+const researcher = delta.agent({ name: "researcher", model: "smart", /* ... */ });
+const worker = delta.agent({ name: "worker", /* model omitted — uses default */ /* ... */ });
+```
+
+`delta.agent()` validates the model name immediately. An unknown name throws before any task runs.
+
+For testing, use `createMockReasoner` with the `reasoner` override:
+
+```ts
+import { createMockReasoner } from "delta-agents";
+
+const delta = await createDeltaEngine({
+  reasoner: createMockReasoner({
+    responses: [{ actionName: "greet", input: { name: "world" } }],
+  }),
 });
 ```
 
@@ -290,7 +329,8 @@ Models fail: a network error, a maxed-out rate limit, malformed JSON, or a turn 
 
 ```ts
 const delta = await createDeltaEngine({
-  reasoner,
+  apiKey: process.env.OPENAI_API_KEY,
+  models: [{ name: "default", model: "gpt-4o-mini", default: true }],
   // Defaults: 3 attempts, 200ms base, 5s cap, 0.3 jitter. Partial overrides merge.
   reasonerRetry: { maxAttempts: 5, baseDelayMs: 500, maxDelayMs: 10_000 },
 });
@@ -365,6 +405,8 @@ The TaskID is the unit of governance. Authorization, budgeting, auditing, checkp
 | `Agent` | A role with its actions, workflows, data sources, skills, and channels. |
 | `Channel` | An inbound or outbound communication surface. |
 | `Skill` | A reusable capability description attached to an agent. |
+| `ModelDef` | A named model with its provider config, endpoint, API key, and options. |
+| `ModelOptions` | Provider options forwarded to the model API: temperature, topP, maxTokens. |
 
 **Runtime types** (the engine owns these, you read them via `inspect`):
 

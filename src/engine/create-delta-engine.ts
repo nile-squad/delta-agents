@@ -23,14 +23,17 @@
 import { Ok, Err } from "slang-ts";
 import { defaultRetryOptions } from "../infra";
 import type { DeltaEngineConfig, DeltaEngine } from "./types";
+import type { ReasonerPort } from "../ports/reasoner-port";
 import { createInMemoryStore } from "../ports/in-memory-store";
 import { createMockReasoner } from "../ports/mock-reasoner";
+import { createOpenAIReasoner } from "../ports/openai-reasoner";
 import { createRegistry } from "../authoring/registry";
 import { makeDefineAction } from "../authoring/define-action";
 import { makeDefineWorkflow } from "../authoring/define-workflow";
 import { makeDefinePhase } from "../authoring/define-phase";
 import { makeDefineAgent } from "../authoring/define-agent";
 import { makeDefineDataSource } from "../authoring/define-data-source";
+import type { Agent } from "../authoring/types";
 import type { Message } from "../shared/types";
 import { taskId, messageId } from "../shared/id";
 import { initialRiskState, initialTrust } from "../governance";
@@ -41,17 +44,87 @@ const DEFAULT_BUDGET = { tokens: 10_000, durationMs: 300_000 };
 
 export const createDeltaEngine = async ({
   store: configStore,
+  endpoint: configEndpoint,
+  apiKey: configApiKey,
+  options: configOptions,
+  models: configModels,
   reasoner: configReasoner,
   maxStepsPerTask = 100,
   reasonerRetry: configReasonerRetry,
   loadSkill,
 }: DeltaEngineConfig = {}): Promise<DeltaEngine> => {
   const store = configStore ?? createInMemoryStore();
-  const reasoner = configReasoner ?? createMockReasoner();
   const registry = createRegistry();
   // Resolve the reasoner-retry policy once. Partial config merges over the infra
   // defaults so a caller can tune just the field they care about (e.g. attempts).
   const reasonerRetry = { ...defaultRetryOptions, ...configReasonerRetry };
+
+  // ── Model config validation ──────────────────────────────────────────────
+  // Validate models at construction time so mistakes surface immediately, not
+  // buried inside a future send(). These are programming errors, not runtime
+  // errors, so we throw rather than return Err.
+  if (configModels !== undefined && configModels.length > 0) {
+    const names = configModels.map((m) => m.name);
+    const uniqueNames = new Set(names);
+    if (uniqueNames.size !== names.length) {
+      const dupes = names.filter((n, i) => names.indexOf(n) !== i);
+      throw new Error(`createDeltaEngine: duplicate model names: ${[...new Set(dupes)].join(", ")}`);
+    }
+    const defaults = configModels.filter((m) => m.default === true);
+    if (defaults.length === 0) {
+      throw new Error(
+        `createDeltaEngine: no default model — exactly one model must have default: true`,
+      );
+    }
+    if (defaults.length > 1) {
+      throw new Error(
+        `createDeltaEngine: multiple default models (${defaults.map((m) => m.name).join(", ")}) — exactly one must have default: true`,
+      );
+    }
+  }
+
+  // Pre-build the set of model names so define-agent can validate agent.model
+  // at authoring time (caught before any send, not at run-time mid-task).
+  const modelNames: Set<string> =
+    configModels !== undefined ? new Set(configModels.map((m) => m.name)) : new Set();
+
+  // Reasoner instances are created once per agent and cached — the OpenAI client
+  // holds a connection pool so recreating it per send is wasteful.
+  const reasonerCache = new Map<string, ReasonerPort>();
+
+  const resolveReasoner = (agentDef: Agent): ReasonerPort => {
+    // Test/escape-hatch override: one shared adapter for all agents.
+    if (configReasoner !== undefined) return configReasoner;
+
+    // No models defined → fall back to mock (covers tests that omit models).
+    if (configModels === undefined || configModels.length === 0) return createMockReasoner();
+
+    const cached = reasonerCache.get(agentDef.name);
+    if (cached !== undefined) return cached;
+
+    const modelDef = agentDef.model !== undefined
+      ? configModels.find((m) => m.name === agentDef.model)
+      : configModels.find((m) => m.default === true);
+
+    // Should never happen: both cases were validated at delta.agent() and
+    // construction time respectively. Guard defensively.
+    if (modelDef === undefined) {
+      throw new Error(
+        `createDeltaEngine: could not resolve model for agent "${agentDef.name}"`,
+      );
+    }
+
+    const resolved = createOpenAIReasoner({
+      apiKey: modelDef.apiKey ?? configApiKey,
+      baseURL: modelDef.endpoint ?? configEndpoint,
+      model: modelDef.model,
+      temperature: modelDef.options?.temperature ?? configOptions?.temperature,
+      topP: modelDef.options?.topP ?? configOptions?.topP,
+      maxTokens: modelDef.options?.maxTokens ?? configOptions?.maxTokens,
+    });
+    reasonerCache.set(agentDef.name, resolved);
+    return resolved;
+  };
 
   // Await the store's readiness gate before the engine serves any request. An
   // adapter that needs async warm-up (open a connection, run migrations) signals
@@ -70,7 +143,7 @@ export const createDeltaEngine = async ({
   const workflow = makeDefineWorkflow({ registry });
   const phase = makeDefinePhase({ registry });
   const dataSource = makeDefineDataSource({ registry });
-  const agent = makeDefineAgent({ registry });
+  const agent = makeDefineAgent({ registry, modelNames });
 
   // ── Runtime methods ──────────────────────────────────────────────────────
 
@@ -171,7 +244,7 @@ export const createDeltaEngine = async ({
     // free reasoner loop.
     const result = workflowName !== undefined
       ? await runWorkflowTask({ task, agent: agentDef, workflowName, input, actionInputs, registry, store })
-      : await runSendLoop({ task, agent: agentDef, reasoner, registry, store, maxSteps: maxStepsPerTask, reasonerRetry, loadSkill });
+      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, reasonerRetry, loadSkill });
 
     return Ok(result);
   };
@@ -205,7 +278,7 @@ export const createDeltaEngine = async ({
     return resumeTask({
       taskId: taskId_,
       agent: agentResult.value,
-      reasoner,
+      reasoner: resolveReasoner(agentResult.value),
       registry,
       store,
       maxSteps: maxStepsPerTask,

@@ -36,7 +36,7 @@ export type {
 // The engine factory and the types that describe runtime state a developer
 // reads back via inspect() / send() / resume().
 export { createDeltaEngine } from "./engine";
-export type { DeltaEngine, DeltaEngineConfig, SendInput, SendResult, InspectResult } from "./engine";
+export type { DeltaEngine, DeltaEngineConfig, SendInput, SendResult, InspectResult, ModelDef, ModelOptions } from "./engine";
 
 // Shared domain types the developer encounters in send results, inspect results,
 // and action context. Budget is expressed as Cost (the same multi-axis vector
@@ -48,8 +48,6 @@ export type { Cost, Task, SupervisionPolicy, Memory } from "./shared/types";
 // Wire one of each into DeltaEngineConfig; defaults are in-memory + mock.
 export { createInMemoryStore } from "./ports";
 export { createDrizzleStore } from "./ports";
-export { createOpenAIReasoner } from "./ports";
-export type { OpenAIReasonerConfig } from "./ports";
 export { createMockReasoner } from "./ports";
 export type { MockResponse, MockReasonerOptions } from "./ports";
 export { createChatSdkChannel } from "./comms";

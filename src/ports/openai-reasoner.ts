@@ -54,6 +54,11 @@ export type OpenAIReasonerConfig = {
    * models that support it (e.g. gpt-4o) and where you want exploratory output.
    */
   temperature?: number;
+  /**
+   * Nucleus sampling probability mass. Only sent when explicitly set.
+   * Mutually exclusive with temperature in most providers; set one or the other.
+   */
+  topP?: number;
   /** Maximum completion tokens (sent as `max_completion_tokens`). Defaults to 512. */
   maxTokens?: number;
   /**
@@ -503,11 +508,12 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
         response = await client.chat.completions.create({
           model,
           // `max_completion_tokens` is the current field; `max_tokens` is
-          // deprecated and rejected by newer models. Temperature is forwarded
-          // only when explicitly configured (newer reasoning models reject a
-          // non-default value).
+          // deprecated and rejected by newer models. Temperature and top_p are
+          // forwarded only when explicitly configured — newer reasoning models
+          // reject non-default sampling params.
           max_completion_tokens: maxTokens,
           ...(config.temperature !== undefined ? { temperature: config.temperature } : {}),
+          ...(config.topP !== undefined ? { top_p: config.topP } : {}),
           messages: buildMessages(input),
           tools,
           tool_choice: "required",

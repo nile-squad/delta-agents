@@ -460,11 +460,11 @@ See the authoritative Tech Stack section above for the rules. Summary:
 Installed:
 - `slang-ts` — Result, Option, match, matchAll, safeTry, pipe, atom, println, panic (re-exported from src/index.ts). Every function returns `Ok`/`Err`; callers check and forward; throw only for critical, system-halting failures.
 - `zod` — schema validation for actions (every executable action has a validation schema)
+- `ms` + `@types/ms` — convert human time strings to ms and back (`ms('2h')` → 7200000, `ms(7200000)` → "2h"). Use for any internal duration arithmetic or budget/timeout values.
+- `date-fns` + `date-fns-tz` — all date, time, and timezone formatting/parsing. Use for any user-facing date/time display.
 
 Planned (ask before installing):
-- `drizzle-orm` + SQLite — all database work, memory included. DB code lives strictly in `db/models`.
-- `openai` — model API access.
-- `date-fns` + `date-fns-tz` — all date, time, and timezone handling.
+- (none remaining — all planned deps are installed)
 
 Tooling: pnpm for package management, Bun for runtime. No server; ships as an SDK-style library installed into the developer's backend. Isolated execution and true actor models come later; for now a simple abort + promise utility.
 

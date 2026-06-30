@@ -3,4 +3,4 @@
  */
 
 export { createDeltaEngine } from "./create-delta-engine";
-export type { DeltaEngineConfig, DeltaEngine, SendInput, SendResult, InspectResult } from "./types";
+export type { DeltaEngineConfig, DeltaEngine, SendInput, SendResult, InspectResult, ModelDef, ModelOptions } from "./types";

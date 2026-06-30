@@ -39,6 +39,8 @@ import type {
   Task,
   SupervisionPolicy,
   Memory,
+  ModelDef,
+  ModelOptions,
 } from "../../src";
 
 describe("public-api — smoke test", () => {
@@ -147,5 +149,100 @@ describe("public-api — smoke test", () => {
     expect(_config).toBeDefined();
     expect(_agent.name).toBe("x");
     expect(_workflow.version).toBe("1");
+
+    // Confirm ModelDef and ModelOptions are reachable from the public entry point.
+    const _modelDef: ModelDef = { name: "fast", model: "gpt-4o-mini", default: true };
+    const _modelOptions: ModelOptions = { temperature: 0.7 };
+    expect(_modelDef.name).toBe("fast");
+    expect(_modelOptions.temperature).toBe(0.7);
+  });
+
+  // ── models DX — construction-time validation ──────────────────────────────
+
+  it("createDeltaEngine throws when models is non-empty but no model has default: true", async () => {
+    await expect(
+      createDeltaEngine({
+        models: [
+          { name: "alpha", model: "gpt-4o-mini" },
+          { name: "beta", model: "gpt-4o" },
+        ],
+      }),
+    ).rejects.toThrow(
+      "createDeltaEngine: no default model — exactly one model must have default: true",
+    );
+  });
+
+  it("createDeltaEngine throws when two models share the same name", async () => {
+    await expect(
+      createDeltaEngine({
+        models: [
+          { name: "alpha", model: "gpt-4o-mini", default: true },
+          { name: "alpha", model: "gpt-4o" },
+        ],
+      }),
+    ).rejects.toThrow("createDeltaEngine: duplicate model names: alpha");
+  });
+
+  it("createDeltaEngine throws when two models both have default: true", async () => {
+    await expect(
+      createDeltaEngine({
+        models: [
+          { name: "alpha", model: "gpt-4o-mini", default: true },
+          { name: "beta", model: "gpt-4o", default: true },
+        ],
+      }),
+    ).rejects.toThrow(
+      "createDeltaEngine: multiple default models (alpha, beta) — exactly one must have default: true",
+    );
+  });
+
+  // ── models DX — agent authoring validation ────────────────────────────────
+
+  it("delta.agent throws when the model name is not in models", async () => {
+    const delta = await createDeltaEngine({
+      models: [{ name: "fast", model: "gpt-4o-mini", default: true }],
+    });
+    // Model check fires before validateAgent, so actions need not be non-empty for
+    // the error to trigger — but we pass a valid action for completeness.
+    const ping = delta.action({
+      name: "ping",
+      description: "ping action",
+      schema: z.object({ target: z.string() }),
+      fn: async () => Ok("pong"),
+    });
+    expect(() =>
+      delta.agent({
+        name: "bad-model-agent",
+        description: "agent with unknown model",
+        role: "tester",
+        rolePrompt: "run tests",
+        actions: [ping],
+        model: "nonexistent",
+      }),
+    ).toThrow(
+      'delta.agent: model "nonexistent" is not defined — available models: fast',
+    );
+  });
+
+  it("delta.agent does not throw when the model name exists in models", async () => {
+    const delta = await createDeltaEngine({
+      models: [{ name: "fast", model: "gpt-4o-mini", default: true }],
+    });
+    const pong = delta.action({
+      name: "pong",
+      description: "pong action",
+      schema: z.object({ target: z.string() }),
+      fn: async () => Ok("pong"),
+    });
+    expect(() =>
+      delta.agent({
+        name: "good-model-agent",
+        description: "agent with known model",
+        role: "tester",
+        rolePrompt: "run tests",
+        actions: [pong],
+        model: "fast",
+      }),
+    ).not.toThrow();
   });
 });
