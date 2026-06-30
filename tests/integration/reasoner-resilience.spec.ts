@@ -3,7 +3,7 @@
  *
  * A model call can fail transiently: a network blip, a momentary rate limit,
  * malformed JSON, or a turn with no tool call. The engine retries the reasoner
- * step with jittered backoff (configurable via reasonerRetry) before giving up,
+ * step with jittered backoff (configurable via providerRetry) before giving up,
  * and on exhaustion escalates to a human rather than failing outright.
  *
  * Backoff is set near-zero here so the retries do not slow the suite.
@@ -40,7 +40,7 @@ describe("reasoner resilience", () => {
     const flaky = flakyReasoner(2); // fail twice, then succeed
     const delta = await createDeltaEngine({
       reasoner: flaky.port,
-      reasonerRetry: { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 2 },
+      providerRetry: { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 2 },
     });
     deployAgent(delta);
 
@@ -56,7 +56,7 @@ describe("reasoner resilience", () => {
     const flaky = flakyReasoner(99); // always fails
     const delta = await createDeltaEngine({
       reasoner: flaky.port,
-      reasonerRetry: { maxAttempts: 1, baseDelayMs: 1, maxDelayMs: 2 },
+      providerRetry: { maxAttempts: 1, baseDelayMs: 1, maxDelayMs: 2 },
     });
     deployAgent(delta);
 

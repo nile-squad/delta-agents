@@ -425,7 +425,7 @@ const delta = await createDeltaEngine({
   apiKey: process.env.OPENAI_API_KEY,
   models: [{ name: "default", model: "gpt-4o-mini", default: true }],
   // Defaults: 3 attempts, 200ms base, 5s cap, 0.3 jitter. Partial overrides merge.
-  reasonerRetry: { maxAttempts: 5, baseDelayMs: 500, maxDelayMs: 10_000 },
+  providerRetry: { maxAttempts: 5, baseDelayMs: 500, maxDelayMs: 10_000 },
 });
 ```
 

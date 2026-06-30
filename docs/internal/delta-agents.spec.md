@@ -1405,7 +1405,7 @@ type DeltaEngineConfig = {
   models?: ModelDef[];
   reasoner?: ReasonerPort;
   maxStepsPerTask?: number;
-  reasonerRetry?: Partial<RetryOptions>;
+  providerRetry?: Partial<RetryOptions>;
 
   // Global org instructions passed to all agents. Static content
   // baked into the system message prefix for prompt cache hits.

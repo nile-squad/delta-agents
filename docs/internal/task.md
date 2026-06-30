@@ -25,7 +25,7 @@ DeltaEngineConfig { systemPrompt?, timezone? }
 ## Files to Modify
 
 ### 1. `src/engine/types.ts` — DeltaEngineConfig
-Add two fields after `reasonerRetry?`:
+Add two fields after `providerRetry?`:
 - `systemPrompt?: string` — JSDoc: "Global org instructions passed to all agents. Static content baked into the system message prefix for prompt cache hits. Must not contain time or varying content."
 - `timezone?: string` — JSDoc: "Timezone for humanized time in reasoner messages (e.g. 'Africa/Lagos'). Defaults to the system timezone. Grounds agents with time awareness."
 

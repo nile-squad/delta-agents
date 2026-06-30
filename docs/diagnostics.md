@@ -173,7 +173,7 @@ Surprise feeds into three outcomes in the gateway:
 | 6 | `workflow-failure` | Explicit flag (raised by supervision `escalate` strategy) |
 | 7 | `explicit` | Explicit flag |
 
-Two triggers are raised directly rather than by `checkEscalation`'s signal ordering. `workflow-failure` is raised by the supervision `escalate` strategy. `reasoner-failure` is raised by the free reasoner loop when a model call still fails after its configured retries are exhausted (network error, rate limit, malformed output, or no tool call); the engine escalates instead of failing the task, so a transient upstream problem stays recoverable (configured via `reasonerRetry`, see the README).
+Two triggers are raised directly rather than by `checkEscalation`'s signal ordering. `workflow-failure` is raised by the supervision `escalate` strategy. `reasoner-failure` is raised by the free reasoner loop when a model call still fails after its configured retries are exhausted (network error, rate limit, malformed output, or no tool call); the engine escalates instead of failing the task, so a transient upstream problem stays recoverable (configured via `providerRetry`, see the README).
 
 When an escalation fires, `raiseEscalation` writes an `EscalationRecord` to the store (TaskID-attributable, never silent), the task is marked `"paused"`, and the execution loop returns `status: "blocked"`. The task stays paused until a human acts.
 

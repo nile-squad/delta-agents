@@ -574,7 +574,7 @@ describe("loop terminal states are honest (C1–C4)", () => {
       store,
       reasoner: createMockReasoner({ alwaysFail: "model exploded" }),
       // Near-zero backoff so the retries do not slow the test.
-      reasonerRetry: { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 2 },
+      providerRetry: { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 2 },
     });
     const act = delta.action({ name: "act", description: "test action", schema: z.object({}), fn: noop });
     delta.deploy(delta.agent({ name: "fail-agent", description: "d", role: "r", rolePrompt: ".", actions: [act] }));

@@ -49,7 +49,7 @@ export const createDeltaEngine = async ({
   models: configModels,
   reasoner: configReasoner,
   maxStepsPerTask = 100,
-  reasonerRetry: configReasonerRetry,
+  providerRetry: configProviderRetry,
   systemPrompt: configSystemPrompt,
   timezone: configTimezone,
 }: DeltaEngineConfig = {}): Promise<DeltaEngine> => {
@@ -57,7 +57,7 @@ export const createDeltaEngine = async ({
   const registry = createRegistry();
   // Resolve the reasoner-retry policy once. Partial config merges over the infra
   // defaults so a caller can tune just the field they care about (e.g. attempts).
-  const reasonerRetry = { ...defaultRetryOptions, ...configReasonerRetry };
+  const providerRetry = { ...defaultRetryOptions, ...configProviderRetry };
 
   // ── Model config validation ──────────────────────────────────────────────
   // Validate models at construction time so mistakes surface immediately, not
@@ -249,7 +249,7 @@ export const createDeltaEngine = async ({
     // free reasoner loop.
     const result = workflowName !== undefined
       ? await runWorkflowTask({ task, agent: agentDef, workflowName, input, actionInputs, registry, store })
-      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, reasonerRetry, timezone: configTimezone });
+      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, providerRetry, timezone: configTimezone });
 
     return Ok(result);
   };
@@ -287,7 +287,7 @@ export const createDeltaEngine = async ({
       registry,
       store,
       maxSteps: maxStepsPerTask,
-      reasonerRetry,
+      providerRetry,
       timezone: configTimezone,
     });
   };

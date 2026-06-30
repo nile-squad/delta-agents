@@ -124,7 +124,7 @@ const stepTask = async ({
   reasoner,
   registry,
   store,
-  reasonerRetry,
+  providerRetry,
   timezone,
 }: {
   task: Task;
@@ -134,7 +134,7 @@ const stepTask = async ({
   reasoner: ReasonerPort;
   registry: Registry;
   store: StoragePort;
-  reasonerRetry: RetryOptions;
+  providerRetry: RetryOptions;
   /** Timezone for humanized time in reasoner user messages. Falls back to the system tz. */
   timezone?: string;
 }): Promise<StepOutcome> => {
@@ -249,7 +249,7 @@ const stepTask = async ({
   };
   const reasonResult = await retryWithJitter({
     fn: () => reasoner.reason(reasonInput),
-    options: reasonerRetry,
+    options: providerRetry,
   });
 
   // Retries exhausted. A persistent model/API failure is exactly the kind of
@@ -261,13 +261,13 @@ const stepTask = async ({
     await raiseEscalation({
       taskId: task.id,
       trigger: "reasoner-failure",
-      reason: `reasoner failed after ${reasonerRetry.maxAttempts} attempt(s): ${reasonResult.error}`,
+      reason: `reasoner failed after ${providerRetry.maxAttempts} attempt(s): ${reasonResult.error}`,
       store,
     });
     return {
       kind: "blocked",
       snapshot,
-      reason: `reasoner failed after ${reasonerRetry.maxAttempts} attempt(s), escalated for human review: ${reasonResult.error}`,
+      reason: `reasoner failed after ${providerRetry.maxAttempts} attempt(s), escalated for human review: ${reasonResult.error}`,
     };
   }
 
@@ -437,7 +437,7 @@ export const runScheduler = async ({
   registry,
   store,
   maxSteps,
-  reasonerRetry = defaultRetryOptions,
+  providerRetry = defaultRetryOptions,
   timezone,
 }: {
   root: Runner;
@@ -445,7 +445,7 @@ export const runScheduler = async ({
   registry: Registry;
   store: StoragePort;
   maxSteps: number;
-  reasonerRetry?: RetryOptions;
+  providerRetry?: RetryOptions;
   /** Timezone for humanized time in reasoner user messages; falls back to system tz in stepTask. */
   timezone?: string;
 }): Promise<SendResult> => {
@@ -705,7 +705,7 @@ export const runScheduler = async ({
         reasoner,
         registry,
         store,
-        reasonerRetry,
+        providerRetry,
         timezone,
       });
       runner.step++;

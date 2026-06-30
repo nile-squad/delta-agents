@@ -99,7 +99,7 @@ export type DeltaEngineConfig = {
    * than failing outright (principle 8: human oversight is fundamental).
    * Partial overrides merge over the defaults (3 attempts, 200ms base, 5s cap).
    */
-  reasonerRetry?: Partial<RetryOptions>;
+  providerRetry?: Partial<RetryOptions>;
   /**
    * Global org instructions passed to all agents. Static content baked into the
    * system message prefix for prompt cache hits. Must NOT contain time or varying

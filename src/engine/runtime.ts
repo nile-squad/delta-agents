@@ -61,7 +61,7 @@ export const runSendLoop = async ({
   store,
   maxSteps = MAX_STEPS_DEFAULT,
   startingSnapshot,
-  reasonerRetry,
+  providerRetry,
   timezone,
 }: {
   task: Task;
@@ -71,7 +71,7 @@ export const runSendLoop = async ({
   store: StoragePort;
   maxSteps?: number;
   startingSnapshot?: TaskStateSnapshot;
-  reasonerRetry?: RetryOptions;
+  providerRetry?: RetryOptions;
   /** Timezone for humanized time in reasoner user messages; falls back to system tz in the scheduler. */
   timezone?: string;
 }): Promise<SendResult> => {
@@ -81,7 +81,7 @@ export const runSendLoop = async ({
     snapshot: startingSnapshot ?? snapshotFromTask(task),
     maxSteps,
   });
-  return runScheduler({ root, reasoner, registry, store, maxSteps, reasonerRetry, timezone });
+  return runScheduler({ root, reasoner, registry, store, maxSteps, providerRetry, timezone });
 };
 
 // ── Workflow task driver (C-a) ──────────────────────────────────────────────
@@ -356,7 +356,7 @@ export const resumeTask = async ({
   registry,
   store,
   maxSteps,
-  reasonerRetry,
+  providerRetry,
   timezone,
 }: {
   taskId: string;
@@ -365,7 +365,7 @@ export const resumeTask = async ({
   registry: Registry;
   store: StoragePort;
   maxSteps?: number;
-  reasonerRetry?: RetryOptions;
+  providerRetry?: RetryOptions;
   /** Timezone for humanized time in reasoner user messages; falls back to system tz in the scheduler. */
   timezone?: string;
 }): Promise<Result<SendResult, string>> => {
@@ -407,7 +407,7 @@ export const resumeTask = async ({
     return Ok(result);
   }
 
-  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, reasonerRetry, timezone });
+  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, providerRetry, timezone });
   return Ok(result);
 };
 
