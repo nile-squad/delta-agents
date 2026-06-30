@@ -24,6 +24,8 @@
  *   - aborting the root cascades to every descendant (invariant 17)
  */
 
+import { option } from "slang-ts";
+import type { Option } from "slang-ts";
 import type { Task, Checkpoint, Cost, TaskTree } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort, DelegationRequest } from "../ports/reasoner-port";
@@ -414,7 +416,7 @@ export const runScheduler = async ({
   const runners: Runner[] = [root];
   let treeInitialized = false;
 
-  const findRunner = (id: string): Runner | undefined => runners.find((r) => r.task.id === id);
+  const findRunner = (id: string): Option<Runner> => option(runners.find((r) => r.task.id === id));
 
   /** Create the supervision tree lazily — only a task that actually delegates needs one. */
   const ensureTree = async (): Promise<TaskTree> => {
@@ -464,7 +466,7 @@ export const runScheduler = async ({
     treeInitialized = true;
     const terminalStatuses = new Set<string>(["completed", "failed", "aborted"]);
     for (const childId of existingTree.value.activeChildren) {
-      if (findRunner(childId) !== undefined) continue; // (a) already a runner
+      if (findRunner(childId).isSome) continue; // (a) already a runner
       const childTaskResult = await store.getTask(childId);
       if (childTaskResult.isErr) continue; // (c) missing task
       const childTask = childTaskResult.value;
@@ -487,11 +489,11 @@ export const runScheduler = async ({
     // across delegate + settle is exactly the child's real spend.
     const parentId = runner.task.parentId;
     if (parentId !== undefined && treeInitialized) {
-      const parent = findRunner(parentId);
-      if (parent !== undefined) {
+      const parentOpt = findRunner(parentId);
+      if (parentOpt.isSome) {
         const refund = remainingCost(runner.snapshot.budget, runner.snapshot.spent);
-        parent.snapshot = { ...parent.snapshot, spent: remainingCost(parent.snapshot.spent, refund) };
-        if (parent.result !== null) parent.result = { ...parent.result, snapshot: parent.snapshot };
+        parentOpt.value.snapshot = { ...parentOpt.value.snapshot, spent: remainingCost(parentOpt.value.snapshot.spent, refund) };
+        if (parentOpt.value.result !== null) parentOpt.value.result = { ...parentOpt.value.result, snapshot: parentOpt.value.snapshot };
       }
       const treeResult = await store.getTaskTree(rootId);
       if (treeResult.isOk) {
@@ -500,7 +502,8 @@ export const runScheduler = async ({
           activeChildren: released.tree.activeChildren,
           queuedChildren: released.tree.queuedChildren,
         });
-        if (released.promoted !== undefined) await startRunner(released.promoted);
+        const promoted = option(released.promoted);
+        if (promoted.isSome) await startRunner(promoted.value);
       }
     }
 
@@ -646,12 +649,12 @@ export const runScheduler = async ({
       // rather than a stale delegation-time copy (D2). When the parent exhausts
       // its budget, the child's actions become illegal on the very next step.
       if (runner.task.parentId !== undefined) {
-        const parent = findRunner(runner.task.parentId);
-        if (parent !== undefined) {
+        const parentOpt = findRunner(runner.task.parentId);
+        if (parentOpt.isSome) {
           runner.snapshot = {
             ...runner.snapshot,
-            parentBudget: parent.snapshot.budget,
-            parentSpent: parent.snapshot.spent,
+            parentBudget: parentOpt.value.snapshot.budget,
+            parentSpent: parentOpt.value.snapshot.spent,
           };
         }
       }

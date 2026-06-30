@@ -20,7 +20,7 @@
  *   const result = await delta.send({ goal: "...", agentName: "my-agent" });
  */
 
-import { Ok, Err } from "slang-ts";
+import { Ok, Err, option } from "slang-ts";
 import { defaultRetryOptions } from "../infra";
 import type { DeltaEngineConfig, DeltaEngine } from "./types";
 import type { ReasonerPort } from "../ports/reasoner-port";
@@ -97,28 +97,30 @@ export const createDeltaEngine = async ({
     // No models defined → fall back to mock (covers tests that omit models).
     if (configModels === undefined || configModels.length === 0) return createMockReasoner();
 
-    const cached = reasonerCache.get(agentDef.name);
-    if (cached !== undefined) return cached;
+    const cached = option(reasonerCache.get(agentDef.name));
+    if (cached.isSome) return cached.value;
 
-    const modelDef = agentDef.model !== undefined
-      ? configModels.find((m) => m.name === agentDef.model)
-      : configModels.find((m) => m.default === true);
+    const modelOpt = option(
+      agentDef.model !== undefined
+        ? configModels.find((m) => m.name === agentDef.model)
+        : configModels.find((m) => m.default === true),
+    );
 
     // Should never happen: both cases were validated at delta.agent() and
     // construction time respectively. Guard defensively.
-    if (modelDef === undefined) {
+    if (modelOpt.isNone) {
       throw new Error(
         `createDeltaEngine: could not resolve model for agent "${agentDef.name}"`,
       );
     }
 
     const resolved = createOpenAIReasoner({
-      apiKey: modelDef.apiKey ?? configApiKey,
-      baseURL: modelDef.endpoint ?? configEndpoint,
-      model: modelDef.model,
-      temperature: modelDef.options?.temperature ?? configOptions?.temperature,
-      topP: modelDef.options?.topP ?? configOptions?.topP,
-      maxTokens: modelDef.options?.maxTokens ?? configOptions?.maxTokens,
+      apiKey: modelOpt.value.apiKey ?? configApiKey,
+      baseURL: modelOpt.value.endpoint ?? configEndpoint,
+      model: modelOpt.value.model,
+      temperature: modelOpt.value.options?.temperature ?? configOptions?.temperature,
+      topP: modelOpt.value.options?.topP ?? configOptions?.topP,
+      maxTokens: modelOpt.value.options?.maxTokens ?? configOptions?.maxTokens,
     });
     reasonerCache.set(agentDef.name, resolved);
     return resolved;

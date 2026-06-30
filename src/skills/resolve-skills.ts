@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { Ok, Err } from "slang-ts";
+import { Ok, Err, option } from "slang-ts";
 import type { Result } from "slang-ts";
 import type { Skill } from "../authoring/types";
 
@@ -30,11 +30,9 @@ export const resolveSkillRefs = (
   const result: Skill[] = [];
   for (const ref of refs) {
     if (typeof ref === "string") {
-      const found = byName.get(ref);
-      if (found === undefined) {
-        return Err(`skill ref "${ref}" not found in agent skills`);
-      }
-      result.push(found);
+      const found = option(byName.get(ref));
+      if (found.isNone) return Err(`skill ref "${ref}" not found in agent skills`);
+      result.push(found.value);
     } else {
       result.push(ref);
     }
@@ -51,9 +49,9 @@ export const resolveSkillRefs = (
 export const buildAvailableSkills = async (skills: Skill[]): Promise<AvailableSkill[]> => {
   const result: AvailableSkill[] = [];
   for (const skill of skills) {
-    const content = await loadSkillContent(skill.folder);
-    if (content === undefined) continue;
-    result.push({ name: skill.name, description: skill.description, content });
+    const contentOpt = option(await loadSkillContent(skill.folder));
+    if (contentOpt.isNone) continue;
+    result.push({ name: skill.name, description: skill.description, content: contentOpt.value });
   }
   return result;
 };

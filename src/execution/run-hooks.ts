@@ -11,7 +11,7 @@
  * governance decision.
  */
 
-import { Ok, Err } from "slang-ts";
+import { Ok, Err, option } from "slang-ts";
 import type { Result } from "slang-ts";
 import type { HookFn, ActionContext } from "../authoring/types";
 
@@ -28,11 +28,12 @@ export const runHook = async (
   hook: HookFn | undefined,
   ctx: ActionContext,
 ): Promise<Result<void, string>> => {
-  if (hook === undefined) return Ok(undefined);
+  const hookOpt = option(hook);
+  if (hookOpt.isNone) return Ok(undefined);
 
   let result: Result<unknown, string>;
   try {
-    result = await hook(ctx);
+    result = await hookOpt.value(ctx);
   } catch (e) {
     return Err(`hook threw: ${e instanceof Error ? e.message : String(e)}`);
   }

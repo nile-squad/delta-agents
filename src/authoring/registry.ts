@@ -11,7 +11,7 @@
  */
 
 import type { Action, Workflow, Agent, DataSource } from "./types";
-import { Err, Ok } from "slang-ts";
+import { Err, Ok, option } from "slang-ts";
 import type { Result } from "slang-ts";
 
 export type Registry = {
@@ -112,23 +112,23 @@ export const createRegistry = (): Registry => {
     },
 
     getAction: (name) => {
-      const action = actions.get(name);
-      return action !== undefined ? Ok(action) : Err(`action "${name}" not found in registry`);
+      const opt = option(actions.get(name));
+      return opt.isSome ? Ok(opt.value) : Err(`action "${name}" not found in registry`);
     },
 
     getWorkflow: (name) => {
-      const workflow = workflows.get(name);
-      return workflow !== undefined ? Ok(workflow) : Err(`workflow "${name}" not found in registry`);
+      const opt = option(workflows.get(name));
+      return opt.isSome ? Ok(opt.value) : Err(`workflow "${name}" not found in registry`);
     },
 
     getAgent: (name) => {
-      const agent = agents.get(name);
-      return agent !== undefined ? Ok(agent) : Err(`agent "${name}" not found in registry`);
+      const opt = option(agents.get(name));
+      return opt.isSome ? Ok(opt.value) : Err(`agent "${name}" not found in registry`);
     },
 
     getDataSource: (name) => {
-      const dataSource = dataSources.get(name);
-      return dataSource !== undefined ? Ok(dataSource) : Err(`data source "${name}" not found in registry`);
+      const opt = option(dataSources.get(name));
+      return opt.isSome ? Ok(opt.value) : Err(`data source "${name}" not found in registry`);
     },
 
     deployAgent: (agentName) => {
@@ -142,24 +142,24 @@ export const createRegistry = (): Registry => {
     isDeployed: (agentName) => deployed.has(agentName),
 
     getActionsForAgent: (agentName) => {
-      const agent = agents.get(agentName);
-      if (agent === undefined) return Err(`agent "${agentName}" not found in registry`);
-      return Ok(agent.actions);
+      const opt = option(agents.get(agentName));
+      if (opt.isNone) return Err(`agent "${agentName}" not found in registry`);
+      return Ok(opt.value.actions);
     },
 
     getWorkflowsForAgent: (agentName) => {
-      const agent = agents.get(agentName);
-      if (agent === undefined) return Err(`agent "${agentName}" not found in registry`);
-      return Ok(agent.workflows ?? []);
+      const opt = option(agents.get(agentName));
+      if (opt.isNone) return Err(`agent "${agentName}" not found in registry`);
+      return Ok(opt.value.workflows ?? []);
     },
 
     getTeammates: (agentName) => {
-      const self = agents.get(agentName);
+      const selfOpt = option(agents.get(agentName));
       const others = [...agents.values()].filter((a) => a.name !== agentName);
       // No team declared: every other agent is an available peer (opt-in scoping).
-      if (self === undefined || self.team === undefined) return others.map((a) => a.name);
+      if (selfOpt.isNone || option(selfOpt.value.team).isNone) return others.map((a) => a.name);
       // Team declared: only agents sharing the same team.
-      return others.filter((a) => a.team === self.team).map((a) => a.name);
+      return others.filter((a) => a.team === selfOpt.value.team).map((a) => a.name);
     },
 
     listActions: () => [...actions.keys()],

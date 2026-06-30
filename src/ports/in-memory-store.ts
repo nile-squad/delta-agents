@@ -9,7 +9,7 @@
  * to preserve insertion order without a secondary sort.
  */
 
-import { Ok, Err } from "slang-ts";
+import { Ok, Err, option } from "slang-ts";
 import type { StoragePort } from "./storage-port";
 import type {
   Task,
@@ -41,13 +41,13 @@ export const createInMemoryStore = (): StoragePort => {
       return Ok(task);
     },
     getTask: async (id) => {
-      const task = tasks.get(id);
-      return task !== undefined ? Ok(task) : Err(`task "${id}" not found`);
+      const opt = option(tasks.get(id));
+      return opt.isSome ? Ok(opt.value) : Err(`task "${id}" not found`);
     },
     updateTask: async (id, patch) => {
-      const existing = tasks.get(id);
-      if (existing === undefined) return Err(`task "${id}" not found`);
-      const updated: Task = { ...existing, ...patch };
+      const existing = option(tasks.get(id));
+      if (existing.isNone) return Err(`task "${id}" not found`);
+      const updated: Task = { ...existing.value, ...patch };
       tasks.set(id, updated);
       return Ok(updated);
     },
@@ -65,13 +65,13 @@ export const createInMemoryStore = (): StoragePort => {
       return Ok(tree);
     },
     getTaskTree: async (rootTaskId) => {
-      const tree = taskTrees.get(rootTaskId);
-      return tree !== undefined ? Ok(tree) : Err(`task tree "${rootTaskId}" not found`);
+      const opt = option(taskTrees.get(rootTaskId));
+      return opt.isSome ? Ok(opt.value) : Err(`task tree "${rootTaskId}" not found`);
     },
     updateTaskTree: async (rootTaskId, patch) => {
-      const existing = taskTrees.get(rootTaskId);
-      if (existing === undefined) return Err(`task tree "${rootTaskId}" not found`);
-      const updated: TaskTree = { ...existing, ...patch };
+      const existing = option(taskTrees.get(rootTaskId));
+      if (existing.isNone) return Err(`task tree "${rootTaskId}" not found`);
+      const updated: TaskTree = { ...existing.value, ...patch };
       taskTrees.set(rootTaskId, updated);
       return Ok(updated);
     },
@@ -82,13 +82,13 @@ export const createInMemoryStore = (): StoragePort => {
       return Ok(execution);
     },
     getExecution: async (id) => {
-      const execution = executions.get(id);
-      return execution !== undefined ? Ok(execution) : Err(`execution "${id}" not found`);
+      const opt = option(executions.get(id));
+      return opt.isSome ? Ok(opt.value) : Err(`execution "${id}" not found`);
     },
     updateExecution: async (id, patch) => {
-      const existing = executions.get(id);
-      if (existing === undefined) return Err(`execution "${id}" not found`);
-      const updated: Execution = { ...existing, ...patch };
+      const existing = option(executions.get(id));
+      if (existing.isNone) return Err(`execution "${id}" not found`);
+      const updated: Execution = { ...existing.value, ...patch };
       executions.set(id, updated);
       return Ok(updated);
     },
@@ -115,13 +115,13 @@ export const createInMemoryStore = (): StoragePort => {
       return Ok(req);
     },
     getApprovalRequest: async (id) => {
-      const req = approvals.get(id);
-      return req !== undefined ? Ok(req) : Err(`approval "${id}" not found`);
+      const opt = option(approvals.get(id));
+      return opt.isSome ? Ok(opt.value) : Err(`approval "${id}" not found`);
     },
     updateApprovalRequest: async (id, patch) => {
-      const existing = approvals.get(id);
-      if (existing === undefined) return Err(`approval "${id}" not found`);
-      const updated: ApprovalRequest = { ...existing, ...patch };
+      const existing = option(approvals.get(id));
+      if (existing.isNone) return Err(`approval "${id}" not found`);
+      const updated: ApprovalRequest = { ...existing.value, ...patch };
       approvals.set(id, updated);
       return Ok(updated);
     },
@@ -191,13 +191,13 @@ export const createInMemoryStore = (): StoragePort => {
       return Ok(queue);
     },
     getQueue: async (id) => {
-      const queue = queues.get(id);
-      return queue !== undefined ? Ok(queue) : Err(`queue "${id}" not found`);
+      const opt = option(queues.get(id));
+      return opt.isSome ? Ok(opt.value) : Err(`queue "${id}" not found`);
     },
     updateQueue: async (id, patch) => {
-      const existing = queues.get(id);
-      if (existing === undefined) return Err(`queue "${id}" not found`);
-      const updated: Queue = { ...existing, ...patch };
+      const existing = option(queues.get(id));
+      if (existing.isNone) return Err(`queue "${id}" not found`);
+      const updated: Queue = { ...existing.value, ...patch };
       queues.set(id, updated);
       return Ok(updated);
     },
