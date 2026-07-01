@@ -41,6 +41,7 @@ import { checkpointId } from "../shared/id";
 import { makeRunner, runScheduler } from "./scheduler";
 import type { Logger } from "../shared/logger-types";
 import type { Diagnostics } from "../shared/diagnostics";
+import { runCommitStep } from "./commit-step";
 
 const MAX_STEPS_DEFAULT = 100;
 
@@ -67,6 +68,7 @@ export const runSendLoop = async ({
   timezone,
   logger,
   diagnostics,
+  commitContextLimit,
 }: {
   task: Task;
   agent: Agent;
@@ -83,6 +85,8 @@ export const runSendLoop = async ({
   /** Per-engine diagnostics handle. Threaded into the scheduler so opt-in
    * modules can emit structured events; a no-op when diagnostics is disabled. */
   diagnostics: Diagnostics;
+  /** Max recent commits to inject into reasoner context. */
+  commitContextLimit?: number;
 }): Promise<SendResult> => {
   const root = makeRunner({
     task,
@@ -90,7 +94,7 @@ export const runSendLoop = async ({
     snapshot: startingSnapshot ?? snapshotFromTask(task),
     maxSteps,
   });
-  return runScheduler({ root, reasoner, registry, store, maxSteps, providerRetry, timezone, logger, diagnostics });
+  return runScheduler({ root, reasoner, registry, store, maxSteps, providerRetry, timezone, logger, diagnostics, commitContextLimit });
 };
 
 // ── Workflow task driver (C-a) ──────────────────────────────────────────────
@@ -154,6 +158,11 @@ export const runWorkflowTask = async ({
   registry,
   store,
   startingSnapshot,
+  reasoner,
+  providerRetry,
+  timezone,
+  logger,
+  commitMaxRetries,
   diagnostics,
 }: {
   task: Task;
@@ -167,6 +176,19 @@ export const runWorkflowTask = async ({
   /** Resume state reconstructed from a checkpoint. When present, completed phases
    *  are skipped and the persisted send-time input is reused (resumeTask path). */
   startingSnapshot?: TaskStateSnapshot;
+  /** Reasoner adapter used by the post-workflow commit step to ask the agent to
+   * acknowledge completion. Threaded from the engine factory so the same model
+   * that ran the workflow gets the commit call. */
+  reasoner: ReasonerPort;
+  /** Resilience policy for the commit step's reasoner call. Same defaults the
+   * scheduler uses for the free-loop reasoner. */
+  providerRetry?: RetryOptions;
+  /** Timezone for humanized time in commit-step reasoner messages. */
+  timezone?: string;
+  /** Per-engine logger threaded into the commit step for failure logging. */
+  logger: Logger;
+  /** Max reasoner attempts in the commit step before auto-committing with no notes. */
+  commitMaxRetries?: number;
   /** Per-engine diagnostics handle. Threaded into the workflow + phase + gateway
    * paths so opt-in modules can emit structured events. */
   diagnostics: Diagnostics;
@@ -298,8 +320,21 @@ export const runWorkflowTask = async ({
   });
 
   if (result.status === "completed") {
-    await store.updateTask(task.id, { status: "completed", updatedAt: new Date() });
-    return { taskId: task.id, status: "completed", snapshot: result.snapshot };
+    // Run the post-workflow commit step — the agent must acknowledge
+    // completion with optional notes. This is mandatory for workflows.
+    return runCommitStep({
+      task,
+      agent,
+      reasoner,
+      store,
+      workflowName,
+      snapshot: result.snapshot,
+      maxRetries: commitMaxRetries,
+      providerRetry,
+      timezone,
+      logger,
+      diagnostics,
+    });
   }
 
   // A blocked workflow already paused the task (escalation or supervision-escalate
@@ -374,6 +409,7 @@ export const resumeTask = async ({
   timezone,
   logger,
   diagnostics,
+  commitContextLimit,
 }: {
   taskId: string;
   agent: Agent;
@@ -389,13 +425,15 @@ export const resumeTask = async ({
   /** Per-engine diagnostics handle. Threaded into the scheduler so opt-in
    * modules can emit structured events. */
   diagnostics: Diagnostics;
+  /** Max recent commits to inject into reasoner context. */
+  commitContextLimit?: number;
 }): Promise<Result<SendResult, string>> => {
   const taskResult = await store.getTask(taskId);
   if (taskResult.isErr) return Err(`cannot resume: task "${taskId}" not found`);
   const task = taskResult.value;
 
-  if (task.status !== "paused" && task.status !== "pending") {
-    return Err(`cannot resume task "${taskId}" — current status is "${task.status}" (expected "paused" or "pending")`);
+  if (task.status !== "paused" && task.status !== "pending" && task.status !== "pendingCommit") {
+    return Err(`cannot resume task "${taskId}" — current status is "${task.status}" (expected "paused", "pending", or "pendingCommit")`);
   }
 
   const ckptResult = await store.getLatestCheckpoint(taskId);
@@ -408,6 +446,25 @@ export const resumeTask = async ({
 
   const updateResult = await store.updateTask(taskId, { status: "running", updatedAt: new Date() });
   if (updateResult.isErr) return Err(`failed to mark task as running: ${updateResult.error}`);
+
+  // A pendingCommit task resumes directly into the commit step — the workflow
+  // already completed, we just need the agent to acknowledge. Must be checked
+  // BEFORE the workflow branch because a pendingCommit task has its workflow
+  // set, but re-running the workflow would double-execute completed phases.
+  if (task.status === "pendingCommit") {
+    return Ok(await runCommitStep({
+      task,
+      agent,
+      reasoner,
+      store,
+      workflowName: task.workflow ?? "",
+      snapshot: startingSnapshot,
+      providerRetry,
+      timezone,
+      logger,
+      diagnostics,
+    }));
+  }
 
   // C-a coexistence holds on resume too: a workflow task re-enters the
   // deterministic workflow engine (reasoner-less), NOT the reasoner loop. The
@@ -424,12 +481,16 @@ export const resumeTask = async ({
       registry,
       store,
       startingSnapshot,
+      reasoner,
+      providerRetry,
+      timezone,
+      logger,
       diagnostics,
     });
     return Ok(result);
   }
 
-  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, providerRetry, timezone, logger, diagnostics });
+  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, providerRetry, timezone, logger, diagnostics, commitContextLimit });
   return Ok(result);
 };
 

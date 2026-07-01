@@ -521,10 +521,12 @@ describe("createOpenAIReasoner — message content inspection", () => {
 
     expect(capturedBody!["tool_choice"]).toBe("required");
     const tools = capturedBody!["tools"] as Array<{ function: { name: string } }>;
-    expect(tools).toHaveLength(2);
+    expect(tools).toHaveLength(4);
     const toolNames = tools.map((t) => t.function.name);
     expect(toolNames).toContain("request_action");
     expect(toolNames).toContain("finish_task");
+    expect(toolNames).toContain("system:search_commits");
+    expect(toolNames).toContain("system:commit");
   });
 });
 
@@ -744,5 +746,183 @@ describe("createOpenAIReasoner — skills", () => {
     const messages = capturedBody!["messages"] as Array<{ role: string; content: string }>;
     const userMsg = messages.find((m) => m.role === "user");
     expect(userMsg?.content).not.toMatch(/Skills/);
+  });
+});
+
+// ── Agent Commit Feature ────────────────────────────────────────────────────
+
+describe("createOpenAIReasoner — commit mode", () => {
+  it("offers only finish_task when commitMode is true, even with availableActions empty", async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const captureFetch: FetchFn = async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return new Response(JSON.stringify(mockFinishResponse("done")), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    };
+    const reasoner = createOpenAIReasoner({ apiKey: "test-key", fetch: captureFetch });
+    const result = await reasoner.reason(makeInput({ availableActions: [], commitMode: true, context: "call finish_task" }));
+
+    expect(result.isOk).toBe(true);
+    const tools = capturedBody!["tools"] as Array<{ function: { name: string } }>;
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.function.name).toBe("finish_task");
+  });
+
+  it("does not error on empty availableActions when commitMode is true", async () => {
+    const reasoner = createOpenAIReasoner({
+      apiKey: "test-key",
+      fetch: fetchReturning(mockFinishResponse("committed")),
+    });
+    const result = await reasoner.reason(makeInput({ availableActions: [], commitMode: true }));
+    expect(result.isOk).toBe(true);
+    if (result.isOk) expect(result.value.kind).toBe("done");
+  });
+
+  it("returns Err for empty availableActions when commitMode is false (default)", async () => {
+    const reasoner = createOpenAIReasoner({ apiKey: "test-key", fetch: fetchReturning(mockFinishResponse("x")) });
+    const result = await reasoner.reason(makeInput({ availableActions: [] }));
+    expect(result.isErr).toBe(true);
+  });
+});
+
+describe("createOpenAIReasoner — commit context rendering", () => {
+  it("renders a \"Recent commits:\" section in the user message when commitContext is set", async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const captureFetch: FetchFn = async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return new Response(JSON.stringify(mockCompletionResponse("lookup-customer", {})), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    };
+    const reasoner = createOpenAIReasoner({ apiKey: "test-key", fetch: captureFetch });
+    await reasoner.reason(makeInput({ commitContext: "- [onboarding] created the account (about an hour ago)" }));
+
+    const messages = capturedBody!["messages"] as Array<{ role: string; content: string }>;
+    const userMsg = messages.find((m) => m.role === "user");
+    expect(userMsg?.content).toMatch(/Recent commits:/);
+    expect(userMsg?.content).toMatch(/created the account/);
+  });
+
+  it("omits the \"Recent commits:\" section when commitContext is absent", async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const captureFetch: FetchFn = async (_url, init) => {
+      capturedBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return new Response(JSON.stringify(mockCompletionResponse("lookup-customer", {})), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    };
+    const reasoner = createOpenAIReasoner({ apiKey: "test-key", fetch: captureFetch });
+    await reasoner.reason(makeInput());
+
+    const messages = capturedBody!["messages"] as Array<{ role: string; content: string }>;
+    const userMsg = messages.find((m) => m.role === "user");
+    expect(userMsg?.content).not.toMatch(/Recent commits:/);
+  });
+});
+
+// A response where the model called system:search_commits.
+const mockSearchCommitsResponse = (args: Record<string, unknown>): Record<string, unknown> => ({
+  id: "chatcmpl-search-commits",
+  object: "chat.completion",
+  created: 1_700_000_000,
+  model: "gpt-4o-mini",
+  choices: [
+    {
+      index: 0,
+      message: {
+        role: "assistant",
+        content: null,
+        refusal: null,
+        tool_calls: [
+          {
+            id: "call_search_commits",
+            type: "function",
+            function: { name: "system:search_commits", arguments: JSON.stringify(args) },
+          },
+        ],
+      },
+      finish_reason: "tool_calls",
+      logprobs: null,
+    },
+  ],
+  usage: { prompt_tokens: 80, completion_tokens: 15, total_tokens: 95 },
+});
+
+// A response where the model called system:commit.
+const mockCommitResponse = (args: Record<string, unknown>): Record<string, unknown> => ({
+  id: "chatcmpl-commit",
+  object: "chat.completion",
+  created: 1_700_000_000,
+  model: "gpt-4o-mini",
+  choices: [
+    {
+      index: 0,
+      message: {
+        role: "assistant",
+        content: null,
+        refusal: null,
+        tool_calls: [
+          {
+            id: "call_commit",
+            type: "function",
+            function: { name: "system:commit", arguments: JSON.stringify(args) },
+          },
+        ],
+      },
+      finish_reason: "tool_calls",
+      logprobs: null,
+    },
+  ],
+  usage: { prompt_tokens: 80, completion_tokens: 15, total_tokens: 95 },
+});
+
+describe("createOpenAIReasoner — system:search_commits", () => {
+  it("parses a full query into a search-commits decision", async () => {
+    const reasoner = createOpenAIReasoner({
+      apiKey: "test-key",
+      fetch: fetchReturning(mockSearchCommitsResponse({ query: "welcome", workflow_name: "onboarding", all_agents: true, limit: 5 })),
+    });
+    const result = await reasoner.reason(makeInput());
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value).toEqual({
+      kind: "search-commits",
+      query: { query: "welcome", workflowName: "onboarding", allAgents: true, limit: 5 },
+    });
+  });
+
+  it("parses an empty call into a search-commits decision with an empty query", async () => {
+    const reasoner = createOpenAIReasoner({ apiKey: "test-key", fetch: fetchReturning(mockSearchCommitsResponse({})) });
+    const result = await reasoner.reason(makeInput());
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value).toEqual({ kind: "search-commits", query: {} });
+  });
+
+  it("caps limit at 100", async () => {
+    const reasoner = createOpenAIReasoner({ apiKey: "test-key", fetch: fetchReturning(mockSearchCommitsResponse({ limit: 500 })) });
+    const result = await reasoner.reason(makeInput());
+    expect(result.isOk).toBe(true);
+    if (!result.isOk || result.value.kind !== "search-commits") return;
+    expect(result.value.query.limit).toBe(100);
+  });
+});
+
+describe("createOpenAIReasoner — system:commit", () => {
+  it("parses a call with notes into a commit decision", async () => {
+    const reasoner = createOpenAIReasoner({ apiKey: "test-key", fetch: fetchReturning(mockCommitResponse({ notes: "closed the ticket" })) });
+    const result = await reasoner.reason(makeInput());
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value).toEqual({ kind: "commit", notes: "closed the ticket" });
+  });
+
+  it("parses a call without notes into a commit decision with notes undefined", async () => {
+    const reasoner = createOpenAIReasoner({ apiKey: "test-key", fetch: fetchReturning(mockCommitResponse({})) });
+    const result = await reasoner.reason(makeInput());
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value).toEqual({ kind: "commit", notes: undefined });
   });
 });

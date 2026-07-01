@@ -97,6 +97,16 @@ CREATE TABLE IF NOT EXISTS memories (
   content    TEXT    NOT NULL,
   created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS commits (
+  id            TEXT    PRIMARY KEY,
+  task_id       TEXT    NOT NULL,
+  agent_name    TEXT    NOT NULL,
+  workflow_name TEXT,
+  notes         TEXT,
+  checkpoint_id TEXT,
+  created_at    INTEGER NOT NULL
+);
 `;
 
 export const runMigrations = async (client: Client): Promise<void> => {

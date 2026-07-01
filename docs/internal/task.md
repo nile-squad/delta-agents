@@ -1,149 +1,88 @@
-# Task: Logger, Diagnostics, Cache Eviction, Opportunistic Cleanup
+# Agent Commit Feature — Task Spec
 
 ## Goal
-Four features for delta-agents:
-1. **Central logger** — pino-based, per-engine, created at `createDeltaEngine` time. Drains: console (dev, pretty), file (daily `.log`), sqlite (queryable), custom. Replaces the current global `configureLogger`/`createLogger` pattern.
-2. **Configurable diagnostics** — per-module toggle. When on, module emits structured events to the logger. Toggle off = zero emission.
-3. **Auto-eviction cache** — LRU + TTL read-through wrapper over `StoragePort`. Hot-path reads (getTask, getLatestCheckpoint, getMemoriesByAgent) cached in memory. Access refreshes TTL. Eviction = drop from memory only; DB retains data.
-4. **Opportunistic + manual cleanup** — lightweight cache-eviction pass piggybacked on engine work (`send`, `inspect`). Manual `delta.cleanup(options?)` for heavier store pruning (completed/failed tasks past retention, consumed messages past retention).
+Agents must call a `commit(notes?)` tool after completing a workflow to mark a checkpoint with optional notes. Notes are loaded into context on future runs. Search tool lets agents pull older commits on demand. Committing is mandatory for workflows (hard-block new tasks until committed), optional for free-loop tasks.
 
-## API Surface
+## Design
 
-### DeltaEngineConfig additions (in `src/engine/types.ts`)
+### New types (`src/shared/types.ts`)
 ```ts
-logger?: LoggerConfig;
-diagnostics?: DiagnosticsConfig;
-cache?: CacheConfig;
-```
-
-### DeltaEngine facade addition
-```ts
-cleanup: (options?: CleanupOptions) => Promise<Result<void, string>>;
-```
-
-### New types (in `src/shared/logger-types.ts`)
-```ts
-type LoggerDrain =
-  | { type: "console" }
-  | { type: "file"; dir?: string }       // default ".delta-logs", daily YYYY-MM-DD.log, append-only
-  | { type: "sqlite"; path?: string }    // default "delta-logs.sqlite", separate from task store
-  | { type: "custom"; write: (entry: LogEntry) => void };
-
-type LoggerConfig = {
-  mode?: "dev" | "prod";                  // default "dev"
-  level?: "trace" | "debug" | "info" | "warn" | "error";  // default "info"
-  drain?: LoggerDrain;                    // default: console in dev, file in prod
+type Commit = {
+  id: string;
+  taskId: string;
+  agentName: string;
+  workflowName: string | null;  // null for free-loop commits
+  notes: string | null;
+  checkpointId: string | null;
+  createdAt: Date;
 };
 
-type DiagnosticsConfig = {
-  actions?: boolean; workflows?: boolean; governance?: boolean;
-  supervision?: boolean; memory?: boolean; comms?: boolean;
-  tools?: boolean; engine?: boolean;
-};  // all default false
-
-type CacheConfig = {
-  maxEntries?: number;   // default 1000
-  ttlMs?: number;        // default 300_000 (5 min access-window)
-};
-
-type CleanupOptions = {
-  taskRetentionMs?: number;       // remove completed/failed tasks older than this
-  messageRetentionMs?: number;    // remove consumed messages older than this
-  evictCache?: boolean;           // default true
+type CommitQuery = {
+  query?: string;
+  workflowName?: string;
+  allAgents?: boolean;
+  limit?: number;
 };
 ```
 
-## Architecture
+### New status
+Add `"pendingCommit"` to `ExecutionStatus` union.
 
-### Logger
-- pino is always the engine under the hood.
-- `mode: "dev"` → pino-pretty to console (colorized, readable).
-- `mode: "prod"` → configured drain (file/sqlite/custom).
-- Default drain follows mode: dev=console, prod=file.
-- Per-engine logger created at `createDeltaEngine` time, passed to all modules via DI (closure variable, passed into factories).
-- Replaces `src/shared/logger.ts` entirely. No backward compat needed (not released).
-- `createLogger(module)` now takes the engine logger and returns a child logger: `engineLogger.child({ module })`.
-- Existing consumer: `src/engine/loop-detector.ts:31` — `const log = createLogger("loop-detector")`. Must be updated to receive logger via DI.
+### New ID generator (`src/shared/id.ts`)
+`commitId = (): string => generateId("cmt_")`
 
-### Diagnostics
-- Each module gets a pino child logger (`logger.child({ module: "actions" })`).
-- When a module's diagnostic toggle is on, it emits structured events at `debug`/`trace` level (timing, decision traces, counts).
-- Toggle off = zero emission (no overhead — guard clause before emission).
-- Diagnostics config lives on `DeltaEngineConfig`, resolved at engine creation, passed to modules.
+### New StoragePort methods (`src/ports/storage-port.ts`)
+```ts
+saveCommit: (commit: Commit) => Promise<Result<Commit, string>>;
+getCommitsByAgent: (agentName: string, limit?: number) => Promise<Result<Commit[], string>>;
+searchCommits: (query: CommitQuery, currentAgent: string) => Promise<Result<Commit[], string>>;
+```
 
-### Cache
-- LRU + TTL cache abstraction in `src/shared/cache.ts`.
-- `createCachedStore(inner: StoragePort, config: CacheConfig): StoragePort` — read-through wrapper.
-- Caches hot-path reads: `getTask`, `getLatestCheckpoint`, `getMemoriesByAgent`.
-- Access (read OR write) refreshes TTL (LRU-on-access).
-- Eviction = drop from memory only; DB retains the data.
-- Re-load from DB on next access starts fresh tracking.
-- Writes (`saveTask`, `saveCheckpoint`, `saveMemory`, `updateTask`) invalidate/update the cache entry.
-- `maxEntries` cap: when exceeded, evict least-recently-accessed entry.
-- `ttlMs`: entry expires if not accessed within this window.
+### Drizzle schema (`db/models/schema.ts` + `db/models/migrate.ts`)
+```sql
+CREATE TABLE IF NOT EXISTS commits (
+  id            TEXT    PRIMARY KEY,
+  task_id       TEXT    NOT NULL,
+  agent_name    TEXT    NOT NULL,
+  workflow_name TEXT,
+  notes         TEXT,
+  checkpoint_id TEXT,
+  created_at    INTEGER NOT NULL
+);
+```
 
-### Cleanup
-- **Opportunistic** (always-on, cheap): piggybacked on `send` and `inspect`. Evicts expired cache entries. No store I/O.
-- **Manual** (`delta.cleanup(options?)`): heavier work. Prunes completed/failed tasks past `taskRetentionMs`, prunes consumed messages past `messageRetentionMs`, evicts all expired cache entries. Destructive store operations are opt-in via retention params (omit = don't touch).
-- Cleanup needs store methods that don't exist yet on `StoragePort`. Add optional methods:
-  - `deleteTask?(id: string): Promise<Result<void, string>>`
-  - `deleteMessages?(taskId: string, olderThan?: Date): Promise<Result<number, string>>` — returns count deleted
-  - These are optional on `StoragePort` — adapters implement if they support cleanup. In-memory adapter implements them. Drizzle adapter implements them.
+### Config (`src/engine/types.ts`)
+```ts
+commitContextLimit?: number;   // default 10
+commitMaxRetries?: number;      // default 3
+```
 
-## File Structure (new + modified)
+## Progress
 
-### New files
-- `src/shared/logger-types.ts` — LoggerConfig, LoggerDrain, LogEntry, LogContext, Logger type
-- `src/shared/logger.ts` — REWRITE: pino-based factory `createEngineLogger(config): Logger`
-- `src/shared/diagnostics.ts` — DiagnosticsConfig, createDiagnostics
-- `src/shared/cache.ts` — LRU+TTL cache abstraction
-- `src/ports/cached-store.ts` — read-through StoragePort wrapper
-- `src/ports/log-sqlite.ts` — sqlite drain schema + writer
-- `src/engine/cleanup.ts` — opportunistic + manual cleanup logic
+### ✅ Phase 1 — Types & Storage
+All commit types, StoragePort methods, in-memory + drizzle + cached-store implementations, drizzle schema/DDL, barrel exports. Typecheck clean.
 
-### Modified files
-- `src/engine/types.ts` — add logger, diagnostics, cache to DeltaEngineConfig; add cleanup to DeltaEngine
-- `src/engine/create-delta-engine.ts` — wire logger, diagnostics, cache, cleanup
-- `src/engine/loop-detector.ts` — receive logger via DI instead of global createLogger
-- `src/ports/storage-port.ts` — add optional deleteTask, deleteMessages
-- `src/ports/in-memory-store.ts` — implement deleteTask, deleteMessages
-- `src/ports/drizzle-store.ts` — implement deleteTask, deleteMessages
-- `src/shared/index.ts` — update exports (logger types changed)
-- `src/index.ts` — export new public types (LoggerConfig, DiagnosticsConfig, CacheConfig, CleanupOptions)
-- `package.json` — add pino, pino-pretty
+### ✅ Phase 2 — Commit Step
+`runCommitStep()` — constrained reasoner turn after workflow completes. Builds commit prompt, calls reasoner once (no tools, `commitMode` flag), extracts notes from `kind: "done"` reason. Auto-commits on exhaustion. Retries via `retryWithJitter`.
 
-## Dependencies to Add
-- `pino` (approved)
-- `pino-pretty` (approved)
+### ✅ Phase 3 — Hard Block + Resume
+`send()` hard-blocks new tasks if agent has `pendingCommit` status. `resumeTask` accepts `pendingCommit` and re-runs the commit step. `commitMode` flag in OpenAI reasoner bypasses tool assembly, only offers `finish_task`.
 
-## Implementation Phases
+### ✅ Phase 4 — Context Injection
+Recent N commits fetched in `stepTask` (after memory retrieval, before mentions), formatted as bullet list, injected as `commitContext` on `ReasonerInput`. Rendered as `"Recent commits:"` section in the user message. `commitContextLimit` threaded from `DeltaEngineConfig` → `createDeltaEngine` → `send()`/`resume()` → `runSendLoop` → `runScheduler` → `stepTask`.
 
-| Phase | What | Deps on | Delegate to |
-|-------|------|---------|-------------|
-| 1 | Logger (pino + drains + wire into config) | — | backend-engineer |
-| 2 | Diagnostics (config + per-module emission) | Phase 1 | backend-engineer |
-| 3 | Cache (LRU+TTL + cached-store wrapper) | — | backend-engineer |
-| 4 | Cleanup (opportunistic + manual method + store methods) | Phase 3 | backend-engineer |
-| 5 | Tests (all features) | 1-4 | qa-engineer |
-| 6 | context.md update | 1-4 | architect |
+### ✅ Phase 5 — Search Tool
+`system:search_commits` internal tool added. Tool definition + builder in `openai-reasoner.ts`. New `kind: "search-commits"` variant on `ReasonerDecision`. Scheduler handler calls `store.searchCommits()` and returns result in `lastToolInfoResult` (same pattern as `tool-info`). Always offered (no dependency on tool history).
 
-Phases 1+3 run in parallel. 2 after 1. 4 after 3. 5 after all.
+### ✅ Phase 6 — Free-loop Optional Commit
+`system:commit` tool added for free-loop tasks. Tool definition + builder in `openai-reasoner.ts`. New `kind: "commit"` variant on `ReasonerDecision`. Scheduler handler creates a `Commit` record (with `workflowName: null` for free-loop), links to latest checkpoint, saves via `store.saveCommit()`. Task continues running after commit — does NOT change task status. Always offered in non-commit mode.
 
-## Verification
-- `pnpm test` — all tests pass (existing + new)
-- `tsc --noEmit` — no type errors
-- `pnpm build` — builds clean
+### ✅ Phase 7 — Tests
+Unit tests: `commit-step.spec.ts` (formatCommitContext, runCommitStep — finish_task commit, auto-commit on exhaustion, reasoner-failure fallback, pendingCommit status transition), `in-memory-store.spec.ts` + `drizzle-store.spec.ts` (commit CRUD + searchCommits filters), `cached-store.spec.ts` (commit pass-through), `openai-reasoner.spec.ts` (commitMode tool assembly, commitContext rendering, search_commits/commit tool-call parsing). Integration: `agent-commit.spec.ts` — post-workflow commit, commit context injection + `commitContextLimit`, hard block + resume from `pendingCommit`, free-loop `system:commit`, `system:search_commits`. 911 tests pass, typecheck clean.
 
-## Important Notes
-- Use `safeTry` over try/catch
-- No `any`, no `unknown`
-- `type` over `interface`, no `enum`
-- Factory functions, no classes
-- Named params `{ }` not positional
-- JSDoc explains WHY
-- Match existing code style
-- pino is always the engine; dev mode = pino-pretty to console; prod = configured drain
-- Cache is read-through over StoragePort — same interface, transparent to engine
-- Eviction = memory only, never DB
-- Destructive cleanup is opt-in via retention params
-- Default logger: dev mode = console (pretty), silent if not configured? No — dev mode defaults to console pretty. Prod defaults to file drain.
+## Impact
+- New entity, no breaking changes to existing types
+- New StoragePort methods (required, not optional — all adapters must implement)
+- New task status value (additive)
+- New internal tools (system:commit, system:search_commits)
+- Engine config gains two optional fields

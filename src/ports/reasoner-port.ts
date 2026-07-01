@@ -12,7 +12,7 @@
  */
 
 import type { Result } from "slang-ts";
-import type { Task, Cost } from "../shared/types";
+import type { Task, Cost, CommitQuery } from "../shared/types";
 import type { ToolHistoryEntry } from "../authoring/types";
 
 // What the reasoner returns: a proposed action and the input it wants to pass.
@@ -102,7 +102,12 @@ export type ReasonerDecision =
         | { type: "schema"; toolName: string }
         | { type: "history" }
         | { type: "history-entry"; index: number };
-    };
+    }
+  | { kind: "search-commits"; query: CommitQuery }
+  /** Free-loop commit: the agent voluntarily records a checkpoint with optional
+   * notes. Unlike the post-workflow commit step (runCommitStep), this does not
+   * change the task status — the task continues running. */
+  | { kind: "commit"; notes?: string };
 
 export type ReasonerInput = {
   task: Task;
@@ -132,6 +137,13 @@ export type ReasonerInput = {
   rolePrompt: string;
   /** Retrieved memory/context injected by the memory retrieval step. */
   context?: string;
+  /**
+   * Recent commit history for this agent, formatted as a bullet list.
+   * Injected alongside memory context so the agent can reference its own
+   * past work. Separate from `context` to give the model a distinct
+   * "Recent commits" section in the prompt.
+   */
+  commitContext?: string;
   /**
    * Engine-level org instructions baked into the system message prefix. The
    * OpenAI reasoner fills this from its construction config; tests inject it
@@ -182,6 +194,15 @@ export type ReasonerInput = {
    * turn, where the OpenAI reasoner surfaces it in the user message.
    */
   toolInfoResult?: string;
+  /**
+   * When true, the reasoner is in commit mode: only finish_task is offered
+   * (no request_action, delegate, mention, communicate, or system tools).
+   * Used by the post-workflow commit step so the agent can acknowledge
+   * completion with optional notes. The context string carries the commit
+   * prompt; availableActions is empty (the guard that rejects empty actions
+   * is bypassed in commit mode).
+   */
+  commitMode?: boolean;
 };
 
 export type ReasonerPort = {

@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from "vitest";
 import { createDrizzleStore } from "../../src/ports/drizzle-store";
-import type { Task, TaskTree, Execution, Checkpoint, ApprovalRequest, EscalationRecord, Message, Memory, Queue } from "../../src/shared/types";
+import type { Task, TaskTree, Execution, Checkpoint, ApprovalRequest, EscalationRecord, Message, Memory, Queue, Commit } from "../../src/shared/types";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -484,5 +484,93 @@ describe("DrizzleStore — memories", () => {
     const result = await store.getMemoriesByAgent("nobody");
     expect(result.isOk).toBe(true);
     if (result.isOk) expect(result.value).toEqual([]);
+  });
+});
+
+// ── Commits ───────────────────────────────────────────────────────────────────
+
+const makeCommit = (overrides: Partial<Commit> = {}): Commit => ({
+  id:           "cmt_test_001",
+  taskId:       "tsk_test_001",
+  agentName:    "agent-x",
+  workflowName: "onboarding",
+  notes:        "created the account",
+  checkpointId: "ckpt_test_001",
+  createdAt:    new Date("2026-06-01T10:00:00.000Z"),
+  ...overrides,
+});
+
+describe("DrizzleStore — commits", () => {
+  it("saveCommit then getCommitsByAgent returns the commit", async () => {
+    const store = await createDrizzleStore();
+    await store.saveCommit(makeCommit());
+    const result = await store.getCommitsByAgent("agent-x");
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value).toHaveLength(1);
+    expect(result.value[0]?.notes).toBe("created the account");
+    expect(result.value[0]?.workflowName).toBe("onboarding");
+    expect(result.value[0]?.checkpointId).toBe("ckpt_test_001");
+  });
+
+  it("getCommitsByAgent returns newest-first, capped to limit, scoped by agent", async () => {
+    const store = await createDrizzleStore();
+    await store.saveCommit(makeCommit({ id: "cmt_1", notes: "first", createdAt: new Date(1) }));
+    await store.saveCommit(makeCommit({ id: "cmt_2", notes: "second", createdAt: new Date(2) }));
+    await store.saveCommit(makeCommit({ id: "cmt_3", notes: "third", createdAt: new Date(3) }));
+    await store.saveCommit(makeCommit({ id: "cmt_other", agentName: "agent-y", notes: "not mine", createdAt: new Date(4) }));
+
+    const result = await store.getCommitsByAgent("agent-x", 2);
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.map((c) => c.id)).toEqual(["cmt_3", "cmt_2"]);
+  });
+
+  it("saveCommit round-trips a null workflowName and null notes (free-loop commit)", async () => {
+    const store = await createDrizzleStore();
+    await store.saveCommit(makeCommit({ workflowName: null, notes: null, checkpointId: null }));
+    const result = await store.getCommitsByAgent("agent-x");
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value[0]?.workflowName).toBe(null);
+    expect(result.value[0]?.notes).toBe(null);
+    expect(result.value[0]?.checkpointId).toBe(null);
+  });
+
+  it("searchCommits filters by workflowName and scopes to the current agent by default", async () => {
+    const store = await createDrizzleStore();
+    await store.saveCommit(makeCommit({ id: "cmt_1", workflowName: "onboarding" }));
+    await store.saveCommit(makeCommit({ id: "cmt_2", workflowName: "offboarding" }));
+    await store.saveCommit(makeCommit({ id: "cmt_3", agentName: "agent-y", workflowName: "onboarding" }));
+
+    const result = await store.searchCommits({ workflowName: "onboarding" }, "agent-x");
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.map((c) => c.id)).toEqual(["cmt_1"]);
+  });
+
+  it("searchCommits matches query as a substring of notes", async () => {
+    const store = await createDrizzleStore();
+    await store.saveCommit(makeCommit({ id: "cmt_1", notes: "sent the welcome email" }));
+    await store.saveCommit(makeCommit({ id: "cmt_2", notes: "closed the ticket" }));
+
+    const result = await store.searchCommits({ query: "welcome" }, "agent-x");
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.map((c) => c.id)).toEqual(["cmt_1"]);
+  });
+
+  it("searchCommits with allAgents scopes across every agent", async () => {
+    const store = await createDrizzleStore();
+    await store.saveCommit(makeCommit({ id: "cmt_mine", notes: "mine" }));
+    await store.saveCommit(makeCommit({ id: "cmt_theirs", agentName: "agent-y", notes: "theirs" }));
+
+    const scoped = await store.searchCommits({}, "agent-x");
+    expect(scoped.isOk && scoped.value.map((c) => c.id)).toEqual(["cmt_mine"]);
+
+    const all = await store.searchCommits({ allAgents: true }, "agent-x");
+    expect(all.isOk).toBe(true);
+    if (!all.isOk) return;
+    expect(all.value.map((c) => c.id).sort()).toEqual(["cmt_mine", "cmt_theirs"]);
   });
 });

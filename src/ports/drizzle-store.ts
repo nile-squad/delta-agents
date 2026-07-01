@@ -18,7 +18,7 @@ import { Ok, Err } from "slang-ts";
 import type { Result } from "slang-ts";
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
-import { eq, desc, lt, and, inArray } from "drizzle-orm";
+import { eq, desc, lt, and, inArray, like } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import type { StoragePort } from "./storage-port";
 import type {
@@ -31,6 +31,8 @@ import type {
   EscalationTrigger,
   Message,
   Memory,
+  Commit,
+  CommitQuery,
   Queue,
   Cost,
   RiskState,
@@ -48,6 +50,7 @@ import {
   escalations,
   messages,
   memories,
+  commits,
   queues,
 } from "../../db/models/schema";
 import { runMigrations } from "../../db/models/migrate";
@@ -139,6 +142,16 @@ const toMemory = (r: typeof memories.$inferSelect): Memory => ({
   kind:      r.kind,
   content:   r.content,
   createdAt: new Date(r.createdAt),
+});
+
+const toCommit = (r: typeof commits.$inferSelect): Commit => ({
+  id:           r.id,
+  taskId:       r.taskId,
+  agentName:    r.agentName,
+  workflowName: r.workflowName,
+  notes:        r.notes,
+  checkpointId: r.checkpointId,
+  createdAt:    new Date(r.createdAt),
 });
 
 // ── Store factory ─────────────────────────────────────────────────────────────
@@ -511,6 +524,50 @@ const buildStore = (db: DB): StoragePort => ({
       return Ok(rows.map(toMemory));
     } catch (e) {
       return Err(`failed to get memories for agent "${agentName}": ${String(e)}`);
+    }
+  },
+
+  // ── Commits ──────────────────────────────────────────────────────────────
+
+  saveCommit: async (commit: Commit): Promise<Result<Commit, string>> => {
+    try {
+      await db.insert(commits).values({
+        id:           commit.id,
+        taskId:       commit.taskId,
+        agentName:    commit.agentName,
+        workflowName: commit.workflowName,
+        notes:        commit.notes,
+        checkpointId: commit.checkpointId,
+        createdAt:    commit.createdAt.getTime(),
+      });
+      return Ok(commit);
+    } catch (e) {
+      return Err(`failed to save commit "${commit.id}": ${String(e)}`);
+    }
+  },
+
+  getCommitsByAgent: async (agentName: string, limit?: number): Promise<Result<Commit[], string>> => {
+    try {
+      const base = db.select().from(commits).where(eq(commits.agentName, agentName)).orderBy(desc(commits.createdAt));
+      const rows = limit !== undefined ? await base.limit(limit) : await base;
+      return Ok(rows.map(toCommit));
+    } catch (e) {
+      return Err(`failed to get commits for agent "${agentName}": ${String(e)}`);
+    }
+  },
+
+  searchCommits: async (query: CommitQuery, currentAgent: string): Promise<Result<Commit[], string>> => {
+    try {
+      const conditions = [];
+      if (query.allAgents !== true) conditions.push(eq(commits.agentName, currentAgent));
+      if (query.workflowName !== undefined) conditions.push(eq(commits.workflowName, query.workflowName));
+      if (query.query !== undefined) conditions.push(like(commits.notes, `%${query.query}%`));
+      const base = db.select().from(commits);
+      const filtered = conditions.length > 0 ? base.where(and(...conditions)) : base;
+      const rows = await filtered.orderBy(desc(commits.createdAt)).limit(query.limit ?? 20);
+      return Ok(rows.map(toCommit));
+    } catch (e) {
+      return Err(`failed to search commits: ${String(e)}`);
     }
   },
 

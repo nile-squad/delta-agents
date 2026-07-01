@@ -12,6 +12,9 @@ export type {
   ApprovalRequest,
   Message,
   Queue,
+  Memory,
+  Commit,
+  CommitQuery,
   SupervisionPolicy,
 } from "./types";
 
@@ -30,6 +33,8 @@ export {
   approvalId,
   messageId,
   queueId,
+  memoryId,
+  commitId,
 } from "./id";
 
 export type { LogLevel, LogContext, LogEntry, LoggerDrain, LoggerConfig, Logger } from "./logger-types";

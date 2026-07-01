@@ -34,7 +34,9 @@ export type MockResponse =
   | { delegate: DelegationRequest }
   | { mention: MentionRequest }
   | { communicate: CommunicationRequest }
-  | { done: true; reason?: string };
+  | { done: true; reason?: string }
+  | { commit: true; notes?: string }
+  | { searchCommits: { query?: string; workflowName?: string; allAgents?: boolean; limit?: number } };
 
 export type MockReasonerOptions = {
   /**
@@ -74,6 +76,12 @@ export const createMockReasoner = ({
       }
       if ("done" in next) {
         return Ok({ kind: "done", ...(next.reason !== undefined ? { reason: next.reason } : {}) });
+      }
+      if ("commit" in next) {
+        return Ok({ kind: "commit", ...(next.notes !== undefined ? { notes: next.notes } : {}) });
+      }
+      if ("searchCommits" in next) {
+        return Ok({ kind: "search-commits", query: next.searchCommits });
       }
 
       // Validate that the scripted action is actually available — prevents tests

@@ -137,6 +137,17 @@ export type DeltaEngineConfig = {
    * logger). See `DiagnosticsConfig` for the supported module names.
    */
   diagnostics?: DiagnosticsConfig;
+  /**
+   * Number of recent commits to load into the agent's context on each
+   * reasoner turn. Default 10. The agent can search for older commits
+   * on demand via the system:search_commits tool (Phase 5).
+   */
+  commitContextLimit?: number;
+  /**
+   * Maximum reasoner attempts in the post-workflow commit step before
+   * auto-committing with no notes. Default 3.
+   */
+  commitMaxRetries?: number;
 };
 
 export type SendInput = {
@@ -176,7 +187,7 @@ export type SendResult = {
    * attached as a message to its existing task and no new task was created
    * (spec §No New Task When Work Is Pending; taskId is the existing task's id).
    */
-  status: "completed" | "failed" | "blocked" | "queued";
+  status: "completed" | "failed" | "blocked" | "queued" | "pendingCommit";
   snapshot: TaskStateSnapshot;
   /** Populated when status is "blocked", "failed", or "queued". */
   reason?: string;

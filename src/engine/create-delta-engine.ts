@@ -62,6 +62,8 @@ export const createDeltaEngine = async ({
   cache: configCache,
   logger: configLogger,
   diagnostics: configDiagnostics,
+  commitContextLimit: configCommitContextLimit,
+  commitMaxRetries: configCommitMaxRetries,
 }: DeltaEngineConfig = {}): Promise<DeltaEngine> => {
   // Per-engine logger: built once, owned by the engine closure, threaded into
   // every module that needs it via DI. The default is a dev-mode pino-pretty
@@ -232,6 +234,17 @@ export const createDeltaEngine = async ({
               `message queued, no new task created (invariant 26)`,
           });
         }
+
+        // Hard block: an agent with uncommitted workflow work cannot accept new
+        // tasks. The caller must resume the pending task so the agent can commit.
+        if (isMajor && existing.status === "pendingCommit") {
+          return Ok({
+            taskId: existing.id,
+            status: "pendingCommit",
+            snapshot: snapshotFromTask(existing),
+            reason: `agent "${agentName}" has uncommitted work on task "${existing.id}" — call delta.resume("${existing.id}") to let the agent commit`,
+          });
+        }
       }
     }
 
@@ -275,10 +288,25 @@ export const createDeltaEngine = async ({
 
     // C-a coexistence: a task with an assigned workflow runs deterministically
     // through the workflow engine (reasoner-less); a workflow-less task uses the
-    // free reasoner loop.
+    // free reasoner loop. The reasoner is threaded into the workflow path so the
+    // post-workflow commit step can prompt the agent to acknowledge completion.
     const result = workflowName !== undefined
-      ? await runWorkflowTask({ task, agent: agentDef, workflowName, input, actionInputs, registry, store, diagnostics })
-      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, providerRetry, timezone: configTimezone, logger, diagnostics });
+      ? await runWorkflowTask({
+        task,
+        agent: agentDef,
+        workflowName,
+        input,
+        actionInputs,
+        registry,
+        store,
+        diagnostics,
+        reasoner: resolveReasoner(agentDef),
+        providerRetry,
+        timezone: configTimezone,
+        logger,
+        commitMaxRetries: configCommitMaxRetries,
+      })
+      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, providerRetry, timezone: configTimezone, logger, diagnostics, commitContextLimit: configCommitContextLimit });
 
     return Ok(result);
   };
@@ -320,6 +348,7 @@ export const createDeltaEngine = async ({
       timezone: configTimezone,
       logger,
       diagnostics,
+      commitContextLimit: configCommitContextLimit,
     });
   };
 

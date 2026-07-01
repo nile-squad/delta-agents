@@ -23,9 +23,9 @@
 - If you can read it from code, it doesn't need to be here
 - Only document what's **non-obvious** from reading source files
 
-## Current State (as of 2026-06-22)
+## Current State (as of 2026-07-01)
 
-All packages A–J are implemented and tested (~690 tests pass). Public surface at `src/index.ts`. `dist/` loads under plain Node. Full spec in `docs/internal/delta-agents.spec.md`.
+All packages A–J are implemented and tested (911 tests pass). Public surface at `src/index.ts`. `dist/` loads under plain Node. Full spec in `docs/internal/delta-agents.spec.md`.
 
 All H-series subsystems are wired into the live path. Remaining work is catalogued below, not whole subsystems.
 
@@ -50,6 +50,7 @@ All H-series subsystems are wired into the live path. Remaining work is catalogu
 - **System prompt + time awareness:** `DeltaEngineConfig.systemPrompt?` (static org instructions, baked into system message prefix for prompt cache) + `DeltaEngineConfig.timezone?` (grounds agents with time awareness). Current time (humanized + ISO + tz) injected into user message per `reason()` call. Prior messages loaded from store with relative time (`formatDistanceToNow`). System message = cacheable prefix only; user message = all varying content. `buildMessages` exported for direct testing.
 - **Package I (correctness):** `deploy()` gates `send()`. All `as unknown` casts centralized to `snapshotFromJson`/`snapshotToJson` (exactly 1 cast in `src/`).
 - **Package J (surface + docs):** Complete public API at `src/index.ts`. README rewritten from shipped surface.
+- **Agent Commit Feature:** All 7 phases done. Commit entity with storage (in-memory + Drizzle), post-workflow commit step, hard-block on pendingCommit, resume support, context injection (recent N commits into reasoner prompt), `system:search_commits` tool, free-loop optional `system:commit`, full unit + integration test coverage.
 
 ### What's deferred (catalogued)
 - Per-action reasoner-filled inputs (single shared `input` bag today)
@@ -63,7 +64,7 @@ All H-series subsystems are wired into the live path. Remaining work is catalogu
 - `Queue` entity is spec-aligned but NOT engine-driven (engine uses `TaskTree.queuedChildren` + `Message`s)
 
 ### Storage
-All 8 entities have working store methods in both adapters (in-memory + Drizzle). No remaining work needs new DB schema. New persisted state rides inside `TaskStateSnapshot` JsonRecord.
+All 9 entities have working store methods in both adapters (in-memory + Drizzle). New `commits` table added for the Agent Commit Feature (Drizzle schema + migrations). No remaining work needs new DB schema. New persisted state rides inside `TaskStateSnapshot` JsonRecord.
 
 ---
 
@@ -157,6 +158,73 @@ All 8 entities have working store methods in both adapters (in-memory + Drizzle)
 - Diagnostics `LogContext` cast at the diagnostics→logger boundary: diagnostics carries extras (`durationMs`, `kind`) not in `LogContext`. Cast is sound at runtime (pino accepts any payload), localized to one file.
 - `deleteTask` in in-memory store cascades (checkpoints, messages, escalations, executions) but drizzle-store cascade is explicit per-table deletes. Both match their adapter's idiom.
 - Opportunistic cleanup runs on every `send`/`inspect` — `cache.evictExpired()` is O(n) over cache size. Acceptable: cache is bounded by `maxEntries`.
+
+---
+
+## Agent Commit Feature (2026-07-01)
+
+### Decision: Commit as a new entity (not Memory or Checkpoint reuse)
+- `Commit` is a first-class entity with its own table, types, and StoragePort methods.
+- Not a special kind of Memory — commits carry workflow context (workflowName, checkpointId) that memories don't.
+- Not a Checkpoint — checkpoints are internal engine state (TaskStateSnapshot), commits are agent-facing records with optional notes.
+- Linked to the latest checkpoint via `checkpointId` for traceability.
+
+### Decision: Commit step = post-workflow constrained reasoner turn
+- After a workflow completes, the engine enters `runCommitStep()`: a single reasoner call with `commitMode` flag.
+- `commitMode` disables all tool definitions except `finish_task`. The model can only choose to commit (with notes) or fail.
+- Notes extracted from `kind: "done"` with `reason` — no new ReasonerDecision kind needed.
+- Auto-commits with empty notes if the model exhausts retries (prevents indefinite blocking).
+
+### Decision: Hard block via existing `pendingCommit` status
+- `send()` checks agent's latest task status. If `pendingCommit`, the new task is rejected.
+- `resumeTask` accepts `pendingCommit` status and re-enters the commit step (must check before workflow branch, since a pendingCommit task has its workflow set).
+- Simple, leverages existing status flow. No separate lock mechanism needed.
+
+### Decision: commitContext as separate ReasonerInput field (not merged into context)
+- `commitContext` is a distinct field on `ReasonerInput`, alongside `context` (memory + mentions).
+- Rendered as a separate `"Recent commits:"` section in the user message, after `"Context:"`.
+- Gives the model a clear signal about its past work, distinct from contextual memory.
+- `formatCommitContext()` transforms `Commit[]` → bullet list: `- [workflowName] notes (about 2 minutes ago)`. Humanized relative time via `date-fns/formatDistanceToNow`.
+
+### Decision: Best-effort commit injection
+- Commit fetch in `stepTask` is best-effort — store error or empty result silently yields no commit context.
+- Same pattern as memory retrieval (`retrieveContext`). The step must proceed regardless.
+
+### Decision: Threading `commitContextLimit` through the full call chain
+- `DeltaEngineConfig.commitContextLimit` (default 10) → `createDeltaEngine` → `send()`/`resume()` → `runSendLoop` → `runScheduler` → `stepTask`.
+- Configurable per engine instance. Default 10 means the model sees the last 10 commits by default.
+- Also threaded through `resumeTask` → `runSendLoop` for the resume path.
+
+### Decision: `system:search_commits` as a new `ReasonerDecision` kind (not `tool-info`)
+- Unlike schema/history/entry lookups (which read from `ReasonerInput`), commit search needs access to the store — only the scheduler has it. So `search-commits` gets its own decision kind with a dedicated scheduler handler.
+- Returns results via the existing `lastToolInfoResult` -> `ReasonerInput.toolInfoResult` round-trip (same pattern as `tool-info`).
+- Always offered to the model regardless of tool history or available tools — no precondition.
+
+### Decision: Free-loop `system:commit` as a voluntary, non-terminal tool
+- Unlike the post-workflow commit step (`runCommitStep`), the free-loop `system:commit` does NOT change task status or end the task. The Commit is recorded and the loop continues.
+- The commit is a `Commit` record with `workflowName: null` (free-loop), linked to the latest checkpoint.
+- Always offered in non-commit mode. The model can call it any number of times.
+- Handler follows the same `lastToolInfoResult` -> `ReasonerInput.toolInfoResult` round-trip for confirmation.
+- `commitId` imported into scheduler for generating commit IDs.
+
+### Files
+- `src/shared/types.ts`: `Commit`, `CommitQuery` types, `"pendingCommit"` in `ExecutionStatus`
+- `src/shared/id.ts`: `commitId()` generator
+- `src/ports/storage-port.ts`: `saveCommit`, `getCommitsByAgent`, `searchCommits` methods
+- `src/ports/in-memory-store.ts`, `src/ports/drizzle-store.ts`, `src/ports/cached-store.ts`: store implementations
+- `src/engine/commit-step.ts`: `runCommitStep()`, `formatCommitContext()`, `buildCommitPrompt()`
+- `src/engine/runtime.ts`: `runSendLoop`, `resumeTask` thread `commitContextLimit`
+- `src/engine/scheduler.ts`: `stepTask` fetches + injects commit context; handles `kind: "search-commits"`
+- `src/engine/create-delta-engine.ts`: `send()` + `resume()` pass config
+- `src/ports/openai-reasoner.ts`: renders `commitContext` in system prompt; `system:search_commits` + `system:commit` tool defs + handlers
+- `src/ports/reasoner-port.ts`: `commitMode` flag, `commitContext` field, `search-commits` + `commit` decision kinds
+- `db/models/schema.ts` + `db/models/migrate.ts`: commits DDL
+
+### Tradeoffs accepted
+- `kind: "done"` with `reason` doubles as both a normal task completion and a commit acknowledgement — the reasoner must produce `reason` text even for commits. This is close to natural model behavior (models naturally summarize when asked "what did you do?"), so it's acceptable.
+- `commitContext` is fetched on every step, not cached. Acceptable: commit count is bounded by `commitContextLimit` (default 10) and the query is a simple SELECT.
+- Drizzle `searchCommits` builds WHERE clause dynamically with `and(...conditions)` — functional but not optimal for SQL query planning. Fine at expected scale (hundreds, not millions of commits).
+- `runCommitStep`'s retry loop (agent-wrong-decision and reasoner-API-failure) both fall through to the same "exhausted retries" auto-commit — a single `send()` call always converges to `completed` and never *returns* `pendingCommit` from a handled path. The persisted `pendingCommit` status only matters for crash recovery (process dies mid-loop before finalizing); tests exercise the hard-block/resume path by seeding a task directly in `pendingCommit` state rather than triggering it via reasoner failure.
 
 ---
 

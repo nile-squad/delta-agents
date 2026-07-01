@@ -252,6 +252,8 @@ const USE_TOOL_NAME = "system:use_tool";
 const GET_TOOL_SCHEMA_NAME = "system:get_tool_schema";
 const GET_TOOL_HISTORY_NAME = "system:get_tool_history";
 const GET_TOOL_HISTORY_ENTRY_NAME = "system:get_tool_history_entry";
+const SEARCH_COMMITS_NAME = "system:search_commits";
+const COMMIT_NAME = "system:commit";
 
 /**
  * The model calls `system:use_tool` to execute a registered tool. The result is
@@ -362,6 +364,79 @@ const buildGetToolHistoryEntryTool = (): ChatCompletionTool => ({
   },
 });
 
+/**
+ * The model calls `system:search_commits` to search across commit records
+ * (agent checkpoint annotations) using optional keyword search, workflow
+ * filter, or cross-agent scope. Use this to find older commits that are not
+ * shown in the recent commit context automatically injected each turn.
+ *
+ * Always offered: no history dependency — it queries the commit store.
+ * The scheduler executes the query and stores the result in toolInfoResult.
+ */
+const buildSearchCommitsTool = (): ChatCompletionTool => ({
+  type: "function",
+  function: {
+    name: SEARCH_COMMITS_NAME,
+    description:
+      "Search across commit records (agent checkpoint annotations) using optional " +
+      "keyword search, workflow filter, or cross-agent scope. Use this to find older " +
+      "commits that are not shown in the recent commit context.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Keyword to search for in commit notes (case-insensitive substring match).",
+        },
+        workflow_name: {
+          type: "string",
+          description: "Filter by workflow name.",
+        },
+        all_agents: {
+          type: "boolean",
+          description: "When true, search across all agents. Default: your commits only.",
+        },
+        limit: {
+          type: "number",
+          description: "Max results. Default 20.",
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+});
+
+/**
+ * The model calls `system:commit` during the free-loop (non-workflow) send loop
+ * to voluntarily record a checkpoint with optional notes. Unlike the
+ * post-workflow commit step, this does not end the task — the agent continues
+ * reasoning afterward.
+ *
+ * Always offered in the free loop. The scheduler handles persistence.
+ */
+const buildCommitTool = (): ChatCompletionTool => ({
+  type: "function",
+  function: {
+    name: COMMIT_NAME,
+    description:
+      "Record a checkpoint with optional notes about what you accomplished. " +
+      "Use this periodically during task execution to save your progress. " +
+      "This does not end the task — you can continue working after committing.",
+    parameters: {
+      type: "object",
+      properties: {
+        notes: {
+          type: "string",
+          description: "Optional summary of what was accomplished since the last commit.",
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+});
+
 // ── Message builder ───────────────────────────────────────────────────────────
 
 /**
@@ -370,7 +445,7 @@ const buildGetToolHistoryEntryTool = (): ChatCompletionTool => ({
  * without standing up a live reasoner.
  */
 export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
-  const { task, availableActions, availableAgents, availableChannels, availableSkills, availableActionSchemas, availableTools, toolHints, agentRole, rolePrompt, context, systemPrompt, currentTimestamp, priorMessages, toolHistory, toolInfoResult } = input;
+  const { task, availableActions, availableAgents, availableChannels, availableSkills, availableActionSchemas, availableTools, toolHints, agentRole, rolePrompt, context, commitContext, systemPrompt, currentTimestamp, priorMessages, toolHistory, toolInfoResult } = input;
   const canDelegate = availableAgents !== undefined && availableAgents.length > 0;
   const canCommunicate = availableChannels !== undefined && availableChannels.length > 0;
   const hasSkills = availableSkills !== undefined && availableSkills.length > 0;
@@ -479,6 +554,9 @@ export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[
   }
   if (context !== undefined && context.length > 0) {
     userLines.push("", "Context:", context);
+  }
+  if (commitContext !== undefined && commitContext.length > 0) {
+    userLines.push("", "Recent commits:", commitContext);
   }
 
   const user: ChatCompletionMessageParam = {
@@ -656,9 +734,28 @@ const parseToolCall = async (
     return Ok({ kind: "tool-info", request: { type: "history-entry", index } });
   }
 
+  // Search commits — model wants to query the commit store for past records.
+  // Builds a CommitQuery from optional args; the scheduler executes it and
+  // stores the result in toolInfoResult (same pattern as tool-info).
+  if (call.function.name === SEARCH_COMMITS_NAME) {
+    const query: { query?: string; workflowName?: string; allAgents?: boolean; limit?: number } = {};
+    if (typeof args["query"] === "string" && args["query"].length > 0) query.query = args["query"];
+    if (typeof args["workflow_name"] === "string" && args["workflow_name"].length > 0) query.workflowName = args["workflow_name"];
+    if (typeof args["all_agents"] === "boolean") query.allAgents = args["all_agents"];
+    if (typeof args["limit"] === "number" && args["limit"] > 0) query.limit = Math.min(args["limit"], 100);
+    return Ok({ kind: "search-commits", query });
+  }
+
+  // Commit — model wants to record a voluntary checkpoint during the free-loop.
+  // The optional notes are passed through; the scheduler creates the Commit record.
+  if (call.function.name === COMMIT_NAME) {
+    const notes = typeof args["notes"] === "string" && args["notes"].length > 0 ? args["notes"] : undefined;
+    return Ok({ kind: "commit", notes });
+  }
+
   if (call.function.name !== "request_action") {
     return Err(
-      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action", "delegate_task", "mention_teammate", "send_message", "finish_task", "system:use_tool", "system:get_tool_schema", "system:get_tool_history", or "system:get_tool_history_entry"`,
+      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action", "delegate_task", "mention_teammate", "send_message", "finish_task", "system:use_tool", "system:get_tool_schema", "system:get_tool_history", "system:get_tool_history_entry", "system:search_commits", or "system:commit"`,
     );
   }
 
@@ -731,27 +828,43 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
         ? { ...input, systemPrompt }
         : input;
 
-      if (availableActions.length === 0) {
+      const isCommitMode = input.commitMode === true;
+
+      // In commit mode, only finish_task is offered — the agent must acknowledge
+      // the workflow completion. Skip the "no available actions" guard since
+      // availableActions is intentionally empty.
+      if (!isCommitMode && availableActions.length === 0) {
         return Err("openai-reasoner: no available actions — nothing to propose");
       }
 
       // Optional tools are only offered when there is a valid target — a delegate
       // tool needs another agent, a send_message tool needs a bound channel,
       // system:use_tool/system:get_tool_schema need at least one registered tool.
-      const tools: ChatCompletionTool[] = [buildTool(availableActions), buildFinishTool()];
-      if (availableAgents.length > 0) tools.push(buildDelegateTool(availableAgents));
-      if (availableAgents.length > 0) tools.push(buildMentionTool(availableAgents));
-      if (availableChannels.length > 0) tools.push(buildCommunicateTool(availableChannels));
-      const availableToolNames = input.availableTools?.map((t) => t.name) ?? [];
-      const hasToolHistory = input.toolHistory !== undefined && input.toolHistory.length > 0;
-      if (availableToolNames.length > 0) {
-        tools.push(buildUseToolTool(availableToolNames));
-        tools.push(buildGetToolSchemaTool(availableToolNames));
-      }
-      // History tools only make sense when there IS history to retrieve.
-      if (hasToolHistory) {
-        tools.push(buildGetToolHistoryTool());
-        tools.push(buildGetToolHistoryEntryTool());
+      const tools: ChatCompletionTool[] = isCommitMode
+        ? [buildFinishTool()]
+        : [buildTool(availableActions), buildFinishTool()];
+
+      if (!isCommitMode) {
+        if (availableAgents.length > 0) tools.push(buildDelegateTool(availableAgents));
+        if (availableAgents.length > 0) tools.push(buildMentionTool(availableAgents));
+        if (availableChannels.length > 0) tools.push(buildCommunicateTool(availableChannels));
+        const availableToolNames = input.availableTools?.map((t) => t.name) ?? [];
+        const hasToolHistory = input.toolHistory !== undefined && input.toolHistory.length > 0;
+        if (availableToolNames.length > 0) {
+          tools.push(buildUseToolTool(availableToolNames));
+          tools.push(buildGetToolSchemaTool(availableToolNames));
+        }
+        // History tools only make sense when there IS history to retrieve.
+        if (hasToolHistory) {
+          tools.push(buildGetToolHistoryTool());
+          tools.push(buildGetToolHistoryEntryTool());
+        }
+        // Search commits is always offered — it queries the commit store
+        // directly and has no dependency on tool history.
+        tools.push(buildSearchCommitsTool());
+        // Commit tool is always offered in the free loop so the model can
+        // voluntarily checkpoint progress without ending the task.
+        tools.push(buildCommitTool());
       }
 
       const apiStart = Date.now();

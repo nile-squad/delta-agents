@@ -106,6 +106,18 @@ export const memories = sqliteTable("memories", {
   createdAt: integer("created_at").notNull(), // ms epoch
 });
 
+// ── Commits ────────────────────────────────────────────────────────────────────
+
+export const commits = sqliteTable("commits", {
+  id:           text("id").primaryKey(),
+  taskId:       text("task_id").notNull(),
+  agentName:    text("agent_name").notNull(),
+  workflowName: text("workflow_name"),
+  notes:        text("notes"),
+  checkpointId: text("checkpoint_id"),
+  createdAt:    integer("created_at").notNull(), // ms epoch
+});
+
 // ── Queues ─────────────────────────────────────────────────────────────────────
 
 export const queues = sqliteTable("queues", {

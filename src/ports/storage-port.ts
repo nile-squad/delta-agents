@@ -20,6 +20,8 @@ import type {
   EscalationRecord,
   Message,
   Memory,
+  Commit,
+  CommitQuery,
   Queue,
   ExecutionStatus,
 } from "../shared/types";
@@ -86,6 +88,11 @@ export type StoragePort = {
   saveMemory: (memory: Memory) => Promise<Result<Memory, string>>;
   /** Most-recent-first memories for an agent, optionally capped to `limit`. */
   getMemoriesByAgent: (agentName: string, limit?: number) => Promise<Result<Memory[], string>>;
+
+  // Commits — agent-driven checkpoint annotations
+  saveCommit: (commit: Commit) => Promise<Result<Commit, string>>;
+  getCommitsByAgent: (agentName: string, limit?: number) => Promise<Result<Commit[], string>>;
+  searchCommits: (query: CommitQuery, currentAgent: string) => Promise<Result<Commit[], string>>;
 
   // Queues
   saveQueue: (queue: Queue) => Promise<Result<Queue, string>>;

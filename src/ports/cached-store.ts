@@ -26,7 +26,7 @@
 
 import type { Result } from "slang-ts";
 import type { StoragePort } from "./storage-port";
-import type { Task, Checkpoint, Memory } from "../shared/types";
+import type { Task, Checkpoint, Memory, Commit } from "../shared/types";
 import { createCache } from "../shared/cache";
 import type { CacheConfig, Cache } from "../shared/cache";
 
@@ -165,6 +165,11 @@ export const createCachedStore = (inner: StoragePort, config?: CacheConfig): Cac
           KEY.memories(agentName, limit ?? "all"),
           () => inner.getMemoriesByAgent(agentName, limit),
         ),
+
+      // ── Commits: pass-through (not on the hot path) ──
+      saveCommit: inner.saveCommit,
+      getCommitsByAgent: inner.getCommitsByAgent,
+      searchCommits: inner.searchCommits,
 
       // ── Queues: pass-through ──
       saveQueue: inner.saveQueue,

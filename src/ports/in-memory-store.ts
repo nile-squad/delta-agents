@@ -20,6 +20,8 @@ import type {
   EscalationRecord,
   Message,
   Memory,
+  Commit,
+  CommitQuery,
   Queue,
   ExecutionStatus,
 } from "../shared/types";
@@ -33,6 +35,7 @@ export const createInMemoryStore = (): StoragePort => {
   const escalationsByTask = new Map<string, EscalationRecord[]>();
   const messagesByTask = new Map<string, Message[]>();
   const memoriesByAgent = new Map<string, Memory[]>();
+  const commitsByAgent = new Map<string, Commit[]>();
   const queues = new Map<string, Queue>();
 
   return {
@@ -184,6 +187,36 @@ export const createInMemoryStore = (): StoragePort => {
         (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
       );
       return Ok(limit !== undefined ? all.slice(0, limit) : all);
+    },
+
+    // Commits — agent-driven checkpoint annotations, newest-first per agent
+    saveCommit: async (commit) => {
+      const existing = commitsByAgent.get(commit.agentName) ?? [];
+      commitsByAgent.set(commit.agentName, [...existing, commit]);
+      return Ok(commit);
+    },
+    getCommitsByAgent: async (agentName, limit) => {
+      const all = [...(commitsByAgent.get(agentName) ?? [])].sort(
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+      );
+      return Ok(limit !== undefined ? all.slice(0, limit) : all);
+    },
+    searchCommits: async (query, currentAgent) => {
+      const scope = query.allAgents === true
+        ? [...commitsByAgent.values()].flat()
+        : commitsByAgent.get(currentAgent) ?? [];
+      const filtered = scope.filter((c) => {
+        if (query.workflowName !== undefined && c.workflowName !== query.workflowName) return false;
+        if (query.query !== undefined) {
+          if (c.notes === null) return false;
+          if (!c.notes.toLowerCase().includes(query.query.toLowerCase())) return false;
+        }
+        return true;
+      });
+      const sorted = [...filtered].sort(
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+      );
+      return Ok(sorted.slice(0, query.limit ?? 20));
     },
 
     // Queues

@@ -23,3 +23,4 @@ export const escalationId = (): string => generateId("esc_");
 export const messageId = (): string => generateId("msg_");
 export const queueId = (): string => generateId("que_");
 export const memoryId = (): string => generateId("mem_");
+export const commitId = (): string => generateId("cmt_");

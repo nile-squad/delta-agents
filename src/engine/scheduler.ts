@@ -27,7 +27,7 @@
 import { option } from "slang-ts";
 import type { Option } from "slang-ts";
 import { safeTry } from "slang-ts";
-import type { Task, Checkpoint, Cost, TaskTree } from "../shared/types";
+import type { Task, Checkpoint, Cost, TaskTree, CommitQuery, Commit } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort, DelegationRequest } from "../ports/reasoner-port";
 import type { Registry } from "../authoring/registry";
@@ -47,7 +47,7 @@ import { retrieveContext, makeContextRemember } from "../memory";
 import { computeActionValue } from "../governance";
 import { enforceSubtaskScope, requestSlot, releaseSlot, abortEntireTree } from "../supervision";
 import { initialRiskState, initialTrust } from "../governance";
-import { taskId, checkpointId, messageId, executionId } from "../shared/id";
+import { taskId, checkpointId, messageId, executionId, commitId } from "../shared/id";
 import { formatInTimeZone } from "date-fns-tz";
 import { formatDistanceToNow } from "date-fns";
 import { toJSONSchema, prettifyError } from "zod";
@@ -55,6 +55,7 @@ import { createLoopDetector } from "./loop-detector";
 import type { LoopDetector } from "./loop-detector";
 import type { Logger } from "../shared/logger-types";
 import type { Diagnostics } from "../shared/diagnostics";
+import { formatCommitContext } from "./commit-step";
 
 // ── Step outcome ────────────────────────────────────────────────────────────
 
@@ -151,6 +152,7 @@ const stepTask = async ({
   timezone,
   loopDetector,
   diagnostics,
+  commitContextLimit,
 }: {
   task: Task;
   agent: Agent;
@@ -167,6 +169,8 @@ const stepTask = async ({
   /** Per-engine diagnostics handle. Threaded so the engine module can emit
    * step-start / step-end events when diagnostics.engine is enabled. */
   diagnostics: Diagnostics;
+  /** Max recent commits to inject into reasoner context. */
+  commitContextLimit?: number;
 }): Promise<StepOutcome> => {
   // 1. Discover legal actions for the agent in the current state.
   const agentActionsResult = registry.getActionsForAgent(agent.name);
@@ -203,6 +207,15 @@ const stepTask = async ({
   // relevant prior memories for this goal, injected as reasoner context rather
   // than carried in the loop.
   const retrieved = await retrieveContext({ store, agentName: agent.name, query: task.goal });
+
+  // Retrieve recent commits so the agent can reference its own past work.
+  // Best-effort: a store error or empty result yields no commit context —
+  // the step must still proceed (same pattern as memory retrieval).
+  let commitContextStr = "";
+  const commitsResult = await store.getCommitsByAgent(agent.name, commitContextLimit);
+  if (commitsResult.isOk && commitsResult.value.length > 0) {
+    commitContextStr = formatCommitContext(commitsResult.value);
+  }
 
   // Deliver mentions: fold any undelivered notes a teammate left for this agent
   // into the reasoning context (informational, not a goal change), and mark each
@@ -291,6 +304,7 @@ const stepTask = async ({
     currentTimestamp,
     ...(priorMessages.length > 0 ? { priorMessages } : {}),
     ...(reasonContext.length > 0 ? { context: reasonContext } : {}),
+    ...(commitContextStr.length > 0 ? { commitContext: commitContextStr } : {}),
     // Tool context: prior history and last info request, surfaced in the user
     // message so the model can build on results it has already seen.
     ...(snapshot.toolHistory !== undefined && snapshot.toolHistory.length > 0 ? { toolHistory: snapshot.toolHistory } : {}),
@@ -527,6 +541,40 @@ const stepTask = async ({
     return { kind: "stepped", snapshot: { ...snapshot, lastToolInfoResult: payload } };
   }
 
+  // Search commits — model wants to query the commit store for past records.
+  // Executes store.searchCommits with the model's query params, stores the
+  // result as a JSON string in lastToolInfoResult (same pattern as tool-info).
+  if (decision.kind === "search-commits") {
+    const result = await store.searchCommits(decision.query, agent.name);
+    const payload = result.isOk
+      ? JSON.stringify({ commits: result.value })
+      : JSON.stringify({ error: result.error });
+    return { kind: "stepped", snapshot: { ...snapshot, lastToolInfoResult: payload } };
+  }
+
+  // Free-loop commit — model voluntarily records a checkpoint with optional notes.
+  // Unlike the post-workflow commit step, this does NOT change task status or
+  // end the task. The Commit is created and the loop continues.
+  if (decision.kind === "commit") {
+    const ckptResult = await store.getLatestCheckpoint(task.id);
+    const checkpointId =
+      ckptResult.isOk && ckptResult.value !== null ? ckptResult.value.id : null;
+    const commit: Commit = {
+      id: commitId(),
+      taskId: task.id,
+      agentName: agent.name,
+      workflowName: null,
+      notes: decision.notes ?? null,
+      checkpointId,
+      createdAt: new Date(),
+    };
+    const saveResult = await store.saveCommit(commit);
+    const payload = saveResult.isOk
+      ? JSON.stringify({ committed: true, notes: commit.notes })
+      : JSON.stringify({ committed: false, error: saveResult.error });
+    return { kind: "stepped", snapshot: { ...snapshot, lastToolInfoResult: payload } };
+  }
+
   const { actionName, input, reasoningCost } = decision.request;
 
   // 3. Look up the action definition.
@@ -627,6 +675,7 @@ export const runScheduler = async ({
   logger,
   diagnostics,
   loopDetector: passedLoopDetector,
+  commitContextLimit = 10,
 }: {
   root: Runner;
   reasoner: ReasonerPort;
@@ -645,6 +694,8 @@ export const runScheduler = async ({
    * loop detection is about within-run loops, so a fresh detector per
    * runScheduler call is the natural default. */
   loopDetector?: LoopDetector;
+  /** Max recent commits to inject into reasoner context (default 10). */
+  commitContextLimit?: number;
 }): Promise<SendResult> => {
   const rootId = root.task.rootId;
   const runners: Runner[] = [root];
@@ -917,6 +968,7 @@ export const runScheduler = async ({
         timezone,
         loopDetector,
         diagnostics,
+        commitContextLimit,
       });
       runner.step++;
       runner.snapshot = outcome.snapshot;

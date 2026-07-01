@@ -43,7 +43,7 @@ export type { DeltaEngine, DeltaEngineConfig, SendInput, SendResult, InspectResu
 // Shared domain types the developer encounters in send results, inspect results,
 // and action context. Budget is expressed as Cost (the same multi-axis vector
 // used for declarations and runtime measurements).
-export type { Cost, Task, SupervisionPolicy, Memory } from "./shared/types";
+export type { Cost, Task, SupervisionPolicy, Memory, Commit, CommitQuery } from "./shared/types";
 
 // ── Logger ────────────────────────────────────────────────────────────────────
 // Per-engine logger configuration. The engine creates a default dev logger when

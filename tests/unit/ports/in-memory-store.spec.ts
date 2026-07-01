@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createInMemoryStore } from "../../../src/ports";
-import type { Task, Checkpoint, ApprovalRequest, Message } from "../../../src/shared/types";
+import type { Task, Checkpoint, ApprovalRequest, Message, Commit } from "../../../src/shared/types";
 
 // Minimal valid Task fixture — all required fields set by this test, never by live DB.
 const makeTask = (overrides?: Partial<Task>): Task => ({
@@ -41,6 +41,17 @@ const makeMessage = (overrides?: Partial<Message>): Message => ({
   sender: "user",
   receiver: "support-agent",
   payload: "hello",
+  createdAt: new Date("2024-01-01"),
+  ...overrides,
+});
+
+const makeCommit = (overrides?: Partial<Commit>): Commit => ({
+  id: "cmt-001",
+  taskId: "task-001",
+  agentName: "test-agent",
+  workflowName: "onboarding",
+  notes: "created the account",
+  checkpointId: "ckpt-001",
   createdAt: new Date("2024-01-01"),
   ...overrides,
 });
@@ -205,5 +216,85 @@ describe("InMemoryStore — executions", () => {
       expect(result.value).toHaveLength(1);
       expect(result.value[0]?.id).toBe("exec-001");
     }
+  });
+});
+
+describe("InMemoryStore — commits", () => {
+  it("saveCommit then getCommitsByAgent returns the commit", async () => {
+    const store = createInMemoryStore();
+    await store.saveCommit(makeCommit());
+    const result = await store.getCommitsByAgent("test-agent");
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value).toHaveLength(1);
+    expect(result.value[0]?.notes).toBe("created the account");
+    expect(result.value[0]?.workflowName).toBe("onboarding");
+  });
+
+  it("getCommitsByAgent returns newest-first, capped to limit, scoped by agent", async () => {
+    const store = createInMemoryStore();
+    await store.saveCommit(makeCommit({ id: "cmt-1", notes: "first", createdAt: new Date(1) }));
+    await store.saveCommit(makeCommit({ id: "cmt-2", notes: "second", createdAt: new Date(2) }));
+    await store.saveCommit(makeCommit({ id: "cmt-3", notes: "third", createdAt: new Date(3) }));
+    await store.saveCommit(makeCommit({ id: "cmt-other", agentName: "other-agent", notes: "not mine", createdAt: new Date(4) }));
+
+    const result = await store.getCommitsByAgent("test-agent", 2);
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.map((c) => c.id)).toEqual(["cmt-3", "cmt-2"]);
+  });
+
+  it("returns an empty list for an agent with no commits", async () => {
+    const store = createInMemoryStore();
+    const result = await store.getCommitsByAgent("nobody");
+    expect(result.isOk).toBe(true);
+    if (result.isOk) expect(result.value).toEqual([]);
+  });
+
+  it("searchCommits filters by workflowName and scopes to the current agent by default", async () => {
+    const store = createInMemoryStore();
+    await store.saveCommit(makeCommit({ id: "cmt-1", workflowName: "onboarding", notes: "a" }));
+    await store.saveCommit(makeCommit({ id: "cmt-2", workflowName: "offboarding", notes: "b" }));
+    await store.saveCommit(makeCommit({ id: "cmt-3", agentName: "other-agent", workflowName: "onboarding", notes: "c" }));
+
+    const result = await store.searchCommits({ workflowName: "onboarding" }, "test-agent");
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.map((c) => c.id)).toEqual(["cmt-1"]);
+  });
+
+  it("searchCommits matches query as a case-insensitive substring of notes", async () => {
+    const store = createInMemoryStore();
+    await store.saveCommit(makeCommit({ id: "cmt-1", notes: "Sent the WELCOME email" }));
+    await store.saveCommit(makeCommit({ id: "cmt-2", notes: "closed the ticket" }));
+
+    const result = await store.searchCommits({ query: "welcome" }, "test-agent");
+    expect(result.isOk).toBe(true);
+    if (!result.isOk) return;
+    expect(result.value.map((c) => c.id)).toEqual(["cmt-1"]);
+  });
+
+  it("searchCommits with allAgents scopes across every agent", async () => {
+    const store = createInMemoryStore();
+    await store.saveCommit(makeCommit({ id: "cmt-mine", notes: "mine" }));
+    await store.saveCommit(makeCommit({ id: "cmt-theirs", agentName: "other-agent", notes: "theirs" }));
+
+    const scoped = await store.searchCommits({}, "test-agent");
+    expect(scoped.isOk && scoped.value.map((c) => c.id)).toEqual(["cmt-mine"]);
+
+    const all = await store.searchCommits({ allAgents: true }, "test-agent");
+    expect(all.isOk).toBe(true);
+    if (!all.isOk) return;
+    expect(all.value.map((c) => c.id).sort()).toEqual(["cmt-mine", "cmt-theirs"]);
+  });
+
+  it("searchCommits caps results to the default limit of 20", async () => {
+    const store = createInMemoryStore();
+    for (let i = 0; i < 25; i++) {
+      await store.saveCommit(makeCommit({ id: `cmt-${i}`, notes: `note ${i}`, createdAt: new Date(i) }));
+    }
+    const result = await store.searchCommits({}, "test-agent");
+    expect(result.isOk).toBe(true);
+    if (result.isOk) expect(result.value).toHaveLength(20);
   });
 });

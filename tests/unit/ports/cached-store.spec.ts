@@ -22,7 +22,7 @@ import { Ok, Err } from "slang-ts";
 import { createInMemoryStore } from "../../../src/ports/in-memory-store";
 import { createCachedStore } from "../../../src/ports/cached-store";
 import type { StoragePort } from "../../../src/ports/storage-port";
-import type { Task, Checkpoint, Memory, TaskTree, Execution } from "../../../src/shared/types";
+import type { Task, Checkpoint, Memory, TaskTree, Execution, Commit } from "../../../src/shared/types";
 import { initialRiskState, initialTrust } from "../../../src/governance";
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
@@ -261,6 +261,30 @@ describe("createCachedStore — pass-through methods", () => {
     expect(del?.isOk).toBe(true);
     const delMsg = await store.deleteMessages?.("t1");
     expect(delMsg?.isOk).toBe(true);
+  });
+
+  it("commits (saveCommit, getCommitsByAgent, searchCommits) are pass-through, not cached", async () => {
+    const inner = createInMemoryStore();
+    const { store } = createCachedStore(inner);
+    const commit: Commit = {
+      id: "cmt_cache_1", taskId: "t1", agentName: "agent-x", workflowName: "wf",
+      notes: "did the thing", checkpointId: null, createdAt: now,
+    };
+    const saveResult = await store.saveCommit(commit);
+    expect(saveResult.isOk).toBe(true);
+
+    // Read through the cached wrapper reflects what the inner store holds — no
+    // separate commit cache to go stale.
+    const viaCached = await store.getCommitsByAgent("agent-x");
+    const viaInner = await inner.getCommitsByAgent("agent-x");
+    expect(viaCached.isOk).toBe(true);
+    expect(viaInner.isOk).toBe(true);
+    if (!viaCached.isOk || !viaInner.isOk) return;
+    expect(viaCached.value).toEqual(viaInner.value);
+
+    const searchResult = await store.searchCommits({ workflowName: "wf" }, "agent-x");
+    expect(searchResult.isOk).toBe(true);
+    if (searchResult.isOk) expect(searchResult.value.map((c) => c.id)).toEqual(["cmt_cache_1"]);
   });
 });
 

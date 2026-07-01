@@ -38,7 +38,8 @@ export type ExecutionStatus =
   | "completed"
   | "failed"
   | "aborted"
-  | "paused";
+  | "paused"
+  | "pendingCommit";
 
 // Risk tracks both the static prior declared by the developer and the
 // continuously-updated estimate derived from observed evidence.
@@ -168,6 +169,37 @@ export type Memory = {
   kind: string;
   content: string;
   createdAt: Date;
+};
+
+// An agent-driven checkpoint with optional notes, saved when a workflow
+// completes (or optionally during a free-loop task). The engine already
+// checkpoints automatically — a Commit is the agent's acknowledgment +
+// annotation of that completion. Mandatory for workflows, optional for
+// free-loop tasks.
+export type Commit = {
+  id: string;
+  taskId: string;
+  agentName: string;
+  /** null for free-loop commits, workflow name for workflow commits. */
+  workflowName: string | null;
+  /** Optional agent-supplied notes about what was accomplished. */
+  notes: string | null;
+  /** Link to the engine's checkpoint that was active at commit time. */
+  checkpointId: string | null;
+  createdAt: Date;
+};
+
+// Query parameters for searching commits. Used by the system:search_commits
+// internal tool so agents can pull older commits on demand.
+export type CommitQuery = {
+  /** Keyword search over notes (case-insensitive substring match). */
+  query?: string;
+  /** Filter by workflow name. */
+  workflowName?: string;
+  /** When true, search across all agents. Default: current agent only. */
+  allAgents?: boolean;
+  /** Max results. Default 20. */
+  limit?: number;
 };
 
 // FIFO queue tracks work items by ID for deterministic ordering and replay.
