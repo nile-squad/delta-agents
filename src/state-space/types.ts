@@ -76,6 +76,14 @@ export type TaskStateSnapshot = {
 
   /** Tool execution history for audit and checkpointing. Every tool call is recorded with full context. */
   toolHistory?: ToolHistoryEntry[];
+
+  /**
+   * Result of the model's most recent `tool-info` request (schema, history, or
+   * history-entry). Carried on the snapshot so the model sees it as part of the
+   * user message on the next `reason()` call. Cleared by a subsequent tool-info
+   * request that overwrites it, or naturally expires once the model acts on it.
+   */
+  lastToolInfoResult?: string;
 };
 
 // Result of a legality check. Includes a reason when illegal so the caller

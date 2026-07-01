@@ -246,10 +246,12 @@ const buildCommunicateTool = (availableChannels: string[]): ChatCompletionTool =
 });
 
 // The "system:" prefix is reserved for internal framework tools. User-registered
-// tools cannot use it (validated at authoring time). These two are the runtime
+// tools cannot use it (validated at authoring time). These are the runtime
 // hooks the model uses to interact with the tool layer.
 const USE_TOOL_NAME = "system:use_tool";
 const GET_TOOL_SCHEMA_NAME = "system:get_tool_schema";
+const GET_TOOL_HISTORY_NAME = "system:get_tool_history";
+const GET_TOOL_HISTORY_ENTRY_NAME = "system:get_tool_history_entry";
 
 /**
  * The model calls `system:use_tool` to execute a registered tool. The result is
@@ -313,6 +315,53 @@ const buildGetToolSchemaTool = (availableTools: string[]): ChatCompletionTool =>
   },
 });
 
+/**
+ * The model calls `system:get_tool_history` to retrieve the full tool history
+ * recorded so far on this task (truncated entries). Only offered when there is
+ * at least one prior tool call — there is nothing to retrieve otherwise.
+ */
+const buildGetToolHistoryTool = (): ChatCompletionTool => ({
+  type: "function",
+  function: {
+    name: GET_TOOL_HISTORY_NAME,
+    description:
+      "Return the full tool history recorded on this task so far (truncated entries). " +
+      "Use this to review what tools have been called and their results.",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+  },
+});
+
+/**
+ * The model calls `system:get_tool_history_entry` to retrieve a single full
+ * (untruncated) history entry by index. Useful when a truncated entry hides
+ * detail the model needs.
+ */
+const buildGetToolHistoryEntryTool = (): ChatCompletionTool => ({
+  type: "function",
+  function: {
+    name: GET_TOOL_HISTORY_ENTRY_NAME,
+    description:
+      "Return a single full (untruncated) tool history entry by index. Use this when a " +
+      "truncated entry is not enough and you need the complete input or output.",
+    parameters: {
+      type: "object",
+      properties: {
+        index: {
+          type: "number",
+          description: "Zero-based index of the history entry to retrieve.",
+        },
+      },
+      required: ["index"],
+      additionalProperties: false,
+    },
+  },
+});
+
 // ── Message builder ───────────────────────────────────────────────────────────
 
 /**
@@ -321,7 +370,7 @@ const buildGetToolSchemaTool = (availableTools: string[]): ChatCompletionTool =>
  * without standing up a live reasoner.
  */
 export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
-  const { task, availableActions, availableAgents, availableChannels, availableSkills, availableActionSchemas, availableTools, toolHints, agentRole, rolePrompt, context, systemPrompt, currentTimestamp, priorMessages } = input;
+  const { task, availableActions, availableAgents, availableChannels, availableSkills, availableActionSchemas, availableTools, toolHints, agentRole, rolePrompt, context, systemPrompt, currentTimestamp, priorMessages, toolHistory, toolInfoResult } = input;
   const canDelegate = availableAgents !== undefined && availableAgents.length > 0;
   const canCommunicate = availableChannels !== undefined && availableChannels.length > 0;
   const hasSkills = availableSkills !== undefined && availableSkills.length > 0;
@@ -330,6 +379,8 @@ export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[
   const hasActionSchemas = availableActionSchemas !== undefined && availableActionSchemas.length > 0;
   const hasTools = availableTools !== undefined && availableTools.length > 0;
   const hasToolHints = toolHints !== undefined && toolHints.length > 0;
+  const hasToolHistory = toolHistory !== undefined && toolHistory.length > 0;
+  const hasToolInfoResult = toolInfoResult !== undefined && toolInfoResult.length > 0;
 
   const system: ChatCompletionMessageParam = {
     role: "system",
@@ -407,6 +458,24 @@ export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[
   }
   if (hasPrior) {
     userLines.push("", "Prior conversation:", ...priorMessages.map((m) => `[${m.relativeTime}] ${m.sender}: ${m.content}`));
+  }
+  // Tool history: surface prior tool calls so the model can build on results.
+  // Truncation was applied at execution time, so the entries are already bounded.
+  if (hasToolHistory) {
+    userLines.push("", "Tool history:");
+    for (let i = 0; i < toolHistory.length; i++) {
+      const entry = toolHistory[i];
+      if (entry === undefined) continue;
+      const inputStr = typeof entry.input === "string" ? entry.input : JSON.stringify(entry.input);
+      const outputStr = typeof entry.output === "string" ? entry.output : JSON.stringify(entry.output);
+      const truncation = entry.truncated ? "...[truncated]" : "";
+      userLines.push(`  [${i}] ${entry.toolName}: ${inputStr} → ${outputStr}${truncation}`);
+    }
+  }
+  // Tool-info result: the most recent schema/history/history-entry request.
+  // Surfaced verbatim so the model sees exactly what the engine stored.
+  if (hasToolInfoResult) {
+    userLines.push("", `Tool info: ${toolInfoResult}`);
   }
   if (context !== undefined && context.length > 0) {
     userLines.push("", "Context:", context);
@@ -573,9 +642,23 @@ const parseToolCall = async (
     return Ok({ kind: "tool-info", request: { type: "schema", toolName } });
   }
 
+  // Tool history — model wants the full recorded tool history (truncated entries).
+  if (call.function.name === GET_TOOL_HISTORY_NAME) {
+    return Ok({ kind: "tool-info", request: { type: "history" } });
+  }
+
+  // Tool history entry — model wants a single full (untruncated) entry by index.
+  if (call.function.name === GET_TOOL_HISTORY_ENTRY_NAME) {
+    const index = args["index"];
+    if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
+      return Err(`openai-reasoner: system:get_tool_history_entry index must be a non-negative integer in arguments: ${JSON.stringify(args)}`);
+    }
+    return Ok({ kind: "tool-info", request: { type: "history-entry", index } });
+  }
+
   if (call.function.name !== "request_action") {
     return Err(
-      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action", "delegate_task", "mention_teammate", "send_message", "finish_task", "system:use_tool", or "system:get_tool_schema"`,
+      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action", "delegate_task", "mention_teammate", "send_message", "finish_task", "system:use_tool", "system:get_tool_schema", "system:get_tool_history", or "system:get_tool_history_entry"`,
     );
   }
 
@@ -660,9 +743,15 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
       if (availableAgents.length > 0) tools.push(buildMentionTool(availableAgents));
       if (availableChannels.length > 0) tools.push(buildCommunicateTool(availableChannels));
       const availableToolNames = input.availableTools?.map((t) => t.name) ?? [];
+      const hasToolHistory = input.toolHistory !== undefined && input.toolHistory.length > 0;
       if (availableToolNames.length > 0) {
         tools.push(buildUseToolTool(availableToolNames));
         tools.push(buildGetToolSchemaTool(availableToolNames));
+      }
+      // History tools only make sense when there IS history to retrieve.
+      if (hasToolHistory) {
+        tools.push(buildGetToolHistoryTool());
+        tools.push(buildGetToolHistoryEntryTool());
       }
 
       const apiStart = Date.now();

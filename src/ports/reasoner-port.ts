@@ -13,6 +13,7 @@
 
 import type { Result } from "slang-ts";
 import type { Task, Cost } from "../shared/types";
+import type { ToolHistoryEntry } from "../authoring/types";
 
 // What the reasoner returns: a proposed action and the input it wants to pass.
 export type ActionRequest = {
@@ -95,7 +96,13 @@ export type ReasonerDecision =
   | { kind: "communicate"; communication: CommunicationRequest }
   | { kind: "done"; reason?: string }
   | { kind: "tool"; toolCall: { toolName: string; input: Record<string, unknown> } }
-  | { kind: "tool-info"; request: { type: "schema"; toolName: string } };
+  | {
+      kind: "tool-info";
+      request:
+        | { type: "schema"; toolName: string }
+        | { type: "history" }
+        | { type: "history-entry"; index: number };
+    };
 
 export type ReasonerInput = {
   task: Task;
@@ -162,6 +169,19 @@ export type ReasonerInput = {
    * all tools remain visible regardless. Empty or absent means no hints.
    */
   toolHints?: string[];
+  /**
+   * Prior tool execution history (truncated entries) so the model can see what
+   * tools it has already called and their results. Surfaced in the user message
+   * to give the model grounding for follow-up decisions.
+   */
+  toolHistory?: ToolHistoryEntry[];
+  /**
+   * Most recent `tool-info` result (schema dump, history snapshot, or single
+   * history entry). The scheduler stores the model's request in
+   * `TaskStateSnapshot.lastToolInfoResult` and forwards it here on the next
+   * turn, where the OpenAI reasoner surfaces it in the user message.
+   */
+  toolInfoResult?: string;
 };
 
 export type ReasonerPort = {

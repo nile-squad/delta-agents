@@ -26,11 +26,12 @@
 
 import { option } from "slang-ts";
 import type { Option } from "slang-ts";
+import { safeTry } from "slang-ts";
 import type { Task, Checkpoint, Cost, TaskTree } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort, DelegationRequest } from "../ports/reasoner-port";
 import type { Registry } from "../authoring/registry";
-import type { Agent, Action } from "../authoring/types";
+import type { Agent, Action, ToolHistoryEntry } from "../authoring/types";
 import { buildAvailableSkills, resolveSkillRefs } from "../skills";
 import type { TaskStateSnapshot } from "../state-space/types";
 import type { SendResult } from "./types";
@@ -46,10 +47,10 @@ import { retrieveContext, makeContextRemember } from "../memory";
 import { computeActionValue } from "../governance";
 import { enforceSubtaskScope, requestSlot, releaseSlot, abortEntireTree } from "../supervision";
 import { initialRiskState, initialTrust } from "../governance";
-import { taskId, checkpointId, messageId } from "../shared/id";
+import { taskId, checkpointId, messageId, executionId } from "../shared/id";
 import { formatInTimeZone } from "date-fns-tz";
 import { formatDistanceToNow } from "date-fns";
-import { toJSONSchema } from "zod";
+import { toJSONSchema, prettifyError } from "zod";
 
 // ── Step outcome ────────────────────────────────────────────────────────────
 
@@ -68,6 +69,20 @@ type StepOutcome =
   | { kind: "blocked"; snapshot: TaskStateSnapshot; reason: string }
   // Non-recoverable — settle as failed.
   | { kind: "failed"; snapshot: TaskStateSnapshot; reason: string };
+
+// ── Tool helpers ────────────────────────────────────────────────────────────
+
+/** Default character limit for tool output stored in history (progressive disclosure). */
+const TOOL_OUTPUT_LIMIT = 500;
+
+type Truncated = { value: string; truncated: boolean };
+
+/** Stringify + truncate a tool output for history storage. */
+const truncateToolOutput = (output: unknown): Truncated => {
+  const raw = typeof output === "string" ? output : JSON.stringify(output);
+  if (raw.length <= TOOL_OUTPUT_LIMIT) return { value: raw, truncated: false };
+  return { value: raw.slice(0, TOOL_OUTPUT_LIMIT), truncated: true };
+};
 
 // ── Runner ──────────────────────────────────────────────────────────────────
 
@@ -262,6 +277,10 @@ const stepTask = async ({
     currentTimestamp,
     ...(priorMessages.length > 0 ? { priorMessages } : {}),
     ...(reasonContext.length > 0 ? { context: reasonContext } : {}),
+    // Tool context: prior history and last info request, surfaced in the user
+    // message so the model can build on results it has already seen.
+    ...(snapshot.toolHistory !== undefined && snapshot.toolHistory.length > 0 ? { toolHistory: snapshot.toolHistory } : {}),
+    ...(snapshot.lastToolInfoResult !== undefined ? { toolInfoResult: snapshot.lastToolInfoResult } : {}),
   };
   const reasonResult = await retryWithJitter({
     fn: () => reasoner.reason(reasonInput),
@@ -358,17 +377,104 @@ const stepTask = async ({
     return { kind: "failed", snapshot, reason: comm.reason };
   }
 
-  // Tool decisions exist as types but are not yet executed by the scheduler.
-  // Phase 2 wires the reasoner surface; Phase 3 wires execution + history.
-  // The model will see this failure reason and adjust (call request_action or
-  // finish_task instead). Without this guard the code below would crash on
-  // `decision.request` since `tool` / `tool-info` have no `request` field.
-  if (decision.kind === "tool" || decision.kind === "tool-info") {
-    return {
-      kind: "failed",
-      snapshot,
-      reason: `tool execution is not yet wired in the scheduler (Phase 3): ${decision.kind}`,
+  // Tool execution: validate the model-supplied input against the tool's
+  // schema, then run the tool fn with a TaskID-attributable context. Truncate
+  // the output and stamp it with a token estimate so the history stays bounded
+  // but useful. The model sees the entry on its next reason() call via
+  // ReasonerInput.toolHistory. A schema-invalid call is recorded as a failed
+  // entry (so the model can self-correct) and the loop continues — the same
+  // shape as an action that returns Err.
+  if (decision.kind === "tool") {
+    const toolCall = decision.toolCall;
+    const toolResult = registry.getTool(toolCall.toolName);
+    if (toolResult.isErr) {
+      return { kind: "failed", snapshot, reason: `tool not found: ${toolCall.toolName}` };
+    }
+    const tool = toolResult.value;
+    const parsed = tool.schema.safeParse(toolCall.input);
+    if (!parsed.success) {
+      const errorMessage = prettifyError(parsed.error);
+      const entry: ToolHistoryEntry = {
+        id: executionId(),
+        toolName: tool.name,
+        input: toolCall.input,
+        output: { error: `schema-invalid: ${errorMessage}` },
+        truncated: false,
+        timestamp: Date.now(),
+        agentName: agent.name,
+        ...(snapshot.currentPhase !== undefined ? { phaseName: snapshot.currentPhase } : {}),
+      };
+      const history = [...(snapshot.toolHistory ?? []), entry];
+      return { kind: "stepped", snapshot: { ...snapshot, toolHistory: history } };
+    }
+    const toolHistory = snapshot.toolHistory ?? [];
+    const fnResult = await safeTry(async () => tool.fn({
+      data: parsed.data,
+      ctx: { agentName: agent.name, taskId: task.id, ...(snapshot.currentPhase !== undefined ? { phaseName: snapshot.currentPhase } : {}), toolHistory },
+    }));
+    const outputValue = fnResult.isOk
+      ? fnResult.value
+      : { error: fnResult.error };
+    const { value: truncatedOutput, truncated } = truncateToolOutput(outputValue);
+    const tokenCount = Math.ceil(JSON.stringify(outputValue).length / 4);
+    const entry: ToolHistoryEntry = {
+      id: executionId(),
+      toolName: tool.name,
+      input: toolCall.input,
+      output: truncatedOutput,
+      truncated,
+      timestamp: Date.now(),
+      agentName: agent.name,
+      tokenCount,
+      ...(snapshot.currentPhase !== undefined ? { phaseName: snapshot.currentPhase } : {}),
+      ...(tool.cost !== undefined ? { cost: tool.cost } : {}),
+      // Keep the full value alongside the truncated inline copy so the model
+      // can retrieve it on demand via get_tool_history_entry.
+      ...(truncated ? { outputFull: outputValue } : {}),
     };
+    const history = [...toolHistory, entry];
+    return { kind: "stepped", snapshot: { ...snapshot, toolHistory: history } };
+  }
+
+  // Tool-info: the model wants a tool's schema, the full history, or a single
+  // history entry. Each shape is stored on the snapshot as a JSON string in
+  // `lastToolInfoResult`; the next reason() call surfaces it in the user
+  // message via ReasonerInput.toolInfoResult.
+  if (decision.kind === "tool-info") {
+    const request = decision.request;
+    if (request.type === "schema") {
+      const toolResult = registry.getTool(request.toolName);
+      if (toolResult.isErr) {
+        return { kind: "failed", snapshot, reason: `tool not found: ${request.toolName}` };
+      }
+      const schemaJson = toJSONSchema(toolResult.value.schema);
+      const payload = JSON.stringify({ toolName: request.toolName, schema: schemaJson });
+      return { kind: "stepped", snapshot: { ...snapshot, lastToolInfoResult: payload } };
+    }
+    if (request.type === "history") {
+      // Return the full history (truncated entries) so the model can review
+      // what has happened. Entries are already bounded by the per-call limit.
+      const history = snapshot.toolHistory ?? [];
+      const payload = JSON.stringify({ toolHistory: history });
+      return { kind: "stepped", snapshot: { ...snapshot, lastToolInfoResult: payload } };
+    }
+    // request.type === "history-entry": full (untruncated) entry at index.
+    // The inline `output` is bounded; when `outputFull` was kept at execution
+    // time we surface that here so the model gets the complete value.
+    const history = snapshot.toolHistory ?? [];
+    const idx = option(history[request.index]);
+    if (idx.isNone) {
+      return {
+        kind: "stepped",
+        snapshot: { ...snapshot, lastToolInfoResult: JSON.stringify({ error: `index ${request.index} out of range (history has ${history.length} entries)` }) },
+      };
+    }
+    const entry = idx.value;
+    const fullEntry = entry.outputFull !== undefined
+      ? { ...entry, output: entry.outputFull }
+      : entry;
+    const payload = JSON.stringify({ toolHistoryEntry: fullEntry });
+    return { kind: "stepped", snapshot: { ...snapshot, lastToolInfoResult: payload } };
   }
 
   const { actionName, input, reasoningCost } = decision.request;

@@ -133,6 +133,12 @@ export type ToolHistoryEntry = {
   phaseName?: string;
   tokenCount?: number;
   cost?: Cost;
+  /**
+   * Full (untruncated) output, kept when the inline `output` was truncated for
+   * history-size bounds. Allows `get_tool_history_entry` to return the complete
+   * value on demand ("deep dive") without re-running the tool.
+   */
+  outputFull?: unknown;
 };
 
 /**
