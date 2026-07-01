@@ -650,6 +650,138 @@ Governance requires a deterministic pass or fail signal. Exceptions are ambiguou
 
 ---
 
+# Tools
+
+Tools are reusable, stateless utilities registered at the engine level. Unlike actions, tools have no prerequisites, no risk, no state impact, and no budget of their own. They are visible to every agent across all tasks.
+
+Tools serve a specific role: they provide reasoning context rather than changing system state. Web search, mathematical computation, and document retrieval are typical tool use cases. An action changes business state; a tool informs the model.
+
+## Tool Definition
+
+Every tool declares a name, description, Zod schema, and execution function. Tools may optionally declare skills, execution limits (cooldown, max calls per phase, max calls per task), and a budget for cost tracking.
+
+```ts
+type Tool = {
+  name: string;
+  description: string;
+  schema: ZodObject<ZodRawShape>;
+  skills?: (string | Skill)[];
+  fn: (ctx: { data: unknown; ctx: ToolContext }) => Promise<Result<unknown, string>>;
+  limits?: {
+    maxCallsPerPhase?: number;
+    maxCallsPerTask?: number;
+    cooldownMs?: number;
+  };
+  cost?: Cost;
+  budget?: Cost;
+};
+```
+
+## Tools vs Actions
+
+Tools and actions are separate concepts with different governance properties:
+
+| Property | Tool | Action |
+|----------|------|--------|
+| State impact | None. Tools are read-only utilities. | Changes task state (completedActions, budget, risk, trust). |
+| Prerequisites | None. | Declared prerequisites must be satisfied. |
+| Risk | Zero. Tools carry no risk. | Declared risk 1-5, continuously estimated. |
+| Budget | Optional (cost tracking only). | Mandatory (task budget enforced). |
+| Visibility | Global. All tools visible to all agents. | Scoped by task state, prerequisites, phase. |
+| Result type | Informs model reasoning. | Drives trust, risk, branching, supervision. |
+
+## Progressive Disclosure
+
+Tools use progressive disclosure to keep the model's context window efficient:
+
+- The model sees a menu of tool names and descriptions on every turn (via `availableTools`).
+- Schemas are not included by default. The model fetches them on demand using the internal tool `system:get_tool_schema`.
+- Tool execution history entries are also fetched on demand via `system:get_tool_history` and `system:get_tool_history_entry`.
+
+Actions use the opposite pattern. Action schemas are included by default in the model's context (via `availableActionSchemas` converted through `z.toJSONSchema`). Actions are task-specific and the model needs full schema information to execute business logic correctly. Tools are reusable across contexts, so keeping the menu small matters.
+
+## Internal Tools
+
+Tools whose names start with `system:` are reserved for framework-provided capabilities. The engine validates this prefix at registration time; user tools cannot use it.
+
+Internal tools:
+
+- `system:use_tool` — execute a named tool with the given input. The engine routes the call to the registered tool function, records the result in tool history, and enforces limits (cooldown, max calls, budget).
+- `system:get_tool_schema` — return the full Zod schema for a named tool. Called by the model on demand (progressive disclosure).
+- `system:get_tool_history` — return the full tool history for the current task. Provides the complete execution log beyond the truncated view in context.
+- `system:get_tool_history_entry` — return a single tool history entry by index, including the full (untruncated) output. Allows the model to "deep dive" into a specific tool result without re-executing the tool.
+
+## Tool Hints
+
+Phases and actions may declare advisory tool hints. These are suggestions to the model about which tools are useful. All tools remain visible regardless of hints. Hints do not restrict or gate access.
+
+```ts
+const phase: Phase = {
+  name: "research",
+  description: "Gather customer data",
+  actions: ["lookup-customer"],
+  checkpoint: true,
+  tools: ["web-search", "database-query"],  // advisory hints
+};
+
+const action = delta.action({
+  name: "lookup-customer",
+  description: "Look up a customer account",
+  schema: z.object({ customerId: z.string() }),
+  tools: ["database-query"],                  // overrides phase-level hints
+  fn: async ({ customerId }) => { ... },
+});
+```
+
+## Tool History
+
+Every tool call is logged with full context for audit, governance, and provenance. History entries are persisted in the task state snapshot and recoverable through checkpoints.
+
+```ts
+type ToolContext = {
+  agentName: string;
+  taskId: string;
+  phaseName?: string;
+  toolHistory: ToolHistoryEntry[];
+};
+
+type ToolHistoryEntry = {
+  id: string;
+  toolName: string;
+  input: unknown;
+  output: unknown;
+  truncated: boolean;
+  timestamp: number;
+  agentName: string;
+  phaseName?: string;
+  tokenCount?: number;
+  cost?: Cost;
+  outputFull?: unknown;  // full output kept when `output` was truncated
+};
+```
+
+History entries are truncated by default (500 characters). The full output is retrievable on demand via `system:get_tool_history_entry`. This keeps the model's context window efficient while preserving auditability.
+
+## Loop Detection
+
+The scheduler maintains a per-agent detector that tracks:
+
+- **Cooldown**: minimum time between consecutive calls to the same tool.
+- **Max calls per phase**: maximum calls to a tool within a single phase.
+- **Max calls per task**: maximum calls to a tool across the entire task.
+
+When a limit is hit, the engine blocks the call and returns a humanized message to the model explaining why. The full context is logged for audit.
+
+The detector is created fresh per `runScheduler` call, so paused/resumed tasks get a clean detector.
+
+## Budget Enforcement
+
+Tools may declare a budget for cost tracking. Unlike action budgets, tool budgets are optional and purely advisory for cost awareness. When a tool's budget is exceeded, the engine blocks further calls and returns a humanized message.
+
+Budgets track the `Cost` axes: tokens, durationMs, memory, latency, and money (financial cost in USD cents or fractional currency units).
+
+---
+
 # Lifecycle Hooks
 
 Hooks allow observation and preparation around execution without bypassing governance.
@@ -819,6 +951,10 @@ Allowing unbounded task creation per agent produces the same failure as unbounde
 24. Every TaskID is cryptographically random and unguessable by agents or callers.
 25. An agent always has a retrieval path to its latest task without requiring the caller to store the TaskID.
 26. No new task is created for an agent that already has an active or queued task.
+27. Tools are stateless utilities. They do not change state space, have no prerequisites, and carry no risk.
+28. Tool names must not start with "system:" — this prefix is reserved for internal framework tools.
+29. Tool results are truncated and stored in tool history. Full results are retrievable on demand via system:get_tool_history_entry.
+30. Every tool call is logged with agent name, phase, timestamp, input, output, and token count for audit.
 
 ---
 
@@ -846,6 +982,8 @@ Allowing unbounded task creation per agent produces the same failure as unbounde
 20. The engine never treat a declared anticipated risk or cost as a ceiling that overrides observed evidence.
 21. The engine never creates a new task for an agent that already has an active or queued task.
 22. A caller never needs a stored TaskID to retrieve their agent's current or most recent task.
+23. Tools must not modify task state space (completedActions, completedWorkflows, budget, risk, trust).
+24. Tool names must not collide with action names or internal tool names.
 
 ---
 
@@ -960,6 +1098,10 @@ type Action = {
   // Hooks never authorize actions or bypass governance.
   hooks?: Hooks;
 
+  // Advisory hint: tools useful for this action. All tools remain visible
+  // regardless. Hints do not restrict or gate access.
+  tools?: string[];
+
   // Returns a Result. Ok carries success, Err carries failure.
   // The engine never infers success from the absence of a throw.
   fn: (
@@ -1028,6 +1170,10 @@ type Phase = {
   supervision?: SupervisionPolicy;
 
   hooks?: Hooks;
+
+  // Advisory hint: tools useful in this phase. All tools remain visible
+  // regardless. Hints do not restrict or gate access.
+  tools?: string[];
 };
 ```
 
@@ -1394,6 +1540,65 @@ type SupervisionPolicy = {
 
 ---
 
+### Cost
+
+```ts
+// Multi-axis resource consumption vector. Cost is more than tokens and time:
+// memory, latency, and money are first-class axes so the engine can budget,
+// project (MPC), and scope them like any other resource.
+// The optional axes are only enforced by a budget that declares them:
+// an undeclared memory/latency/money budget means "unlimited on that axis".
+type Cost = {
+  tokens: number;
+  durationMs: number;
+  memory?: number;
+  latency?: number;
+  money?: number;  // financial cost in USD cents (integer) or fractional currency units
+};
+```
+
+---
+
+### TaskStateSnapshot
+
+```ts
+// The Markov state: a complete, self-contained view of task governance
+// at a single point in time. Every legality check, prerequisite evaluation,
+// and action discovery call takes a snapshot — never a history log.
+type TaskStateSnapshot = {
+  taskId: string;
+  rootId: string;
+  agentName: string;
+  status: ExecutionStatus;
+  completedActions: string[];
+  completedWorkflows: string[];
+  budget: Cost;
+  spent: Cost;
+  risk: RiskState;
+  trust: TrustState;
+  kalman?: KalmanState;
+  currentWorkflow?: string;
+  currentPhase?: string;
+  parentBudget?: Cost;
+  parentSpent?: Cost;
+  consumedMessages?: string[];
+  completedPhases?: string[];
+  currentActionIndex?: number;
+  workflowInput?: Record<string, unknown>;
+  workflowActionInputs?: Record<string, Record<string, string | number | boolean | null>>;
+
+  // Tool execution history for audit and checkpointing.
+  // Every tool call is recorded with full context.
+  toolHistory?: ToolHistoryEntry[];
+
+  // Most recent tool-info result (schema, history, or history-entry).
+  // Carried through so the model sees it on the next reason() call.
+  lastToolInfoResult?: string;
+};
+```
+
+---
+
 ### DeltaEngineConfig
 
 ```ts
@@ -1442,6 +1647,32 @@ type ReasonerInput = {
   // from the message store. Gives the model time-gap awareness across
   // the conversation.
   priorMessages?: Array<{ sender: string; content: string; relativeTime: string }>;
+
+  // Action descriptions + JSON schemas for all legal actions this turn.
+  // Schemas converted from Zod via z.toJSONSchema() by the scheduler.
+  availableActionSchemas?: Array<{
+    name: string;
+    description: string;
+    schema: Record<string, unknown>;
+  }>;
+
+  // Tool menu: names + descriptions for all registered tools.
+  // The model sees this lightweight menu every turn. Schemas are
+  // fetched on demand via system:get_tool_schema (progressive disclosure).
+  availableTools?: Array<{ name: string; description: string }>;
+
+  // Advisory tool hints from the current phase/action. Suggestions only -
+  // all tools remain visible regardless.
+  toolHints?: string[];
+
+  // Prior tool execution history (truncated entries) so the model can
+  // see what tools it has already called and their results.
+  toolHistory?: ToolHistoryEntry[];
+
+  // Most recent tool-info result (schema dump, history snapshot, or
+  // single history entry). Forwarded from TaskStateSnapshot.lastToolInfoResult
+  // on the next turn.
+  toolInfoResult?: string;
 };
 ```
 
@@ -1472,6 +1703,7 @@ delta.action({ ... });   // define an executable operation
 delta.workflow({ ... });  // define an ordered procedure
 delta.phase({ ... });     // define a workflow stage
 delta.agent({ ... });     // define a role and its capabilities
+delta.tool({ ... });      // define a reusable, stateless utility
 ```
 
 Runtime methods (drive execution):

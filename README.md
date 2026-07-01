@@ -366,6 +366,73 @@ A branch can also use a guard condition instead of outcome routing:
 
 When the guard returns false, the branch is skipped and the next action in the list runs. Branching is declared, not inferred. The engine never invents a transition that was not explicitly declared.
 
+## Tools
+
+Tools are reusable, stateless utilities registered at the engine level. Unlike actions, tools have no prerequisites, no risk, no state impact, and no budget of their own. They are visible to every agent across all tasks.
+
+Tools provide reasoning context rather than changing system state. Web search, mathematical computation, and document retrieval are typical tool use cases. An action changes business state; a tool informs the model.
+
+### Registering a Tool
+
+```ts
+const webSearch = delta.tool({
+  name: "web-search",
+  description: "Search the web for current information",
+  schema: z.object({ query: z.string() }),
+  fn: async ({ data }) => {
+    const results = await searchEngine.query(data.query);
+    return Ok(results);
+  },
+  limits: {
+    maxCallsPerPhase: 10,
+    maxCallsPerTask: 50,
+    cooldownMs: 1000,
+  },
+  budget: { tokens: 1000, money: 5 },  // optional cost tracking
+});
+```
+
+### Progressive Disclosure
+
+Tools use progressive disclosure to keep the model's context window efficient:
+
+- The model sees a menu of tool names and descriptions on every turn.
+- Schemas are fetched on demand via the internal tool `system:get_tool_schema`.
+- Tool execution history entries are fetched on demand via `system:get_tool_history` and `system:get_tool_history_entry`.
+
+Actions use the opposite pattern. Action schemas are included by default in the model's context because actions are task-specific and the model needs full schema information to execute business logic correctly.
+
+### Tool Hints
+
+Phases and actions may declare advisory tool hints. These are suggestions about which tools are useful. All tools remain visible regardless of hints.
+
+```ts
+const phase: Phase = {
+  name: "research",
+  description: "Gather customer data",
+  actions: ["lookup-customer"],
+  checkpoint: true,
+  tools: ["web-search", "database-query"],  // advisory hints
+};
+```
+
+### Tool History
+
+Every tool call is logged with agent name, phase, timestamp, input, output, and token count for audit. History entries are truncated by default (500 characters). Full results are retrievable on demand via `system:get_tool_history_entry`.
+
+### Loop Detection and Budget
+
+The scheduler enforces per-tool limits: cooldown between calls, max calls per phase, and max calls per task. Tools may declare a budget for cost tracking. When a limit is hit, the engine blocks the call and returns a humanized message.
+
+### Internal Tools
+
+Tools whose names start with `system:` are reserved for framework-provided capabilities. The engine validates this prefix at registration time:
+
+- `system:use_tool` — execute a named tool with the given input.
+- `system:get_tool_schema` — return the full Zod schema for a named tool.
+- `system:get_tool_history` — return the full tool history for the current task.
+- `system:get_tool_history_entry` — return a single tool history entry by index, including the full (untruncated) output.
+
 ## System Prompt and Time Awareness
 
 Two engine-level options ground every agent in shared context and time:
@@ -394,6 +461,7 @@ type Cost = {
   durationMs: number; // wall-clock execution time in milliseconds
   memory?: number;    // memory footprint (developer-chosen unit)
   latency?: number;   // added delay beyond execution time, e.g. a network round-trip
+  money?: number;     // financial cost in USD cents (integer) or fractional currency units
 };
 ```
 

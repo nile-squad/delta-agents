@@ -74,6 +74,38 @@ All 8 entities have working store methods in both adapters (in-memory + Drizzle)
 
 ---
 
+## Tools Feature (2026-07-01)
+
+### Decision: Tools as a separate concept from Actions
+- Tools are reusable, stateless utilities (web search, math). Actions are business logic.
+- Tools have no prerequisites, no risk, no state impact.
+- Registered globally at engine level, always visible to the model.
+
+### Decision: Progressive disclosure for tools, full disclosure for actions
+- Tools: model sees menu (names + descriptions). Schemas fetched on demand via system:get_tool_schema.
+- Actions: model sees full description + JSON schema in context by default.
+- Rationale: tools are reusable across contexts, so keeping the menu small matters. Actions are task-specific, so the model needs full info to execute correctly.
+
+### Decision: system: prefix for internal tools
+- Reserved for framework-provided tools: system:use_tool, system:get_tool_schema, system:get_tool_history, system:get_tool_history_entry.
+- User tools cannot use this prefix (validated at registration time).
+
+### Decision: Tool history in TaskStateSnapshot
+- Every tool call logged with full context (agent, phase, timestamp, input, output, token count).
+- Truncated by default (500 chars). Full results retrievable via system:get_tool_history_entry.
+- Persisted in checkpoints for audit and provenance.
+
+### Decision: Loop detection per scheduler run
+- Fresh detector per runScheduler call. Tracks cooldown, max calls, budget per agent.
+- Humanized messages to model on block. Full context logged for audit.
+
+### Tradeoffs accepted
+- lastToolInfoResult persists across turns until overwritten (could become stale, but not harmful)
+- Token count uses 4-chars-per-token heuristic (not exact, but sufficient for budget tracking)
+- Tool-info queries cost a scheduler step (no re-prompting optimization yet)
+
+---
+
 ## slang-ts idiom conventions
 
 **Patterns — apply everywhere, no exceptions:**
