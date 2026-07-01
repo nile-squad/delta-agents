@@ -29,6 +29,9 @@ export type {
   DataSourceOwnership,
   DataSourceAuthentication,
   Agent,
+  ToolContext,
+  ToolHistoryEntry,
+  Tool,
 } from "./authoring/types";
 
 // ── Runtime ───────────────────────────────────────────────────────────────────

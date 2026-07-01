@@ -32,6 +32,7 @@ import { makeDefineAction } from "../authoring/define-action";
 import { makeDefineWorkflow } from "../authoring/define-workflow";
 import { makeDefineAgent } from "../authoring/define-agent";
 import { makeDefineDataSource } from "../authoring/define-data-source";
+import { makeDefineTool } from "../authoring/define-tool";
 import type { Agent } from "../authoring/types";
 import type { Message } from "../shared/types";
 import { taskId, messageId } from "../shared/id";
@@ -145,6 +146,7 @@ export const createDeltaEngine = async ({
   const action = makeDefineAction({ registry });
   const workflow = makeDefineWorkflow({ registry });
   const dataSource = makeDefineDataSource({ registry });
+  const tool = makeDefineTool({ registry });
   const agent = makeDefineAgent({ registry, modelNames });
 
   // ── Runtime methods ──────────────────────────────────────────────────────
@@ -300,5 +302,5 @@ export const createDeltaEngine = async ({
     return store.getLatestTaskByAgent(agentName);
   };
 
-  return { action, workflow, dataSource, agent, deploy, send, approve, pause, resume, inspect, lastTask };
+  return { action, workflow, dataSource, tool, agent, deploy, send, approve, pause, resume, inspect, lastTask };
 };

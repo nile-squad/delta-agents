@@ -17,11 +17,12 @@
  * - Workflow phases list is non-empty
  * - Agent actions list is non-empty
  * - Skill string refs on actions and workflow phases resolve to declared agent skills
+ * - Tool name non-empty, no "system:" prefix, description/schema/fn present, limits valid
  */
 
 import type { Result } from "slang-ts";
 import { Ok, Err } from "slang-ts";
-import type { Action, Workflow, Phase, Agent, ActionRef, Branch, DataSource } from "./types";
+import type { Action, Workflow, Phase, Agent, ActionRef, Branch, DataSource, Tool } from "./types";
 import { DATA_SOURCE_OPERATIONS, dataSourceActions } from "./types";
 
 const isBranch = (ref: ActionRef): ref is Branch =>
@@ -283,4 +284,39 @@ export const validateAgent = (
   }
 
   return Ok(agent);
+};
+
+// ---------------------------------------------------------------------------
+// Tool
+// ---------------------------------------------------------------------------
+
+export const validateTool = (tool: Tool): Result<Tool, string> => {
+  if (!tool.name || tool.name.trim() === "") {
+    return Err("tool name must be a non-empty string");
+  }
+  // Reserve system: prefix for internal framework tools
+  if (tool.name.startsWith("system:")) {
+    return Err(`tool "${tool.name}": name must not start with "system:" (reserved for internal tools)`);
+  }
+  if (!tool.description || tool.description.trim() === "") {
+    return Err(`tool "${tool.name}": description must be a non-empty string`);
+  }
+  if (tool.schema === undefined || tool.schema === null) {
+    return Err(`tool "${tool.name}": schema is required`);
+  }
+  if (!tool.fn || typeof tool.fn !== "function") {
+    return Err(`tool "${tool.name}": fn must be a function`);
+  }
+  if (tool.limits !== undefined) {
+    if (tool.limits.cooldownMs !== undefined && tool.limits.cooldownMs < 0) {
+      return Err(`tool "${tool.name}": cooldownMs must be >= 0`);
+    }
+    if (tool.limits.maxCallsPerPhase !== undefined && tool.limits.maxCallsPerPhase < 1) {
+      return Err(`tool "${tool.name}": maxCallsPerPhase must be >= 1`);
+    }
+    if (tool.limits.maxCallsPerTask !== undefined && tool.limits.maxCallsPerTask < 1) {
+      return Err(`tool "${tool.name}": maxCallsPerTask must be >= 1`);
+    }
+  }
+  return Ok(tool);
 };

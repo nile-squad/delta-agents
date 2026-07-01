@@ -19,14 +19,17 @@ export type JsonRecord = { [key: string]: Json };
 //   durationMs — wall-clock execution time of the work itself.
 //   memory     — memory footprint (developer-chosen unit, e.g. bytes/MB). Optional.
 //   latency    — added delay beyond execution time, e.g. a comms round-trip. Optional.
+//   money      — financial cost in USD cents (integer) or fractional currency units. Optional.
 // The optional axes are only *enforced* by a budget that declares them: an
-// undeclared memory/latency budget means "unlimited on that axis", not zero — so
+// undeclared memory/latency/money budget means "unlimited on that axis", not zero — so
 // existing { tokens, durationMs } code stays unconstrained on the new axes.
 export type Cost = {
   tokens: number;
   durationMs: number;
   memory?: number;
   latency?: number;
+  /** Financial cost in USD cents (integer) or fractional currency units. Optional. Used for tool call cost tracking. */
+  money?: number;
 };
 
 export type ExecutionStatus =

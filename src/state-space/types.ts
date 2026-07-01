@@ -12,6 +12,7 @@
 
 import type { Cost, ExecutionStatus, RiskState, TrustState } from "../shared/types";
 import type { KalmanState } from "../governance/types";
+import type { ToolHistoryEntry } from "../authoring/types";
 
 export type TaskStateSnapshot = {
   taskId: string;
@@ -72,6 +73,9 @@ export type TaskStateSnapshot = {
   // Values must be JSON-serializable (they round-trip through the checkpoint).
   workflowInput?: Record<string, unknown>;
   workflowActionInputs?: Record<string, Record<string, string | number | boolean | null>>;
+
+  /** Tool execution history for audit and checkpointing. Every tool call is recorded with full context. */
+  toolHistory?: ToolHistoryEntry[];
 };
 
 // Result of a legality check. Includes a reason when illegal so the caller

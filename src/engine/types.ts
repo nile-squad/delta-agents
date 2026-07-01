@@ -15,7 +15,7 @@ import type { Cost, Task, Execution, Checkpoint, ApprovalRequest, EscalationReco
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort } from "../ports/reasoner-port";
 import type { RetryOptions } from "../infra";
-import type { Action, Workflow, Agent, DataSource } from "../authoring/types";
+import type { Action, Workflow, Agent, DataSource, Tool } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 
 /**
@@ -177,6 +177,8 @@ export type DeltaEngine = {
   workflow: (def: Workflow) => Workflow;
   /** Define a named, owned store of governed CRUD operations. */
   dataSource: (def: DataSource) => DataSource;
+  /** Define a reusable, stateless utility available to all agents. */
+  tool: (def: Tool) => Tool;
   /** Define a role with its allowed actions, workflows, and data sources. */
   agent: (def: Agent) => Agent;
 

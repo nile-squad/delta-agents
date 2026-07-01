@@ -102,6 +102,61 @@ export type Action<TInput extends Record<string, unknown> = Record<string, unkno
   fn: ActionFn<TInput>;
   /** Skills active only when this action runs (overrides phase-level skills). */
   skills?: (string | Skill)[];
+  /** Advisory hint: tools useful for this action. All tools remain visible regardless. */
+  tools?: string[];
+};
+
+/**
+ * Context passed to a tool's execution function. Provides identifying
+ * information for audit trails and access to prior tool history.
+ */
+export type ToolContext = {
+  agentName: string;
+  taskId: string;
+  phaseName?: string;
+  toolHistory: ToolHistoryEntry[];
+};
+
+/**
+ * A single tool execution record. Persisted in TaskStateSnapshot for
+ * checkpointing and audit. Every tool call is logged with full context
+ * for governance, provenance, and safety.
+ */
+export type ToolHistoryEntry = {
+  id: string;
+  toolName: string;
+  input: unknown;
+  output: unknown;
+  truncated: boolean;
+  timestamp: number;
+  agentName: string;
+  phaseName?: string;
+  tokenCount?: number;
+  cost?: Cost;
+};
+
+/**
+ * A reusable, stateless utility available to all agents. Unlike actions,
+ * tools do not change state space, have no prerequisites, and carry no
+ * risk. They provide reasoning context (web search, math, etc.).
+ *
+ * Tools are registered globally at the engine level and are always
+ * visible to the model. Progressive disclosure keeps context small:
+ * the model sees names + descriptions, schemas are fetched on demand.
+ */
+export type Tool = {
+  name: string;
+  description: string;
+  schema: ZodObject<ZodRawShape>;
+  skills?: (string | Skill)[];
+  fn: (ctx: { data: unknown; ctx: ToolContext }) => Promise<Result<unknown, string>>;
+  limits?: {
+    maxCallsPerPhase?: number;
+    maxCallsPerTask?: number;
+    cooldownMs?: number;
+  };
+  cost?: Cost;
+  budget?: Cost;
 };
 
 /**
@@ -142,6 +197,8 @@ export type Phase = {
    * should unfold experientially.
    */
   storyline?: string;
+  /** Advisory hint: tools useful in this phase. All tools remain visible regardless. */
+  tools?: string[];
 };
 
 export type SupervisionPolicyDef = {

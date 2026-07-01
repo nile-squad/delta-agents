@@ -10,7 +10,7 @@
  * (spec §Bounded State-Space Model, principle 2).
  */
 
-import type { Action, Workflow, Agent, DataSource } from "./types";
+import type { Action, Workflow, Agent, DataSource, Tool } from "./types";
 import { Err, Ok, option } from "slang-ts";
 import type { Result } from "slang-ts";
 
@@ -20,6 +20,7 @@ export type Registry = {
   registerWorkflow: (workflow: Workflow) => Result<Workflow, string>;
   registerAgent: (agent: Agent) => Result<Agent, string>;
   registerDataSource: (dataSource: DataSource) => Result<DataSource, string>;
+  registerTool: (tool: Tool) => Result<Tool, string>;
 
   /**
    * Mark an agent as deployed so send() may accept tasks for it.
@@ -40,6 +41,7 @@ export type Registry = {
   getWorkflow: (name: string) => Result<Workflow, string>;
   getAgent: (name: string) => Result<Agent, string>;
   getDataSource: (name: string) => Result<DataSource, string>;
+  getTool: (name: string) => Result<Tool, string>;
 
   // Discovery (used by state-space module)
   getActionsForAgent: (agentName: string) => Result<Action[], string>;
@@ -58,6 +60,7 @@ export type Registry = {
   listWorkflows: () => string[];
   listAgents: () => string[];
   listDataSources: () => string[];
+  listTools: () => string[];
 };
 
 /**
@@ -70,6 +73,7 @@ export const createRegistry = (): Registry => {
   const workflows = new Map<string, Workflow>();
   const agents = new Map<string, Agent>();
   const dataSources = new Map<string, DataSource>();
+  const tools = new Map<string, Tool>();
   /**
    * Tracks agents that have been explicitly deployed via delta.deploy().
    * An agent that is defined (registered) but not deployed must not accept
@@ -111,6 +115,14 @@ export const createRegistry = (): Registry => {
       return Ok(dataSource);
     },
 
+    registerTool: (tool) => {
+      if (tools.has(tool.name)) {
+        return Err(`tool "${tool.name}" is already registered`);
+      }
+      tools.set(tool.name, tool);
+      return Ok(tool);
+    },
+
     getAction: (name) => {
       const opt = option(actions.get(name));
       return opt.isSome ? Ok(opt.value) : Err(`action "${name}" not found in registry`);
@@ -129,6 +141,11 @@ export const createRegistry = (): Registry => {
     getDataSource: (name) => {
       const opt = option(dataSources.get(name));
       return opt.isSome ? Ok(opt.value) : Err(`data source "${name}" not found in registry`);
+    },
+
+    getTool: (name) => {
+      const opt = option(tools.get(name));
+      return opt.isSome ? Ok(opt.value) : Err(`tool "${name}" not found in registry`);
     },
 
     deployAgent: (agentName) => {
@@ -166,5 +183,6 @@ export const createRegistry = (): Registry => {
     listWorkflows: () => [...workflows.keys()],
     listAgents: () => [...agents.keys()],
     listDataSources: () => [...dataSources.keys()],
+    listTools: () => [...tools.keys()],
   };
 };
