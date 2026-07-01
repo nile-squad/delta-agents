@@ -38,12 +38,18 @@ export type {
 // The engine factory and the types that describe runtime state a developer
 // reads back via inspect() / send() / resume().
 export { createDeltaEngine } from "./engine";
-export type { DeltaEngine, DeltaEngineConfig, SendInput, SendResult, InspectResult, ModelDef, ModelOptions } from "./engine";
+export type { DeltaEngine, DeltaEngineConfig, SendInput, SendResult, InspectResult, ModelDef, ModelOptions, CleanupOptions } from "./engine";
 
 // Shared domain types the developer encounters in send results, inspect results,
 // and action context. Budget is expressed as Cost (the same multi-axis vector
 // used for declarations and runtime measurements).
 export type { Cost, Task, SupervisionPolicy, Memory } from "./shared/types";
+
+// ── Logger ────────────────────────────────────────────────────────────────────
+// Per-engine logger configuration. The engine creates a default dev logger when
+// none is configured; callers can override the mode, level, or drain.
+export type { LoggerConfig, LoggerDrain, Logger, LogLevel, LogContext, LogEntry } from "./shared/logger-types";
+export { createEngineLogger } from "./shared/logger";
 
 // ── Adapters ──────────────────────────────────────────────────────────────────
 // Storage adapters, reasoner adapters, and the Chat SDK channel bridge.
@@ -54,6 +60,15 @@ export { createMockReasoner } from "./ports";
 export type { MockResponse, MockReasonerOptions } from "./ports";
 export { createChatSdkChannel } from "./comms";
 export type { ChatThread } from "./comms";
+
+// Cache configuration for the read-through StoragePort wrapper. Forwarded to
+// `DeltaEngineConfig.cache`. Omit to use defaults (1000 entries, 5-minute TTL).
+export type { CacheConfig } from "./shared/cache";
+
+// Per-module diagnostic toggles. Forwarded to `DeltaEngineConfig.diagnostics`.
+// Omit (or pass `{}`) to disable all modules — disabled emission is provably
+// zero overhead.
+export type { DiagnosticsConfig } from "./shared/diagnostics";
 
 // ── Result utilities ──────────────────────────────────────────────────────────
 // Re-export slang-ts so callers can construct Ok/Err, pattern-match results,

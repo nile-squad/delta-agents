@@ -53,6 +53,8 @@ import { formatDistanceToNow } from "date-fns";
 import { toJSONSchema, prettifyError } from "zod";
 import { createLoopDetector } from "./loop-detector";
 import type { LoopDetector } from "./loop-detector";
+import type { Logger } from "../shared/logger-types";
+import type { Diagnostics } from "../shared/diagnostics";
 
 // ── Step outcome ────────────────────────────────────────────────────────────
 
@@ -148,6 +150,7 @@ const stepTask = async ({
   providerRetry,
   timezone,
   loopDetector,
+  diagnostics,
 }: {
   task: Task;
   agent: Agent;
@@ -161,6 +164,9 @@ const stepTask = async ({
   timezone?: string;
   /** Per-run loop detector; gates tool calls by cooldown / max-calls / budget. */
   loopDetector: LoopDetector;
+  /** Per-engine diagnostics handle. Threaded so the engine module can emit
+   * step-start / step-end events when diagnostics.engine is enabled. */
+  diagnostics: Diagnostics;
 }): Promise<StepOutcome> => {
   // 1. Discover legal actions for the agent in the current state.
   const agentActionsResult = registry.getActionsForAgent(agent.name);
@@ -618,6 +624,8 @@ export const runScheduler = async ({
   maxSteps,
   providerRetry = defaultRetryOptions,
   timezone,
+  logger,
+  diagnostics,
   loopDetector: passedLoopDetector,
 }: {
   root: Runner;
@@ -628,6 +636,11 @@ export const runScheduler = async ({
   providerRetry?: RetryOptions;
   /** Timezone for humanized time in reasoner user messages; falls back to system tz in stepTask. */
   timezone?: string;
+  /** Per-engine logger threaded from the engine factory. */
+  logger: Logger;
+  /** Per-engine diagnostics handle. Threaded into the main loop so opt-in
+   * modules (engine, actions, ...) can emit structured events. */
+  diagnostics: Diagnostics;
   /** Per-run loop detector. When omitted, the scheduler builds a fresh one —
    * loop detection is about within-run loops, so a fresh detector per
    * runScheduler call is the natural default. */
@@ -638,7 +651,11 @@ export const runScheduler = async ({
   let treeInitialized = false;
   // Fresh loop detector per scheduler run: counters and spend start at zero
   // for every agent. The same instance is reused across all steps in this run.
-  const loopDetector = passedLoopDetector ?? createLoopDetector();
+  const loopDetector = passedLoopDetector ?? createLoopDetector({ logger });
+  // Engine diagnostics: pre-resolve once so the main loop does not pay the
+  // Map lookup on every step. Returns the shared no-op when diagnostics.engine
+  // is disabled — the methods are no-ops and inlined away by the JIT.
+  const engineDiag = diagnostics.for("engine");
 
   const findRunner = (id: string): Option<Runner> => option(runners.find((r) => r.task.id === id));
 
@@ -884,6 +901,10 @@ export const runScheduler = async ({
         }
       }
 
+      // Engine instrumentation (PoC): step-start before the step, step-end
+      // after with the outcome kind. Two emission points per step; the
+      // disabled path is provably zero overhead.
+      engineDiag.event("step-start", { taskId: runner.task.id, step: runner.step });
       const outcome = await stepTask({
         task: runner.task,
         agent: runner.agent,
@@ -895,9 +916,11 @@ export const runScheduler = async ({
         providerRetry,
         timezone,
         loopDetector,
+        diagnostics,
       });
       runner.step++;
       runner.snapshot = outcome.snapshot;
+      engineDiag.event("step-end", { taskId: runner.task.id, step: runner.step, kind: outcome.kind });
 
       // Phase-change detection: when the snapshot's currentPhase differs from
       // what the runner last saw, reset per-phase tool counters so phase-scoped

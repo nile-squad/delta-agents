@@ -178,6 +178,7 @@ export const runWorkflow = async ({
   communicate,
   remember,
   agentSkills,
+  diagnostics,
 }: RunWorkflowInput): Promise<WorkflowResult> => {
   const workflowCtx: ActionContext = {
     taskId: state.taskId,
@@ -229,6 +230,7 @@ export const runWorkflow = async ({
       communicate,
       remember,
       agentSkills,
+      ...(diagnostics !== undefined ? { diagnostics } : {}),
       ...(startIndex !== undefined ? { startIndex } : {}),
       ...(workflow.storyline !== undefined ? { storyline: workflow.storyline } : {}),
     });

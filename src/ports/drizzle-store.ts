@@ -18,7 +18,7 @@ import { Ok, Err } from "slang-ts";
 import type { Result } from "slang-ts";
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, lt, and, inArray } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import type { StoragePort } from "./storage-port";
 import type {
@@ -557,6 +557,73 @@ const buildStore = (db: DB): StoragePort => ({
       return Ok(toQueue(row));
     } catch (e) {
       return Err(`failed to update queue "${id}": ${String(e)}`);
+    }
+  },
+
+  // ── Cleanup ───────────────────────────────────────────────────────────────
+  // Destructive operations for retention pruning. Cascade in dependency order:
+  // child rows first, then the task itself. Wrapping each delete in its own
+  // try/catch keeps the cascade atomic-per-table — a partial failure surfaces
+  // a clear Err without leaving a half-deleted task behind (each table is
+  // idempotent on retry).
+  deleteTask: async (id: string): Promise<Result<void, string>> => {
+    try {
+      // Cascade child rows first so the task is the last thing removed and a
+      // partial failure is detectable by re-checking the task.
+      await db.delete(executions).where(eq(executions.taskId, id));
+      await db.delete(checkpoints).where(eq(checkpoints.taskId, id));
+      await db.delete(escalations).where(eq(escalations.taskId, id));
+      await db.delete(messages).where(eq(messages.taskId, id));
+      await db.delete(approvalRequests).where(eq(approvalRequests.taskId, id));
+      await db.delete(memories).where(eq(memories.taskId, id));
+      await db.delete(taskTrees).where(eq(taskTrees.rootTaskId, id));
+      const result = await db.delete(tasks).where(eq(tasks.id, id));
+      if (result.rowsAffected === 0) return Err(`task "${id}" not found`);
+      return Ok(undefined);
+    } catch (e) {
+      return Err(`failed to delete task "${id}": ${String(e)}`);
+    }
+  },
+
+  deleteMessages: async (taskId: string, olderThan?: Date): Promise<Result<number, string>> => {
+    try {
+      // Only CONSUMED messages are pruned; unconsumed mentions may still need
+      // delivery. `olderThan` further restricts to consumed messages created
+      // before that date.
+      const whereClause = olderThan !== undefined
+        ? and(eq(messages.taskId, taskId), eq(messages.consumed, 1), lt(messages.createdAt, olderThan.getTime()))
+        : and(eq(messages.taskId, taskId), eq(messages.consumed, 1));
+      const result = await db.delete(messages).where(whereClause);
+      return Ok(Number(result.rowsAffected));
+    } catch (e) {
+      return Err(`failed to delete messages for task "${taskId}": ${String(e)}`);
+    }
+  },
+
+  // ── Cleanup scan helpers ──────────────────────────────────────────────────
+  // Feed the retention prune. Both are best-effort lookups, so they sit on the
+  // safe path — a malformed filter or a transient connection fault should not
+  // collapse a manual cleanup run.
+  getTasksOlderThan: async (statuses: ExecutionStatus[], olderThan: Date): Promise<Result<Task[], string>> => {
+    try {
+      // inArray handles the status set; lt(tasks.updatedAt, …) gives the age
+      // boundary. Statuses list is expected non-empty by the caller.
+      const rows = await db.select().from(tasks)
+        .where(and(inArray(tasks.status, statuses), lt(tasks.updatedAt, olderThan.getTime())));
+      return Ok(rows.map(toTask));
+    } catch (e) {
+      return Err(`failed to query tasks older than ${olderThan.toISOString()}: ${String(e)}`);
+    }
+  },
+
+  getTaskIds: async (): Promise<Result<string[], string>> => {
+    try {
+      // Projection-only scan: no need to pull every task column when cleanup
+      // only needs to walk the IDs.
+      const rows = await db.select({ id: tasks.id }).from(tasks);
+      return Ok(rows.map((r) => r.id));
+    } catch (e) {
+      return Err(`failed to list task IDs: ${String(e)}`);
     }
   },
 });

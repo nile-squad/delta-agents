@@ -48,7 +48,11 @@ export const runGateway = async ({
   availableSkills,
   storyline,
   phaseStoryline,
+  diagnostics,
 }: GatewayInput): Promise<Result<GatewaySuccess, string>> => {
+  // Actions instrumentation (PoC): resolve the emitter once. Disabled modules
+  // get the shared no-op — calling .event() is provably zero overhead.
+  const actionDiag = diagnostics?.for("actions");
   // ── 1. Schema validation ────────────────────────────────────────────────
   // Must be the first check. An invalid schema means the reasoner sent bad
   // input; governance machinery must not run on malformed data (prohibition 9).
@@ -122,6 +126,7 @@ export const runGateway = async ({
   // safeTry normalizes fn's Result return intact (Ok→Ok, Err→Err) and converts
   // any throw to Err — a thrown error is a contract violation, treated as fn
   // returning Err (prohibition 18: never infer success from absence of a throw).
+  actionDiag?.event("action-start", { action: action.name, taskId: state.taskId, executionId: excId });
   const fnResult = await safeTry(async () => action.fn(validatedInput, ctx));
 
   const endedAt = new Date();
@@ -139,6 +144,13 @@ export const runGateway = async ({
   };
 
   const fnSucceeded = fnResult.isOk;
+  actionDiag?.event("action-end", {
+    action: action.name,
+    taskId: state.taskId,
+    executionId: excId,
+    status: fnSucceeded ? "completed" : "failed",
+    durationMs,
+  });
 
   // ── 8. After / onError hook ────────────────────────────────────────────
   // Run teardown hooks. Their results do not alter fnResult or the

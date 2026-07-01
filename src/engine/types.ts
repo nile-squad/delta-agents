@@ -17,6 +17,10 @@ import type { ReasonerPort } from "../ports/reasoner-port";
 import type { RetryOptions } from "../infra";
 import type { Action, Workflow, Agent, DataSource, Tool } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
+import type { LoggerConfig } from "../shared/logger-types";
+import type { CacheConfig } from "../shared/cache";
+import type { CleanupOptions } from "./cleanup";
+import type { DiagnosticsConfig } from "../shared/diagnostics";
 
 /**
  * Provider options forwarded verbatim to the model API each call.
@@ -111,6 +115,28 @@ export type DeltaEngineConfig = {
    * Defaults to the system timezone. Grounds agents with time awareness.
    */
   timezone?: string;
+  /**
+   * Per-engine logger configuration. When omitted, the engine creates a dev
+   * logger that writes colorized pino-pretty output to the console at info
+   * level. Each engine gets its own logger; engines never share one.
+   */
+  logger?: LoggerConfig;
+  /**
+   * Read-through cache tuning. When set, the engine wraps the configured
+   * `store` (or the default in-memory store) in a read-through cache that
+   * accelerates hot-path reads (`getTask`, `getLatestCheckpoint`,
+   * `getMemoriesByAgent`) and invalidates on writes. Omit to use defaults
+   * (1000 entries, 5-minute sliding window).
+   */
+  cache?: CacheConfig;
+  /**
+   * Per-module diagnostic toggles. Each module can opt in to structured
+   * event emission (timing, decision traces, counts) to the per-engine
+   * logger at debug/trace level. Omit to disable all modules — the
+   * disabled path is provably zero overhead (the module never touches the
+   * logger). See `DiagnosticsConfig` for the supported module names.
+   */
+  diagnostics?: DiagnosticsConfig;
 };
 
 export type SendInput = {
@@ -217,4 +243,11 @@ export type DeltaEngine = {
    * the caller to store the TaskID (invariant 25).
    */
   lastTask: (agentName: string) => Promise<Result<Task | null, string>>;
+  /**
+   * Manually prune completed/failed tasks and consumed messages past their
+   * retention windows, and evict expired cache entries. Destructive store
+   * operations are opt-in via `CleanupOptions` — omit retention params to skip.
+   * Cache eviction runs by default; pass `evictCache: false` to disable.
+   */
+  cleanup: (options?: CleanupOptions) => Promise<Result<void, string>>;
 };

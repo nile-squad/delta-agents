@@ -32,5 +32,11 @@ export {
   queueId,
 } from "./id";
 
-export type { LogLevel, LogContext, LogEntry, LogSink, Logger } from "./logger";
-export { configureLogger, createLogger, consoleLogSink } from "./logger";
+export type { LogLevel, LogContext, LogEntry, LoggerDrain, LoggerConfig, Logger } from "./logger-types";
+export { createEngineLogger } from "./logger";
+
+export type { DiagnosticsConfig, DiagnosticModule, DiagnosticEmitter, Diagnostics } from "./diagnostics";
+export { createDiagnostics } from "./diagnostics";
+
+export type { CacheConfig, CacheEntry, Cache } from "./cache";
+export { createCache } from "./cache";

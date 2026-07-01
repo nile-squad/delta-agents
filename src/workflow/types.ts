@@ -14,6 +14,7 @@ import type { Phase, Workflow, Action, ActionContext, Skill } from "../authoring
 import type { TaskStateSnapshot } from "../state-space/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ApprovalStatus } from "../execution/types";
+import type { Diagnostics } from "../shared/diagnostics";
 
 export type NextStep =
   | {
@@ -79,6 +80,14 @@ export type RunPhaseInput = {
    * action fns receive it. Threaded onto ActionContext.storyline.
    */
   storyline?: string;
+  /**
+   * Per-engine diagnostics handle. Threaded into the gateway so opt-in
+   * modules can emit structured events (e.g. action-start / action-end).
+   * Optional so standalone unit tests can call runPhase directly without
+   * wiring a full diagnostics handle — the gateway treats undefined as
+   * "diagnostics disabled".
+   */
+  diagnostics?: Diagnostics;
 };
 
 export type RunWorkflowInput = {
@@ -94,4 +103,11 @@ export type RunWorkflowInput = {
   remember?: ActionContext["remember"];
   /** The agent's full declared skill set, used to resolve phase/action skill refs. */
   agentSkills?: Skill[];
+  /**
+   * Per-engine diagnostics handle. Threaded into every phase + action so
+   * opt-in modules can emit structured events. Same shape as the engine's
+   * diagnostics — disabled modules pay zero overhead. Optional for direct
+   * test callers; the engine always provides one.
+   */
+  diagnostics?: Diagnostics;
 };

@@ -17,6 +17,7 @@ import type { Execution, Cost } from "../shared/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 import type { Action, ActionContext } from "../authoring/types";
 import type { StoragePort } from "../ports/storage-port";
+import type { Diagnostics } from "../shared/diagnostics";
 
 export type ApprovalStatus = "none" | "pending" | "approved" | "rejected";
 
@@ -58,6 +59,13 @@ export type GatewayInput = {
    * action fn and hooks. Absent in the free reasoner loop and at workflow scope.
    */
   phaseStoryline?: ActionContext["phaseStoryline"];
+  /**
+   * Per-engine diagnostics handle. When the `actions` module is enabled, the
+   * gateway emits action-start / action-end events around fn. Absent in
+   * standalone gateway calls (e.g. unit tests) — the gateway skips the
+   * emission paths and behaves as before.
+   */
+  diagnostics?: Diagnostics;
 };
 
 export type GatewaySuccess = {

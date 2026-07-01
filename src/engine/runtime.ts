@@ -39,6 +39,8 @@ import type { HorizonStep } from "../governance";
 import { isOverBudget } from "../shared/cost";
 import { checkpointId } from "../shared/id";
 import { makeRunner, runScheduler } from "./scheduler";
+import type { Logger } from "../shared/logger-types";
+import type { Diagnostics } from "../shared/diagnostics";
 
 const MAX_STEPS_DEFAULT = 100;
 
@@ -63,6 +65,8 @@ export const runSendLoop = async ({
   startingSnapshot,
   providerRetry,
   timezone,
+  logger,
+  diagnostics,
 }: {
   task: Task;
   agent: Agent;
@@ -74,6 +78,11 @@ export const runSendLoop = async ({
   providerRetry?: RetryOptions;
   /** Timezone for humanized time in reasoner user messages; falls back to system tz in the scheduler. */
   timezone?: string;
+  /** Per-engine logger threaded from the engine factory. */
+  logger: Logger;
+  /** Per-engine diagnostics handle. Threaded into the scheduler so opt-in
+   * modules can emit structured events; a no-op when diagnostics is disabled. */
+  diagnostics: Diagnostics;
 }): Promise<SendResult> => {
   const root = makeRunner({
     task,
@@ -81,7 +90,7 @@ export const runSendLoop = async ({
     snapshot: startingSnapshot ?? snapshotFromTask(task),
     maxSteps,
   });
-  return runScheduler({ root, reasoner, registry, store, maxSteps, providerRetry, timezone });
+  return runScheduler({ root, reasoner, registry, store, maxSteps, providerRetry, timezone, logger, diagnostics });
 };
 
 // ── Workflow task driver (C-a) ──────────────────────────────────────────────
@@ -145,6 +154,7 @@ export const runWorkflowTask = async ({
   registry,
   store,
   startingSnapshot,
+  diagnostics,
 }: {
   task: Task;
   agent: Agent;
@@ -157,6 +167,9 @@ export const runWorkflowTask = async ({
   /** Resume state reconstructed from a checkpoint. When present, completed phases
    *  are skipped and the persisted send-time input is reused (resumeTask path). */
   startingSnapshot?: TaskStateSnapshot;
+  /** Per-engine diagnostics handle. Threaded into the workflow + phase + gateway
+   * paths so opt-in modules can emit structured events. */
+  diagnostics: Diagnostics;
 }): Promise<SendResult> => {
   // On a fresh send, start from the task record. On resume, start from the
   // checkpoint snapshot so completedPhases and the original input survive.
@@ -281,6 +294,7 @@ export const runWorkflowTask = async ({
     communicate: makeContextCommunicate({ agent, taskId: task.id, agentName: agent.name, store }),
     remember: makeContextRemember({ store, taskId: task.id, agentName: agent.name }),
     agentSkills: agent.skills,
+    diagnostics,
   });
 
   if (result.status === "completed") {
@@ -358,6 +372,8 @@ export const resumeTask = async ({
   maxSteps,
   providerRetry,
   timezone,
+  logger,
+  diagnostics,
 }: {
   taskId: string;
   agent: Agent;
@@ -368,6 +384,11 @@ export const resumeTask = async ({
   providerRetry?: RetryOptions;
   /** Timezone for humanized time in reasoner user messages; falls back to system tz in the scheduler. */
   timezone?: string;
+  /** Per-engine logger threaded from the engine factory. */
+  logger: Logger;
+  /** Per-engine diagnostics handle. Threaded into the scheduler so opt-in
+   * modules can emit structured events. */
+  diagnostics: Diagnostics;
 }): Promise<Result<SendResult, string>> => {
   const taskResult = await store.getTask(taskId);
   if (taskResult.isErr) return Err(`cannot resume: task "${taskId}" not found`);
@@ -403,11 +424,12 @@ export const resumeTask = async ({
       registry,
       store,
       startingSnapshot,
+      diagnostics,
     });
     return Ok(result);
   }
 
-  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, providerRetry, timezone });
+  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, providerRetry, timezone, logger, diagnostics });
   return Ok(result);
 };
 

@@ -257,7 +257,8 @@ describe("loop detection: phase change resets phase-scoped counters", () => {
     // because there is no phase). The minimal integration is therefore: the
     // detector unit behaviour matches what the scheduler wires up.
     const { createLoopDetector } = await import("../../src/engine/loop-detector");
-    const detector = createLoopDetector();
+    const { createEngineLogger } = await import("../../src/shared/logger");
+    const detector = createLoopDetector({ logger: createEngineLogger({ mode: "prod", level: "error", drain: { type: "file", dir: "/tmp/delta-agents-test-logs" } }) });
     detector.recordToolCall("agent-x", "search");
     detector.recordToolCall("agent-x", "search");
     expect(detector.checkMaxCalls("agent-x", "search", 2, "phase")).toBeDefined();

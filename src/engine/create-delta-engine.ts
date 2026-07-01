@@ -25,6 +25,7 @@ import { defaultRetryOptions } from "../infra";
 import type { DeltaEngineConfig, DeltaEngine } from "./types";
 import type { ReasonerPort } from "../ports/reasoner-port";
 import { createInMemoryStore } from "../ports/in-memory-store";
+import { createCachedStore } from "../ports/cached-store";
 import { createMockReasoner } from "../ports/mock-reasoner";
 import { createOpenAIReasoner } from "../ports/openai-reasoner";
 import { createRegistry } from "../authoring/registry";
@@ -38,7 +39,12 @@ import type { Message } from "../shared/types";
 import { taskId, messageId } from "../shared/id";
 import { initialRiskState, initialTrust } from "../governance";
 import { snapshotFromTask } from "../state-space/task-state";
+import { createEngineLogger } from "../shared/logger";
+import type { Logger } from "../shared/logger-types";
+import { createDiagnostics } from "../shared/diagnostics";
+import type { Diagnostics } from "../shared/diagnostics";
 import { runSendLoop, runWorkflowTask, pauseTask, resumeTask, inspectTask, resolveApproval } from "./runtime";
+import { runCleanup, opportunisticCleanup } from "./cleanup";
 
 const DEFAULT_BUDGET = { tokens: 10_000, durationMs: 300_000 };
 
@@ -53,8 +59,23 @@ export const createDeltaEngine = async ({
   providerRetry: configProviderRetry,
   systemPrompt: configSystemPrompt,
   timezone: configTimezone,
+  cache: configCache,
+  logger: configLogger,
+  diagnostics: configDiagnostics,
 }: DeltaEngineConfig = {}): Promise<DeltaEngine> => {
-  const store = configStore ?? createInMemoryStore();
+  // Per-engine logger: built once, owned by the engine closure, threaded into
+  // every module that needs it via DI. The default is a dev-mode pino-pretty
+  // stream to stdout (no log noise in tests because tests don't log).
+  const logger: Logger = createEngineLogger(configLogger);
+  // Per-engine diagnostics: one handle per engine, threaded into the modules
+  // that opt in. Each module calls `diagnostics.for("<module>")` to get its
+  // scoped emitter; disabled modules get the shared no-op (zero overhead).
+  const diagnostics: Diagnostics = createDiagnostics(configDiagnostics ?? {}, logger);
+  // Wrap the store in a read-through cache. The cache is always present so
+  // opportunistic cleanup can call `evictExpired()` from a known handle —
+  // the engine never has to discover whether a wrapper exists.
+  const baseStore = configStore ?? createInMemoryStore();
+  const { store, cache } = createCachedStore(baseStore, configCache);
   const registry = createRegistry();
   // Resolve the reasoner-retry policy once. Partial config merges over the infra
   // defaults so a caller can tune just the field they care about (e.g. attempts).
@@ -163,6 +184,12 @@ export const createDeltaEngine = async ({
   };
 
   const send: DeltaEngine["send"] = async ({ goal, agentName, budget = DEFAULT_BUDGET, workflow: workflowName, input, actionInputs }) => {
+    // ── Opportunistic cleanup ──────────────────────────────────────────────
+    // Sweep expired cache entries on every send. Synchronous and cheap (a
+    // single map scan); no store I/O. Keeps the cache from accumulating
+    // long-dead entries between manual cleanup runs.
+    opportunisticCleanup(cache);
+
     // ── Invariant 26: one MAJOR task per agent ─────────────────────────────
     // Per spec §No New Task When Work Is Pending, an agent that already has an
     // active/pending *major* (top-level) task does not get a second one — the
@@ -250,8 +277,8 @@ export const createDeltaEngine = async ({
     // through the workflow engine (reasoner-less); a workflow-less task uses the
     // free reasoner loop.
     const result = workflowName !== undefined
-      ? await runWorkflowTask({ task, agent: agentDef, workflowName, input, actionInputs, registry, store })
-      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, providerRetry, timezone: configTimezone });
+      ? await runWorkflowTask({ task, agent: agentDef, workflowName, input, actionInputs, registry, store, diagnostics })
+      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, providerRetry, timezone: configTimezone, logger, diagnostics });
 
     return Ok(result);
   };
@@ -291,10 +318,15 @@ export const createDeltaEngine = async ({
       maxSteps: maxStepsPerTask,
       providerRetry,
       timezone: configTimezone,
+      logger,
+      diagnostics,
     });
   };
 
   const inspect: DeltaEngine["inspect"] = async (taskId_) => {
+    // Opportunistic cleanup — keep inspect reads fresh by sweeping the cache
+    // (sync, no I/O). Same hook as `send`; inspect is the read-side companion.
+    opportunisticCleanup(cache);
     return inspectTask({ taskId: taskId_, store });
   };
 
@@ -302,5 +334,9 @@ export const createDeltaEngine = async ({
     return store.getLatestTaskByAgent(agentName);
   };
 
-  return { action, workflow, dataSource, tool, agent, deploy, send, approve, pause, resume, inspect, lastTask };
+  const cleanup: DeltaEngine["cleanup"] = async (options) => {
+    return runCleanup({ store, cache, options, logger });
+  };
+
+  return { action, workflow, dataSource, tool, agent, deploy, send, approve, pause, resume, inspect, lastTask, cleanup };
 };

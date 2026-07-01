@@ -47,6 +47,7 @@ export const runPhase = async ({
   startIndex,
   agentSkills,
   storyline,
+  diagnostics,
 }: RunPhaseInput): Promise<PhaseResult> => {
   // Resolve phase-level skills once. Each action may override with its own set.
   const phaseSkillsResult = resolveSkillRefs(phase.skills ?? [], agentSkills ?? []);
@@ -153,6 +154,7 @@ export const runPhase = async ({
       ...(actionSkills.length > 0 ? { availableSkills: actionSkills } : {}),
       ...(storyline !== undefined ? { storyline } : {}),
       ...(phase.storyline !== undefined ? { phaseStoryline: phase.storyline } : {}),
+      diagnostics,
     });
 
     if (gwResult.isErr) {

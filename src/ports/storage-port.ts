@@ -21,6 +21,7 @@ import type {
   Message,
   Memory,
   Queue,
+  ExecutionStatus,
 } from "../shared/types";
 
 export type StoragePort = {
@@ -90,4 +91,29 @@ export type StoragePort = {
   saveQueue: (queue: Queue) => Promise<Result<Queue, string>>;
   getQueue: (id: string) => Promise<Result<Queue, string>>;
   updateQueue: (id: string, patch: Partial<Queue>) => Promise<Result<Queue, string>>;
+
+  // Cleanup (optional) — adapters that support destructive cleanup implement
+  // these. The cleanup feature (engine.cleanup) checks for presence before
+  // calling. Marked optional so existing adapters keep compiling.
+  /** Delete a task permanently along with its checkpoints, messages, executions, and escalations. */
+  deleteTask?: (id: string) => Promise<Result<void, string>>;
+  /**
+   * Delete consumed messages for a task, optionally restricted to those older
+   * than a given date. Returns the count removed. Unconsumed messages are
+   * preserved — they may still need delivery.
+   */
+  deleteMessages?: (taskId: string, olderThan?: Date) => Promise<Result<number, string>>;
+  /**
+   * Return tasks matching any of the given statuses, with `updatedAt` strictly
+   * older than `olderThan`. Used by `delta.cleanup()` to find completed/failed
+   * tasks past the retention window. Optional — adapters that support cleanup
+   * implement it; otherwise task pruning is skipped.
+   */
+  getTasksOlderThan?: (statuses: ExecutionStatus[], olderThan: Date) => Promise<Result<Task[], string>>;
+  /**
+   * Return all task IDs in the store. Optional — used by `delta.cleanup()` to
+   * walk every task for message pruning. Adapters that support message
+   * retention implement it; otherwise message pruning is skipped.
+   */
+  getTaskIds?: () => Promise<Result<string[], string>>;
 };

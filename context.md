@@ -30,6 +30,10 @@ All packages A–J are implemented and tested (~690 tests pass). Public surface 
 All H-series subsystems are wired into the live path. Remaining work is catalogued below, not whole subsystems.
 
 ### What's implemented
+- **Logger (pino):** per-engine logger created at `createDeltaEngine` time. Drains: console (dev pretty), file (daily `.log`), sqlite (queryable), custom. Replaces old global sink. Threaded via DI through scheduler/runtime/loop-detector.
+- **Diagnostics:** per-module toggle (`DiagnosticsConfig`). Disabled = shared no-op emitter (zero overhead). Enabled = structured events to pino at debug/trace. PoC: engine (step events), actions (gateway timing).
+- **Cache (LRU+TTL):** read-through `createCachedStore` over `StoragePort`. Hot-path reads (getTask, getLatestCheckpoint, getMemoriesByAgent) cached. Access refreshes TTL. Eviction = memory only.
+- **Cleanup:** opportunistic `cache.evictExpired()` on every `send`/`inspect`. Manual `delta.cleanup(options?)` prunes old tasks + consumed messages (opt-in, destructive). Optional store methods: `deleteTask`, `deleteMessages`, `getTasksOlderThan`, `getTaskIds`.
 - **C1-C4 (status honesty):** escalation stops loop -> `paused`+`blocked` (not `completed`). Reasoner failure -> `failed`. Budget exhaustion -> `failed`. Token cost fully wired.
 - **H1 (supervision):** per-phase supervision on workflow failure via `applyStrategy` + `retryFnWithJitter`. Recovery boundary = phase.
 - **H2 (workflow execution):** `SendInput.workflow` drives deterministic (reasoner-less) execution. Free loop for workflow-less tasks. Shared `applyPostStepGovernance` for both paths (in `oversight/post-step.ts` to avoid engine<->workflow import cycle).
@@ -103,6 +107,56 @@ All 8 entities have working store methods in both adapters (in-memory + Drizzle)
 - lastToolInfoResult persists across turns until overwritten (could become stale, but not harmful)
 - Token count uses 4-chars-per-token heuristic (not exact, but sufficient for budget tracking)
 - Tool-info queries cost a scheduler step (no re-prompting optimization yet)
+
+---
+
+## Logger, Diagnostics, Cache, Cleanup (2026-07-01)
+
+### Decision: pino-based per-engine logger (replaces global sink)
+- Old `configureLogger`/`createLogger`/`consoleLogSink` global pattern replaced entirely. No backward compat (not released).
+- `createEngineLogger(config?: LoggerConfig): Logger` — pino always under the hood. Created once at `createDeltaEngine` time, threaded via DI (closure + params). No globals.
+- `mode: "dev"` (default) → pino-pretty colorized console. `mode: "prod"` → configured drain (file/sqlite/custom). Default drain follows mode.
+- `Logger.child(module)` wraps pino's child logger — auto-injects `module` into every entry. Replaces old `createLogger(module)`.
+- Drains: console (dev pretty / prod JSON), file (`.delta-logs/YYYY-MM-DD.log`, append-only, daily rotation), sqlite (`delta-logs.sqlite`, separate from task store, queryable), custom (`(entry) => void`).
+- Log drain failures NEVER throw — each drain swallows its own errors. A logger that destabilizes the system it audits is worse than a missing entry.
+- pino-pretty used as a Transform stream (not worker-thread transport) — simpler, no thread overhead.
+- Files: `src/shared/logger.ts` (factory), `src/shared/logger-types.ts` (types), `src/ports/log-sqlite.ts` (sqlite drain).
+
+### Decision: Diagnostics as structured log events, filtered by module toggle
+- Diagnostics feed into the pino logger as structured events at `debug`/`trace` level. One unified pipe — no parallel telemetry subsystem.
+- `DiagnosticsConfig` — per-module boolean toggles (actions, workflows, governance, supervision, memory, comms, tools, engine). All default false (opt-in).
+- `createDiagnostics(config, logger): Diagnostics` — `for(module)` returns a `DiagnosticEmitter`. Disabled module = shared no-op emitter (zero overhead, no allocation). Enabled module = emits to child logger.
+- `DiagnosticEmitter`: `event(name, ctx)`, `trace(name, ctx)`, `time(name, fn)`, `timeAsync(name, fn)`. `time`/`timeAsync` return fn's result even when disabled.
+- PoC instrumentation: `engine` module (scheduler step-start/end events), `actions` module (gateway action-start/end with timing). Threading is via optional params on `RunPhaseInput`/`RunWorkflowInput`/`GatewayInput` to avoid breaking existing test fixtures.
+- File: `src/shared/diagnostics.ts`.
+
+### Decision: LRU+TTL read-through cache over StoragePort
+- `createCachedStore(inner, config): { store, cache }` — wraps any `StoragePort` transparently. Same interface, no engine-side changes.
+- Caches hot-path reads only: `getTask`, `getLatestCheckpoint`, `getMemoriesByAgent`. Writes invalidate/update cache. Pass-through for all other methods.
+- Negative caching: `Err` results (e.g. "task not found") are cached too — absence is a stable fact. Only `Ok` results from `saveTask` update the cache; `Err` from save does not poison.
+- LRU eviction: `maxEntries` cap (default 1000). O(n) scan for oldest `lastAccess` — fine at this scale. No linked-list complexity.
+- TTL: sliding window (default 5 min). Access (get OR set) refreshes `lastAccess` + `expiresAt`. Expired entries removed lazily on access + swept by `evictExpired()`.
+- Eviction = memory only. DB retains data. Re-load from DB on next access starts fresh tracking.
+- `Cache<K,V>` exposed on the `CachedStoreHandle` so cleanup (Phase 4) can call `evictExpired()` directly.
+- Memory cache invalidation: `saveMemory` invalidates ALL slices for that agent (any limit-based query could now return different top-N).
+- Files: `src/shared/cache.ts`, `src/ports/cached-store.ts`.
+
+### Decision: Opportunistic + manual cleanup
+- **Opportunistic** (always-on, cheap): `opportunisticCleanup(cache)` = `cache.evictExpired()`. Synchronous, no store I/O. Piggybacked at the start of `send` and `inspect`.
+- **Manual** (`delta.cleanup(options?)`): heavier, potentially destructive. `runCleanup({ store, cache, options, logger })`.
+  - `taskRetentionMs` → prunes completed/failed/aborted tasks older than threshold. Uses optional `store.getTasksOlderThan(statuses, olderThan)`.
+  - `messageRetentionMs` → prunes consumed messages older than threshold. Uses optional `store.getTaskIds()` + `store.deleteMessages(taskId, olderThan)`.
+  - `evictCache` (default true) → evicts expired cache entries.
+  - Destructive store operations are opt-in: omit retention = skip. Missing optional store methods = skip with warning, no throw.
+- Optional store methods added: `deleteTask?`, `deleteMessages?`, `getTasksOlderThan?`, `getTaskIds?`. All optional so existing adapters don't break. Both in-memory + drizzle adapters implement them.
+- **Bug found + fixed during QA**: cached-store wrapper initially didn't forward `getTasksOlderThan`/`getTaskIds` from inner store, silently disabling task/message pruning end-to-end. Fix: wrapper forwards ALL optional cleanup methods via spread-conditional.
+- File: `src/engine/cleanup.ts`.
+
+### Tradeoffs accepted
+- Cache uses single `Map` + O(n) eviction scan (not linked-list O(1)) — fine for max 1000 entries.
+- Diagnostics `LogContext` cast at the diagnostics→logger boundary: diagnostics carries extras (`durationMs`, `kind`) not in `LogContext`. Cast is sound at runtime (pino accepts any payload), localized to one file.
+- `deleteTask` in in-memory store cascades (checkpoints, messages, escalations, executions) but drizzle-store cascade is explicit per-table deletes. Both match their adapter's idiom.
+- Opportunistic cleanup runs on every `send`/`inspect` — `cache.evictExpired()` is O(n) over cache size. Acceptable: cache is bounded by `maxEntries`.
 
 ---
 

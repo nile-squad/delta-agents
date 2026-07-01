@@ -24,11 +24,9 @@
  *   the call was refused so it can adapt.
  */
 
-import { createLogger } from "../shared/logger";
 import type { Cost } from "../shared/types";
 import { addCosts, isOverBudget } from "../shared/cost";
-
-const log = createLogger("loop-detector");
+import type { Logger } from "../shared/logger-types";
 
 /** Per-agent live state for loop detection and budget tracking. */
 type AgentActivityTracker = {
@@ -92,8 +90,12 @@ const trackerFor = (
  * Build a fresh per-run loop detector. Maps are owned by the closure so the
  * detector carries no other state — pass it through the scheduler and let
  * the GC reclaim it when the run ends.
+ *
+ * The logger is provided by the engine factory; the detector scopes its
+ * entries under a "loop-detector" module so audit lines are attributable.
  */
-export const createLoopDetector = (): LoopDetector => {
+export const createLoopDetector = ({ logger }: { logger: Logger }): LoopDetector => {
+  const log = logger.child("loop-detector");
   const trackers = new Map<string, AgentActivityTracker>();
 
   return {

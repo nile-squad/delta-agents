@@ -21,6 +21,7 @@ import type {
   Message,
   Memory,
   Queue,
+  ExecutionStatus,
 } from "../shared/types";
 
 export const createInMemoryStore = (): StoragePort => {
@@ -200,6 +201,48 @@ export const createInMemoryStore = (): StoragePort => {
       const updated: Queue = { ...existing.value, ...patch };
       queues.set(id, updated);
       return Ok(updated);
+    },
+
+    // Cleanup — destructive operations the engine uses for retention pruning.
+    // The cascade is in-process and synchronous; safe because all data lives
+    // in the same closure.
+    deleteTask: async (id) => {
+      const existed = tasks.delete(id);
+      // Cascade to related buckets so a deleted task leaves no orphans. A
+      // re-insert of the same id would otherwise surface stale messages.
+      checkpointsByTask.delete(id);
+      messagesByTask.delete(id);
+      escalationsByTask.delete(id);
+      const execsToRemove = [...executions.values()].filter((e) => e.taskId === id);
+      for (const e of execsToRemove) executions.delete(e.id);
+      return existed ? Ok(undefined) : Err(`task "${id}" not found`);
+    },
+    deleteMessages: async (taskId, olderThan) => {
+      // Only CONSUMED messages are pruned — unconsumed mentions may still
+      // need delivery to their receiver. `olderThan` further restricts to
+      // consumed messages created before that date.
+      const existing = messagesByTask.get(taskId) ?? [];
+      const toKeep = olderThan !== undefined
+        ? existing.filter((m) => !(m.consumed === true && m.createdAt < olderThan))
+        : existing.filter((m) => m.consumed !== true);
+      const removed = existing.length - toKeep.length;
+      if (toKeep.length === 0) messagesByTask.delete(taskId);
+      else messagesByTask.set(taskId, toKeep);
+      return Ok(removed);
+    },
+
+    // Cleanup scan helpers — feed the retention prune without forcing the
+    // caller to know the in-memory shape. Both run synchronously since the
+    // data is already in-process.
+    getTasksOlderThan: async (statuses: ExecutionStatus[], olderThan: Date) => {
+      const statusSet = new Set(statuses);
+      const matched = [...tasks.values()].filter(
+        (t) => statusSet.has(t.status) && t.updatedAt < olderThan,
+      );
+      return Ok(matched);
+    },
+    getTaskIds: async () => {
+      return Ok([...tasks.keys()]);
     },
   };
 };
