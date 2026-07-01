@@ -51,6 +51,8 @@ import { taskId, checkpointId, messageId, executionId } from "../shared/id";
 import { formatInTimeZone } from "date-fns-tz";
 import { formatDistanceToNow } from "date-fns";
 import { toJSONSchema, prettifyError } from "zod";
+import { createLoopDetector } from "./loop-detector";
+import type { LoopDetector } from "./loop-detector";
 
 // ── Step outcome ────────────────────────────────────────────────────────────
 
@@ -100,6 +102,8 @@ type Runner = {
   result: SendResult | null;
   /** Ids of caller messages already drained into this task's goal (idempotency). */
   consumed: Set<string>;
+  /** Phase observed at the end of the last step — used to detect phase changes and reset per-phase counters. */
+  previousPhase?: string;
 };
 
 /** Build a runner for a task, seeding the drain-idempotency set from the snapshot. */
@@ -122,6 +126,7 @@ export const makeRunner = ({
   settled: false,
   result: null,
   consumed: new Set(snapshot.consumedMessages ?? []),
+  previousPhase: snapshot.currentPhase,
 });
 
 // ── Single step ──────────────────────────────────────────────────────────────
@@ -142,6 +147,7 @@ const stepTask = async ({
   store,
   providerRetry,
   timezone,
+  loopDetector,
 }: {
   task: Task;
   agent: Agent;
@@ -153,6 +159,8 @@ const stepTask = async ({
   providerRetry: RetryOptions;
   /** Timezone for humanized time in reasoner user messages. Falls back to the system tz. */
   timezone?: string;
+  /** Per-run loop detector; gates tool calls by cooldown / max-calls / budget. */
+  loopDetector: LoopDetector;
 }): Promise<StepOutcome> => {
   // 1. Discover legal actions for the agent in the current state.
   const agentActionsResult = registry.getActionsForAgent(agent.name);
@@ -384,6 +392,12 @@ const stepTask = async ({
   // ReasonerInput.toolHistory. A schema-invalid call is recorded as a failed
   // entry (so the model can self-correct) and the loop continues — the same
   // shape as an action that returns Err.
+  //
+  // Loop detection (Phase 4): before the tool runs, the scheduler consults the
+  // per-run loopDetector. Order is budget (hard cap) → cooldown (rate limit) →
+  // max-calls per phase → max-calls per task. A blocked call is NOT counted
+  // (counters only bump on actual execution) and the reasoner sees a
+  // humanized block reason via `lastToolInfoResult` on its next turn.
   if (decision.kind === "tool") {
     const toolCall = decision.toolCall;
     const toolResult = registry.getTool(toolCall.toolName);
@@ -406,6 +420,36 @@ const stepTask = async ({
       };
       const history = [...(snapshot.toolHistory ?? []), entry];
       return { kind: "stepped", snapshot: { ...snapshot, toolHistory: history } };
+    }
+    // Budget first: a hard cap overrides rate-limit / count limits.
+    if (tool.cost !== undefined && tool.budget !== undefined) {
+      const blockReason = loopDetector.checkBudget(agent.name, tool.name, tool.cost, tool.budget);
+      if (blockReason !== undefined) {
+        return { kind: "stepped", snapshot: { ...snapshot, lastToolInfoResult: JSON.stringify({ error: blockReason }) } };
+      }
+    }
+    if (tool.limits?.cooldownMs !== undefined) {
+      const blockReason = loopDetector.checkToolCooldown(agent.name, tool.name, tool.limits.cooldownMs);
+      if (blockReason !== undefined) {
+        return { kind: "stepped", snapshot: { ...snapshot, lastToolInfoResult: JSON.stringify({ error: blockReason }) } };
+      }
+    }
+    if (tool.limits?.maxCallsPerPhase !== undefined) {
+      const blockReason = loopDetector.checkMaxCalls(agent.name, tool.name, tool.limits.maxCallsPerPhase, "phase");
+      if (blockReason !== undefined) {
+        return { kind: "stepped", snapshot: { ...snapshot, lastToolInfoResult: JSON.stringify({ error: blockReason }) } };
+      }
+    }
+    if (tool.limits?.maxCallsPerTask !== undefined) {
+      const blockReason = loopDetector.checkMaxCalls(agent.name, tool.name, tool.limits.maxCallsPerTask, "task");
+      if (blockReason !== undefined) {
+        return { kind: "stepped", snapshot: { ...snapshot, lastToolInfoResult: JSON.stringify({ error: blockReason }) } };
+      }
+    }
+    // All checks pass: bump counters and charge spend before running the fn.
+    loopDetector.recordToolCall(agent.name, tool.name);
+    if (tool.cost !== undefined) {
+      loopDetector.recordToolSpend(agent.name, tool.name, tool.cost);
     }
     const toolHistory = snapshot.toolHistory ?? [];
     const fnResult = await safeTry(async () => tool.fn({
@@ -574,6 +618,7 @@ export const runScheduler = async ({
   maxSteps,
   providerRetry = defaultRetryOptions,
   timezone,
+  loopDetector: passedLoopDetector,
 }: {
   root: Runner;
   reasoner: ReasonerPort;
@@ -583,10 +628,17 @@ export const runScheduler = async ({
   providerRetry?: RetryOptions;
   /** Timezone for humanized time in reasoner user messages; falls back to system tz in stepTask. */
   timezone?: string;
+  /** Per-run loop detector. When omitted, the scheduler builds a fresh one —
+   * loop detection is about within-run loops, so a fresh detector per
+   * runScheduler call is the natural default. */
+  loopDetector?: LoopDetector;
 }): Promise<SendResult> => {
   const rootId = root.task.rootId;
   const runners: Runner[] = [root];
   let treeInitialized = false;
+  // Fresh loop detector per scheduler run: counters and spend start at zero
+  // for every agent. The same instance is reused across all steps in this run.
+  const loopDetector = passedLoopDetector ?? createLoopDetector();
 
   const findRunner = (id: string): Option<Runner> => option(runners.find((r) => r.task.id === id));
 
@@ -842,9 +894,19 @@ export const runScheduler = async ({
         store,
         providerRetry,
         timezone,
+        loopDetector,
       });
       runner.step++;
       runner.snapshot = outcome.snapshot;
+
+      // Phase-change detection: when the snapshot's currentPhase differs from
+      // what the runner last saw, reset per-phase tool counters so phase-scoped
+      // limits are bound to the phase, not the whole task. Free-loop tasks
+      // (no workflow) never change phase, so the reset is a no-op for them.
+      if (outcome.snapshot.currentPhase !== runner.previousPhase) {
+        loopDetector.resetPhase(runner.agent.name);
+        runner.previousPhase = outcome.snapshot.currentPhase;
+      }
 
       if (outcome.kind === "stepped") continue;
 
