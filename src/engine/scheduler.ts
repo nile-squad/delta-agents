@@ -49,6 +49,7 @@ import { initialRiskState, initialTrust } from "../governance";
 import { taskId, checkpointId, messageId } from "../shared/id";
 import { formatInTimeZone } from "date-fns-tz";
 import { formatDistanceToNow } from "date-fns";
+import { toJSONSchema } from "zod";
 
 // ── Step outcome ────────────────────────────────────────────────────────────
 
@@ -238,6 +239,21 @@ const stepTask = async ({
   const reasonInput = {
     task: { ...task, risk: snapshot.risk, trust: snapshot.trust, updatedAt: new Date() },
     availableActions: rankedActions.map((a) => a.name),
+    // Full action schemas (description + JSON schema) so the model sees exactly
+    // what input each legal action expects. zod/v3 authoring schemas are bridged
+    availableActionSchemas: rankedActions.map((a) => ({
+      name: a.name,
+      description: a.description,
+      schema: toJSONSchema(a.schema) as Record<string, unknown>,
+    })),
+    // Lightweight tool menu: name + description. The reasoner surfaces the
+    // full schema on demand via system:get_tool_schema (progressive disclosure).
+    availableTools: registry.listTools().map((name) => {
+      const toolResult = registry.getTool(name);
+      return toolResult.isOk
+        ? { name: toolResult.value.name, description: toolResult.value.description }
+        : { name, description: "" };
+    }),
     availableAgents: teammates,
     availableChannels: (agent.channels ?? []).filter((c) => c.enabled).map((c) => c.type),
     availableSkills,
@@ -340,6 +356,19 @@ const stepTask = async ({
     }
     if (comm.kind === "approval-required") return { kind: "blocked", snapshot, reason: comm.reason };
     return { kind: "failed", snapshot, reason: comm.reason };
+  }
+
+  // Tool decisions exist as types but are not yet executed by the scheduler.
+  // Phase 2 wires the reasoner surface; Phase 3 wires execution + history.
+  // The model will see this failure reason and adjust (call request_action or
+  // finish_task instead). Without this guard the code below would crash on
+  // `decision.request` since `tool` / `tool-info` have no `request` field.
+  if (decision.kind === "tool" || decision.kind === "tool-info") {
+    return {
+      kind: "failed",
+      snapshot,
+      reason: `tool execution is not yet wired in the scheduler (Phase 3): ${decision.kind}`,
+    };
   }
 
   const { actionName, input, reasoningCost } = decision.request;

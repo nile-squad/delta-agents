@@ -245,6 +245,74 @@ const buildCommunicateTool = (availableChannels: string[]): ChatCompletionTool =
   },
 });
 
+// The "system:" prefix is reserved for internal framework tools. User-registered
+// tools cannot use it (validated at authoring time). These two are the runtime
+// hooks the model uses to interact with the tool layer.
+const USE_TOOL_NAME = "system:use_tool";
+const GET_TOOL_SCHEMA_NAME = "system:get_tool_schema";
+
+/**
+ * The model calls `system:use_tool` to execute a registered tool. The result is
+ * stored in the task's tool history; the next reason() call sees it as prior
+ * tool history context.
+ *
+ * Only offered when at least one tool is registered. The enum constrains the
+ * model to a real tool name — anything outside is rejected by the parser.
+ */
+const buildUseToolTool = (availableTools: string[]): ChatCompletionTool => ({
+  type: "function",
+  function: {
+    name: USE_TOOL_NAME,
+    description:
+      "Execute a tool by name with the provided input. Use system:get_tool_schema first " +
+      "if you need to know the expected input shape. The result is stored in tool history.",
+    parameters: {
+      type: "object",
+      properties: {
+        tool_name: {
+          type: "string",
+          description: "Exact name of the tool to execute. Must be one of the available tools.",
+          enum: availableTools,
+        },
+        input: {
+          type: "object",
+          description: "Parameters the tool function expects. Provide all required fields.",
+          additionalProperties: true,
+        },
+      },
+      required: ["tool_name", "input"],
+      additionalProperties: false,
+    },
+  },
+});
+
+/**
+ * The model calls `system:get_tool_schema` to fetch a tool's JSON schema before
+ * calling `system:use_tool`. Progressive disclosure: the lightweight tool menu
+ * ships every turn; full schemas are on demand.
+ */
+const buildGetToolSchemaTool = (availableTools: string[]): ChatCompletionTool => ({
+  type: "function",
+  function: {
+    name: GET_TOOL_SCHEMA_NAME,
+    description:
+      "Fetch the JSON schema for a tool so you know what input parameters it expects. " +
+      "Call this before system:use_tool when you need to know the input shape.",
+    parameters: {
+      type: "object",
+      properties: {
+        tool_name: {
+          type: "string",
+          description: "Exact name of the tool to get the schema for.",
+          enum: availableTools,
+        },
+      },
+      required: ["tool_name"],
+      additionalProperties: false,
+    },
+  },
+});
+
 // ── Message builder ───────────────────────────────────────────────────────────
 
 /**
@@ -253,12 +321,15 @@ const buildCommunicateTool = (availableChannels: string[]): ChatCompletionTool =
  * without standing up a live reasoner.
  */
 export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
-  const { task, availableActions, availableAgents, availableChannels, availableSkills, agentRole, rolePrompt, context, systemPrompt, currentTimestamp, priorMessages } = input;
+  const { task, availableActions, availableAgents, availableChannels, availableSkills, availableActionSchemas, availableTools, toolHints, agentRole, rolePrompt, context, systemPrompt, currentTimestamp, priorMessages } = input;
   const canDelegate = availableAgents !== undefined && availableAgents.length > 0;
   const canCommunicate = availableChannels !== undefined && availableChannels.length > 0;
   const hasSkills = availableSkills !== undefined && availableSkills.length > 0;
   const hasSystemPrompt = systemPrompt !== undefined && systemPrompt.length > 0;
   const hasPrior = priorMessages !== undefined && priorMessages.length > 0;
+  const hasActionSchemas = availableActionSchemas !== undefined && availableActionSchemas.length > 0;
+  const hasTools = availableTools !== undefined && availableTools.length > 0;
+  const hasToolHints = toolHints !== undefined && toolHints.length > 0;
 
   const system: ChatCompletionMessageParam = {
     role: "system",
@@ -280,6 +351,12 @@ export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[
       ...(canCommunicate
         ? ["Call send_message to send a message through one of the available channels."]
         : []),
+      ...(hasTools
+        ? [
+            "Call system:use_tool to execute a registered tool by name.",
+            "Call system:get_tool_schema first to fetch a tool's input schema when needed.",
+          ]
+        : []),
       "When the goal is fully satisfied and no further action is needed, call finish_task instead.",
     ].join("\n"),
   };
@@ -292,11 +369,33 @@ export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[
   userLines.push(`Task goal: ${task.goal}`);
   userLines.push(`Task ID: ${task.id}`);
   userLines.push(`Available actions: ${availableActions.join(", ")}`);
+  // Action schemas: full description + JSON schema for each legal action.
+  // The model needs the full shape to call business-logic actions correctly.
+  if (hasActionSchemas) {
+    userLines.push("", "Action details:");
+    for (const action of availableActionSchemas) {
+      userLines.push(`  ${action.name}: ${action.description}`);
+      userLines.push(`  Schema: ${JSON.stringify(action.schema)}`);
+    }
+  }
   if (canDelegate) {
     userLines.push(`Available teammates (to delegate to or mention): ${availableAgents.join(", ")}`);
   }
   if (canCommunicate) {
     userLines.push(`Available channels to send through: ${availableChannels.join(", ")}`);
+  }
+  // Tool menu: names + descriptions (progressive disclosure — schemas on demand).
+  if (hasTools) {
+    userLines.push("", "Available tools:");
+    for (const tool of availableTools) {
+      userLines.push(`  ${tool.name}: ${tool.description}`);
+    }
+    userLines.push("Use system:get_tool_schema to fetch a tool's input schema before calling system:use_tool.");
+  }
+  // Advisory hints from the current phase/action. Suggestions only — the full
+  // tool menu above is always shown regardless of hints.
+  if (hasToolHints) {
+    userLines.push(`Suggested tools for this step: ${toolHints.join(", ")}`);
   }
   if (hasSkills) {
     userLines.push(`Skills (specialized capabilities to apply): ${availableSkills.map((s) => `${s.name} — ${s.description}`).join("; ")}`);
@@ -349,11 +448,11 @@ const parseBudget = (raw: unknown): Cost | undefined => {
 
 const parseToolCall = async (
   response: OpenAI.Chat.Completions.ChatCompletion,
-  availableActions: string[],
-  availableAgents: string[],
-  availableChannels: string[],
+  input: ReasonerInput,
   latencyMs: number,
 ): Promise<Result<ReasonerDecision, string>> => {
+  const { availableActions, availableAgents = [], availableChannels = [] } = input;
+  const availableToolNames = (input.availableTools ?? []).map((t) => t.name);
   const choiceOpt = option(response.choices[0]);
   if (choiceOpt.isNone) {
     return Err("openai-reasoner: API response contained no choices");
@@ -444,9 +543,39 @@ const parseToolCall = async (
     return Ok({ kind: "communicate", communication: { channel, body } });
   }
 
+  // Tool execution — model wants to run a reusable utility. Validated against
+  // availableTools so a model cannot call a tool that was not offered this turn.
+  if (call.function.name === USE_TOOL_NAME) {
+    const toolName = args["tool_name"];
+    if (typeof toolName !== "string" || toolName.length === 0) {
+      return Err(`openai-reasoner: system:use_tool tool_name is missing or not a string in arguments: ${JSON.stringify(args)}`);
+    }
+    if (!availableToolNames.includes(toolName)) {
+      return Err(`openai-reasoner: model chose tool "${toolName}" which is not in availableTools ${JSON.stringify(availableToolNames)}`);
+    }
+    const rawToolInput = args["input"];
+    const toolInput: Record<string, unknown> =
+      rawToolInput !== null && typeof rawToolInput === "object" && !Array.isArray(rawToolInput)
+        ? (rawToolInput as Record<string, unknown>)
+        : {};
+    return Ok({ kind: "tool", toolCall: { toolName, input: toolInput } });
+  }
+
+  // Tool schema request — model wants to see a tool's input shape before calling it.
+  if (call.function.name === GET_TOOL_SCHEMA_NAME) {
+    const toolName = args["tool_name"];
+    if (typeof toolName !== "string" || toolName.length === 0) {
+      return Err(`openai-reasoner: system:get_tool_schema tool_name is missing or not a string in arguments: ${JSON.stringify(args)}`);
+    }
+    if (!availableToolNames.includes(toolName)) {
+      return Err(`openai-reasoner: model asked for schema of tool "${toolName}" which is not in availableTools ${JSON.stringify(availableToolNames)}`);
+    }
+    return Ok({ kind: "tool-info", request: { type: "schema", toolName } });
+  }
+
   if (call.function.name !== "request_action") {
     return Err(
-      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action", "delegate_task", "mention_teammate", "send_message", or "finish_task"`,
+      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action", "delegate_task", "mention_teammate", "send_message", "finish_task", "system:use_tool", or "system:get_tool_schema"`,
     );
   }
 
@@ -524,11 +653,17 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
       }
 
       // Optional tools are only offered when there is a valid target — a delegate
-      // tool needs another agent, a send_message tool needs a bound channel.
+      // tool needs another agent, a send_message tool needs a bound channel,
+      // system:use_tool/system:get_tool_schema need at least one registered tool.
       const tools: ChatCompletionTool[] = [buildTool(availableActions), buildFinishTool()];
       if (availableAgents.length > 0) tools.push(buildDelegateTool(availableAgents));
       if (availableAgents.length > 0) tools.push(buildMentionTool(availableAgents));
       if (availableChannels.length > 0) tools.push(buildCommunicateTool(availableChannels));
+      const availableToolNames = input.availableTools?.map((t) => t.name) ?? [];
+      if (availableToolNames.length > 0) {
+        tools.push(buildUseToolTool(availableToolNames));
+        tools.push(buildGetToolSchemaTool(availableToolNames));
+      }
 
       const apiStart = Date.now();
       const apiResult = await safeTry(async () => client.chat.completions.create({
@@ -547,7 +682,7 @@ export const createOpenAIReasoner = (config: OpenAIReasonerConfig = {}): Reasone
       if (apiResult.isErr) return Err(`openai-reasoner: API request failed — ${apiResult.error}`);
       const latencyMs = Date.now() - apiStart;
 
-      return await parseToolCall(apiResult.value, availableActions, availableAgents, availableChannels, latencyMs);
+      return await parseToolCall(apiResult.value, messageInput, latencyMs);
     },
   };
 };

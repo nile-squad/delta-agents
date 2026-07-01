@@ -93,7 +93,9 @@ export type ReasonerDecision =
   | { kind: "delegate"; delegation: DelegationRequest }
   | { kind: "mention"; mention: MentionRequest }
   | { kind: "communicate"; communication: CommunicationRequest }
-  | { kind: "done"; reason?: string };
+  | { kind: "done"; reason?: string }
+  | { kind: "tool"; toolCall: { toolName: string; input: Record<string, unknown> } }
+  | { kind: "tool-info"; request: { type: "schema"; toolName: string } };
 
 export type ReasonerInput = {
   task: Task;
@@ -139,6 +141,27 @@ export type ReasonerInput = {
    * message store. Gives the model time-gap awareness across the conversation.
    */
   priorMessages?: Array<{ sender: string; content: string; relativeTime: string }>;
+  /**
+   * Action descriptions + JSON schemas for all legal actions this turn.
+   * The model needs full schema information to execute business logic correctly.
+   * Schemas are converted from Zod via z.toJSONSchema() by the scheduler.
+   */
+  availableActionSchemas?: Array<{
+    name: string;
+    description: string;
+    schema: Record<string, unknown>;
+  }>;
+  /**
+   * Tool menu: names + descriptions for all registered tools. The model sees
+   * this lightweight menu every turn. Schemas are fetched on demand via
+   * system:get_tool_schema (progressive disclosure).
+   */
+  availableTools?: Array<{ name: string; description: string }>;
+  /**
+   * Advisory tool hints from the current phase/action. Suggestions only -
+   * all tools remain visible regardless. Empty or absent means no hints.
+   */
+  toolHints?: string[];
 };
 
 export type ReasonerPort = {
