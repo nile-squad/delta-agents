@@ -12,7 +12,7 @@
  */
 
 import type { Result } from "slang-ts";
-import type { Task, Cost, CommitQuery } from "../shared/types";
+import type { Task, Cost, CommitQuery, Attachment } from "../shared/types";
 import type { ToolHistoryEntry } from "../authoring/types";
 
 // What the reasoner returns: a proposed action and the input it wants to pass.
@@ -194,6 +194,15 @@ export type ReasonerInput = {
    * turn, where the OpenAI reasoner surfaces it in the user message.
    */
   toolInfoResult?: string;
+  /**
+   * Attachments supplied at send() time. `kind: "image"` entries are embedded
+   * as vision content parts by an adapter that supports it (see the OpenAI
+   * adapter's buildMessages). `kind: "file"` entries are surfaced only as a
+   * short text note (id, mimeType, name) — never as raw bytes — since reading
+   * them is a tool's job, not something every provider/model can ingest as
+   * chat content.
+   */
+  attachments?: Attachment[];
   /**
    * When true, the reasoner is in commit mode: only finish_task is offered
    * (no request_action, delegate, mention, communicate, or system tools).

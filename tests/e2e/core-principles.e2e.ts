@@ -20,7 +20,7 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 // Import the shipped artifact, not the source.
-import { createDeltaEngine, createOpenAIReasoner, createMockReasoner, Ok, Err } from "../../dist/index.js";
+import { createDeltaEngine, createMockReasoner, Ok, Err } from "../../dist/index.js";
 
 // ── Live-model wiring ──────────────────────────────────────────────────────────
 
@@ -33,8 +33,12 @@ const BASE_URL = process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v
 // Skip the live suites cleanly when no key is present, rather than failing.
 const describeLive = API_KEY ? describe : describe.skip;
 
-const liveReasoner = () => createOpenAIReasoner({ apiKey: API_KEY, baseURL: BASE_URL, model: MODEL });
-const liveEngine = () => createDeltaEngine({ reasoner: liveReasoner(), maxStepsPerTask: 6 });
+// `models` (not the `reasoner` escape hatch) is the documented production path
+// for wiring a real provider — createOpenAIReasoner stays internal to the engine.
+const liveEngine = () => createDeltaEngine({
+  models: [{ name: "default", model: MODEL, endpoint: BASE_URL, apiKey: API_KEY, default: true }],
+  maxStepsPerTask: 6,
+});
 
 const GENEROUS = { tokens: 8000, durationMs: 120_000 };
 
@@ -144,7 +148,7 @@ describe("P3 prediction precedes execution (MPC)", () => {
         return Ok("done");
       },
     });
-    const phase = delta.phase({ name: "p", description: "one phase", actions: ["expensive-step"], checkpoint: false });
+    const phase = { name: "p", description: "one phase", actions: ["expensive-step"], checkpoint: false };
     const wf = delta.workflow({ name: "pricey", description: "over budget", version: "1.0.0", phases: [phase] });
     const agent = delta.agent({
       name: "mpc-agent",
@@ -365,7 +369,7 @@ describe("P8 human oversight is fundamental", () => {
         return Ok("published");
       },
     });
-    const phase = delta.phase({ name: "publish", description: "publish step", actions: ["publish-post"], checkpoint: true });
+    const phase = { name: "publish", description: "publish step", actions: ["publish-post"], checkpoint: true };
     const wf = delta.workflow({ name: "publish-wf", description: "publishes with sign-off", version: "1.0.0", phases: [phase] });
     const agent = delta.agent({
       name: "social-agent",

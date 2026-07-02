@@ -1,0 +1,61 @@
+:root {
+  /* Brand colors for delta-agents */
+  --rp-c-brand: #3b82f6;
+  --rp-c-brand-light: #60a5fa;
+  --rp-c-brand-lighter: #bfdbfe;
+  --rp-c-brand-dark: #2563eb;
+  --rp-c-brand-darker: #1d4ed8;
+  --rp-c-brand-tint: rgba(59, 130, 246, 0.16);
+}
+
+/* Fix code snippet overflow and right-side spacing */
+.rp-codeblock__content :where(code) {
+  /* Ensure padding on both sides */
+  padding: 1rem 1.5rem !important;
+  /* Ensure it takes up full width for background consistency */
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+
+/* Ensure line numbers (if enabled) still look correct with new padding */
+.rp-codeblock__content--line-numbers code {
+  padding-left: 0.5rem !important;
+}
+
+/* Ensure the pre tag doesn't introduce extra margins */
+.rp-codeblock__content :where(pre) {
+  margin: 0 !important;
+}
+
+/* Force code blocks to use consistent dark background in both modes */
+.rp-codeblock__content {
+  background-color: #0d0d0d !important;
+}
+
+.rp-codeblock__content pre {
+  background-color: #0d0d0d !important;
+}
+
+.rp-codeblock__content code {
+  background-color: #0d0d0d !important;
+}
+
+/* Code block wrapper/header */
+.rp-codeblock {
+  background-color: #0d0d0d !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.rp-codeblock__header {
+  background-color: #080808 !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.rp-codeblock__header span {
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+
+.rp-codeblock__header button {
+  color: rgba(255, 255, 255, 0.6) !important;
+}

@@ -43,7 +43,7 @@ export type { DeltaEngine, DeltaEngineConfig, SendInput, SendResult, InspectResu
 // Shared domain types the developer encounters in send results, inspect results,
 // and action context. Budget is expressed as Cost (the same multi-axis vector
 // used for declarations and runtime measurements).
-export type { Cost, Task, SupervisionPolicy, Memory, Commit, CommitQuery } from "./shared/types";
+export type { Cost, Money, ContentCost, Task, SupervisionPolicy, Memory, Commit, CommitQuery, Attachment, AttachmentInput } from "./shared/types";
 
 // ── Logger ────────────────────────────────────────────────────────────────────
 // Per-engine logger configuration. The engine creates a default dev logger when
@@ -60,6 +60,11 @@ export { createMockReasoner } from "./ports";
 export type { MockResponse, MockReasonerOptions } from "./ports";
 export { createChatSdkChannel } from "./comms";
 export type { ChatThread } from "./comms";
+
+// Attachment loaders: convenience helpers to turn a local file or remote URL
+// into an AttachmentInput for send(). Not required — attachments can be
+// built by hand — but avoid repeating base64-encoding boilerplate.
+export { loadAttachmentFromFile, loadAttachmentFromUrl } from "./shared/attachment-loader";
 
 // Cache configuration for the read-through StoragePort wrapper. Forwarded to
 // `DeltaEngineConfig.cache`. Omit to use defaults (1000 entries, 5-minute TTL).

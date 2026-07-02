@@ -1,0 +1,7 @@
+[
+  { "type": "file", "name": "actions", "label": "Actions" },
+  { "type": "file", "name": "agents-and-workflows", "label": "Agents and Workflows" },
+  { "type": "file", "name": "attachments", "label": "Attachments" },
+  { "type": "file", "name": "cost-and-budget", "label": "Cost and Budget" },
+  { "type": "file", "name": "human-oversight-and-approvals", "label": "Human Oversight and Approvals" }
+]

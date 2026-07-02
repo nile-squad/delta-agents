@@ -11,7 +11,7 @@
 
 import type { ZodObject, ZodRawShape } from "zod";
 import type { Result } from "slang-ts";
-import type { Cost } from "../shared/types";
+import type { Attachment, Cost } from "../shared/types";
 
 // Context injected into action fn, hooks, and branch guards at runtime.
 // The engine assembles this — the developer never constructs it.
@@ -115,6 +115,8 @@ export type ToolContext = {
   taskId: string;
   phaseName?: string;
   toolHistory: ToolHistoryEntry[];
+  /** Attachments supplied at send() time — lets a tool look up raw content (e.g. a file to extract text from) by id. Absent or empty when the task carries none. */
+  attachments?: Attachment[];
 };
 
 /**

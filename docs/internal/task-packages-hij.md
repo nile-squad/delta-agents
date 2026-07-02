@@ -1,3 +1,5 @@
+> **COMPLETED — historical reference only.** Packages H, I, and J are shipped. See `context.md` for the current project state. This file is preserved as a record of the original work order, not an active handoff.
+
 # Implementation Blueprint — Packages H, I, J (handoff)
 
 > **For the implementing agent.** This is a precise, file-by-file work order. Follow it exactly.

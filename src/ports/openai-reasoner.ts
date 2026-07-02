@@ -18,14 +18,31 @@
  *
  * For testing, inject a custom fetch:
  *   const reasoner = createOpenAIReasoner({ apiKey: "test", fetch: mockFetch });
+ *
+ * Tool schema builders live in `./openai-tool-defs`; response parsing lives in
+ * `./openai-parse`. This file wires them together into the `reason()` call.
  */
 
-import { Ok, Err, option, safeTry } from "slang-ts";
+import { Err, safeTry } from "slang-ts";
 import type { Result } from "slang-ts";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions/completions";
 import type { ReasonerPort, ReasonerInput, ReasonerDecision } from "./reasoner-port";
-import type { Cost } from "../shared/types";
+import {
+  buildTool,
+  buildFinishTool,
+  buildDelegateTool,
+  buildMentionTool,
+  buildCommunicateTool,
+  buildUseToolTool,
+  buildGetToolSchemaTool,
+  buildGetToolHistoryTool,
+  buildGetToolHistoryEntryTool,
+  buildSearchCommitsTool,
+  buildCommitTool,
+} from "./openai-tool-defs";
+import { parseToolCall } from "./openai-parse";
+import { audioFormatFromMimeType } from "../shared/attachment-format";
 
 // Matches the Fetch type the OpenAI client constructor accepts.
 type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -77,366 +94,6 @@ export type OpenAIReasonerConfig = {
 const DEFAULT_MODEL = "gpt-4o-mini";
 const DEFAULT_MAX_TOKENS = 512;
 
-// ── Tool definition ───────────────────────────────────────────────────────────
-
-const buildTool = (availableActions: string[]): ChatCompletionTool => ({
-  type: "function",
-  function: {
-    name: "request_action",
-    description:
-      "Commit to the single best next action for the current task step. " +
-      "The engine will validate and execute it; you do not execute anything directly.",
-    parameters: {
-      type: "object",
-      properties: {
-        action_name: {
-          type: "string",
-          description: "Exact name of the action to execute. Must be one of the available actions.",
-          enum: availableActions,
-        },
-        input: {
-          type: "object",
-          description: "Parameters the action function expects. Provide all required fields.",
-          additionalProperties: true,
-        },
-        reasoning: {
-          type: "string",
-          description: "One-sentence explanation of why this action was chosen. Stored for audit.",
-        },
-      },
-      required: ["action_name", "input"],
-      additionalProperties: false,
-    },
-  },
-});
-
-// The model calls this when the task goal is satisfied and no further action is
-// needed. It is the explicit completion signal — the engine maps it to a clean
-// "completed" status, distinct from an Err failure (spec §Execution Outcomes).
-const FINISH_TOOL_NAME = "finish_task";
-
-const buildFinishTool = (): ChatCompletionTool => ({
-  type: "function",
-  function: {
-    name: FINISH_TOOL_NAME,
-    description:
-      "Declare the task complete. Call this only when the goal is fully satisfied " +
-      "and no further action is required. Do not call it to abandon a task you cannot finish.",
-    parameters: {
-      type: "object",
-      properties: {
-        reason: {
-          type: "string",
-          description: "One-sentence summary of why the task is complete. Stored for audit.",
-        },
-      },
-      required: [],
-      additionalProperties: false,
-    },
-  },
-});
-
-// The model calls this to hand a scoped sub-goal to another agent. The engine
-// creates a bounded child task whose budget is clamped to the parent's remaining
-// budget (invariant 18) and runs it under the binary supervision tree. Only
-// offered when there is at least one other agent to delegate to.
-const DELEGATE_TOOL_NAME = "delegate_task";
-
-const buildDelegateTool = (availableAgents: string[]): ChatCompletionTool => ({
-  type: "function",
-  function: {
-    name: DELEGATE_TOOL_NAME,
-    description:
-      "Hand a scoped sub-goal to another agent. The engine creates a bounded child task " +
-      "whose budget is clamped to your remaining budget. Use this to decompose work that " +
-      "belongs to a different specialist — not to avoid finishing your own task.",
-    parameters: {
-      type: "object",
-      properties: {
-        goal: {
-          type: "string",
-          description: "The scoped objective handed to the child agent.",
-        },
-        agent_name: {
-          type: "string",
-          description: "Exact name of the agent to delegate to. Must be one of the available agents.",
-          enum: availableAgents,
-        },
-        budget: {
-          type: "object",
-          description:
-            "Optional budget ceiling for the child task. Clamped to your remaining budget. " +
-            "Omit to grant the child your full remaining budget.",
-          properties: {
-            tokens: { type: "number" },
-            durationMs: { type: "number" },
-          },
-          required: ["tokens", "durationMs"],
-          additionalProperties: false,
-        },
-      },
-      required: ["goal", "agent_name"],
-      additionalProperties: false,
-    },
-  },
-});
-
-// The model calls this to mention a teammate: leave a named teammate a note on
-// this task without handing off work. Unlike delegate_task it spawns no child
-// task; the engine records a TaskID-attributable agent-to-agent message. Only
-// offered when the agent has teammates (the same availableAgents set).
-const MENTION_TOOL_NAME = "mention_teammate";
-
-const buildMentionTool = (availableAgents: string[]): ChatCompletionTool => ({
-  type: "function",
-  function: {
-    name: MENTION_TOOL_NAME,
-    description:
-      "Leave a note for a teammate on this task without handing off work. Use this to " +
-      "reference or loop in a teammate; use delegate_task instead when you want them to own a sub-goal.",
-    parameters: {
-      type: "object",
-      properties: {
-        agent_name: {
-          type: "string",
-          description: "Exact name of the teammate to mention. Must be one of the available agents.",
-          enum: availableAgents,
-        },
-        message: {
-          type: "string",
-          description: "The note left for the mentioned teammate.",
-        },
-      },
-      required: ["agent_name", "message"],
-      additionalProperties: false,
-    },
-  },
-});
-
-// The model calls this to send a message through one of the agent's bound
-// channels (Slack, email, WhatsApp, …). Only offered when the agent has at least
-// one channel. The engine routes it through the channel, optionally gating it
-// behind human approval, and records the message.
-const SEND_MESSAGE_TOOL_NAME = "send_message";
-
-const buildCommunicateTool = (availableChannels: string[]): ChatCompletionTool => ({
-  type: "function",
-  function: {
-    name: SEND_MESSAGE_TOOL_NAME,
-    description:
-      "Send a message to a person or channel this task is connected to (e.g. Slack, email). " +
-      "Use this to communicate, ask, or notify — not to perform internal actions.",
-    parameters: {
-      type: "object",
-      properties: {
-        channel: {
-          type: "string",
-          description: "The channel to send through. Must be one of the available channels.",
-          enum: availableChannels,
-        },
-        body: {
-          type: "string",
-          description: "The message text to send.",
-        },
-      },
-      required: ["channel", "body"],
-      additionalProperties: false,
-    },
-  },
-});
-
-// The "system:" prefix is reserved for internal framework tools. User-registered
-// tools cannot use it (validated at authoring time). These are the runtime
-// hooks the model uses to interact with the tool layer.
-const USE_TOOL_NAME = "system:use_tool";
-const GET_TOOL_SCHEMA_NAME = "system:get_tool_schema";
-const GET_TOOL_HISTORY_NAME = "system:get_tool_history";
-const GET_TOOL_HISTORY_ENTRY_NAME = "system:get_tool_history_entry";
-const SEARCH_COMMITS_NAME = "system:search_commits";
-const COMMIT_NAME = "system:commit";
-
-/**
- * The model calls `system:use_tool` to execute a registered tool. The result is
- * stored in the task's tool history; the next reason() call sees it as prior
- * tool history context.
- *
- * Only offered when at least one tool is registered. The enum constrains the
- * model to a real tool name — anything outside is rejected by the parser.
- */
-const buildUseToolTool = (availableTools: string[]): ChatCompletionTool => ({
-  type: "function",
-  function: {
-    name: USE_TOOL_NAME,
-    description:
-      "Execute a tool by name with the provided input. Use system:get_tool_schema first " +
-      "if you need to know the expected input shape. The result is stored in tool history.",
-    parameters: {
-      type: "object",
-      properties: {
-        tool_name: {
-          type: "string",
-          description: "Exact name of the tool to execute. Must be one of the available tools.",
-          enum: availableTools,
-        },
-        input: {
-          type: "object",
-          description: "Parameters the tool function expects. Provide all required fields.",
-          additionalProperties: true,
-        },
-      },
-      required: ["tool_name", "input"],
-      additionalProperties: false,
-    },
-  },
-});
-
-/**
- * The model calls `system:get_tool_schema` to fetch a tool's JSON schema before
- * calling `system:use_tool`. Progressive disclosure: the lightweight tool menu
- * ships every turn; full schemas are on demand.
- */
-const buildGetToolSchemaTool = (availableTools: string[]): ChatCompletionTool => ({
-  type: "function",
-  function: {
-    name: GET_TOOL_SCHEMA_NAME,
-    description:
-      "Fetch the JSON schema for a tool so you know what input parameters it expects. " +
-      "Call this before system:use_tool when you need to know the input shape.",
-    parameters: {
-      type: "object",
-      properties: {
-        tool_name: {
-          type: "string",
-          description: "Exact name of the tool to get the schema for.",
-          enum: availableTools,
-        },
-      },
-      required: ["tool_name"],
-      additionalProperties: false,
-    },
-  },
-});
-
-/**
- * The model calls `system:get_tool_history` to retrieve the full tool history
- * recorded so far on this task (truncated entries). Only offered when there is
- * at least one prior tool call — there is nothing to retrieve otherwise.
- */
-const buildGetToolHistoryTool = (): ChatCompletionTool => ({
-  type: "function",
-  function: {
-    name: GET_TOOL_HISTORY_NAME,
-    description:
-      "Return the full tool history recorded on this task so far (truncated entries). " +
-      "Use this to review what tools have been called and their results.",
-    parameters: {
-      type: "object",
-      properties: {},
-      required: [],
-      additionalProperties: false,
-    },
-  },
-});
-
-/**
- * The model calls `system:get_tool_history_entry` to retrieve a single full
- * (untruncated) history entry by index. Useful when a truncated entry hides
- * detail the model needs.
- */
-const buildGetToolHistoryEntryTool = (): ChatCompletionTool => ({
-  type: "function",
-  function: {
-    name: GET_TOOL_HISTORY_ENTRY_NAME,
-    description:
-      "Return a single full (untruncated) tool history entry by index. Use this when a " +
-      "truncated entry is not enough and you need the complete input or output.",
-    parameters: {
-      type: "object",
-      properties: {
-        index: {
-          type: "number",
-          description: "Zero-based index of the history entry to retrieve.",
-        },
-      },
-      required: ["index"],
-      additionalProperties: false,
-    },
-  },
-});
-
-/**
- * The model calls `system:search_commits` to search across commit records
- * (agent checkpoint annotations) using optional keyword search, workflow
- * filter, or cross-agent scope. Use this to find older commits that are not
- * shown in the recent commit context automatically injected each turn.
- *
- * Always offered: no history dependency — it queries the commit store.
- * The scheduler executes the query and stores the result in toolInfoResult.
- */
-const buildSearchCommitsTool = (): ChatCompletionTool => ({
-  type: "function",
-  function: {
-    name: SEARCH_COMMITS_NAME,
-    description:
-      "Search across commit records (agent checkpoint annotations) using optional " +
-      "keyword search, workflow filter, or cross-agent scope. Use this to find older " +
-      "commits that are not shown in the recent commit context.",
-    parameters: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "Keyword to search for in commit notes (case-insensitive substring match).",
-        },
-        workflow_name: {
-          type: "string",
-          description: "Filter by workflow name.",
-        },
-        all_agents: {
-          type: "boolean",
-          description: "When true, search across all agents. Default: your commits only.",
-        },
-        limit: {
-          type: "number",
-          description: "Max results. Default 20.",
-        },
-      },
-      required: [],
-      additionalProperties: false,
-    },
-  },
-});
-
-/**
- * The model calls `system:commit` during the free-loop (non-workflow) send loop
- * to voluntarily record a checkpoint with optional notes. Unlike the
- * post-workflow commit step, this does not end the task — the agent continues
- * reasoning afterward.
- *
- * Always offered in the free loop. The scheduler handles persistence.
- */
-const buildCommitTool = (): ChatCompletionTool => ({
-  type: "function",
-  function: {
-    name: COMMIT_NAME,
-    description:
-      "Record a checkpoint with optional notes about what you accomplished. " +
-      "Use this periodically during task execution to save your progress. " +
-      "This does not end the task — you can continue working after committing.",
-    parameters: {
-      type: "object",
-      properties: {
-        notes: {
-          type: "string",
-          description: "Optional summary of what was accomplished since the last commit.",
-        },
-      },
-      required: [],
-      additionalProperties: false,
-    },
-  },
-});
-
 // ── Message builder ───────────────────────────────────────────────────────────
 
 /**
@@ -445,7 +102,7 @@ const buildCommitTool = (): ChatCompletionTool => ({
  * without standing up a live reasoner.
  */
 export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
-  const { task, availableActions, availableAgents, availableChannels, availableSkills, availableActionSchemas, availableTools, toolHints, agentRole, rolePrompt, context, commitContext, systemPrompt, currentTimestamp, priorMessages, toolHistory, toolInfoResult } = input;
+  const { task, availableActions, availableAgents, availableChannels, availableSkills, availableActionSchemas, availableTools, toolHints, agentRole, rolePrompt, context, commitContext, systemPrompt, currentTimestamp, priorMessages, toolHistory, toolInfoResult, attachments } = input;
   const canDelegate = availableAgents !== undefined && availableAgents.length > 0;
   const canCommunicate = availableChannels !== undefined && availableChannels.length > 0;
   const hasSkills = availableSkills !== undefined && availableSkills.length > 0;
@@ -456,6 +113,10 @@ export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[
   const hasToolHints = toolHints !== undefined && toolHints.length > 0;
   const hasToolHistory = toolHistory !== undefined && toolHistory.length > 0;
   const hasToolInfoResult = toolInfoResult !== undefined && toolInfoResult.length > 0;
+  const hasAttachments = attachments !== undefined && attachments.length > 0;
+  const imageAttachments = hasAttachments ? attachments.filter((a) => a.kind === "image") : [];
+  const fileAttachments = hasAttachments ? attachments.filter((a) => a.kind === "file") : [];
+  const audioAttachments = hasAttachments ? attachments.filter((a) => a.kind === "audio") : [];
 
   const system: ChatCompletionMessageParam = {
     role: "system",
@@ -552,6 +213,15 @@ export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[
   if (hasToolInfoResult) {
     userLines.push("", `Tool info: ${toolInfoResult}`);
   }
+  // File attachments: text-only note, never raw bytes — the model must use an
+  // extraction tool to read the actual contents. Image attachments are handled
+  // separately below as vision content parts.
+  if (fileAttachments.length > 0) {
+    userLines.push("", "Attachments:");
+    for (const a of fileAttachments) {
+      userLines.push(`  ${a.name ?? "(unnamed)"} (id: ${a.id}, ${a.mimeType}) — use an extraction tool to read its contents.`);
+    }
+  }
   if (context !== undefined && context.length > 0) {
     userLines.push("", "Context:", context);
   }
@@ -559,239 +229,29 @@ export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[
     userLines.push("", "Recent commits:", commitContext);
   }
 
+  const textContent = userLines.join("\n");
+  const hasMediaContent = imageAttachments.length > 0 || audioAttachments.length > 0;
   const user: ChatCompletionMessageParam = {
     role: "user",
-    content: userLines.join("\n"),
+    content: hasMediaContent
+      ? [
+          { type: "text", text: textContent },
+          ...imageAttachments.map((a) => ({
+            type: "image_url" as const,
+            image_url: { url: a.url ?? `data:${a.mimeType};base64,${a.data ?? ""}` },
+          })),
+          // send() already guarantees audio attachments reaching here have `data`
+          // and a mappable format — the `?? ""`/`?? "wav"` fallbacks are
+          // defensive only, matching the image branch's `a.data ?? ""` above.
+          ...audioAttachments.map((a) => ({
+            type: "input_audio" as const,
+            input_audio: { data: a.data ?? "", format: audioFormatFromMimeType(a.mimeType) ?? ("wav" as const) },
+          })),
+        ]
+      : textContent,
   };
 
   return [system, user];
-};
-
-// ── Response parsing ──────────────────────────────────────────────────────────
-
-/**
- * Cost the model spent producing this turn: tokens from the provider's usage
- * metadata, and the measured API round-trip as `latency` (a real cost axis).
- * Duration (fn execution time) is left to the gateway.
- */
-const reasoningCostFrom = (
-  response: OpenAI.Chat.Completions.ChatCompletion,
-  latencyMs: number,
-): Cost => ({
-  tokens: response.usage?.total_tokens ?? 0,
-  durationMs: 0,
-  latency: latencyMs,
-});
-
-/** Parse an optional budget object from delegate_task arguments. */
-const parseBudget = (raw: unknown): Cost | undefined => {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const obj = raw as Record<string, unknown>;
-  const tokens = obj["tokens"];
-  const durationMs = obj["durationMs"];
-  if (typeof tokens !== "number" || typeof durationMs !== "number") return undefined;
-  return { tokens, durationMs };
-};
-
-const parseToolCall = async (
-  response: OpenAI.Chat.Completions.ChatCompletion,
-  input: ReasonerInput,
-  latencyMs: number,
-): Promise<Result<ReasonerDecision, string>> => {
-  const { availableActions, availableAgents = [], availableChannels = [] } = input;
-  const availableToolNames = (input.availableTools ?? []).map((t) => t.name);
-  const choiceOpt = option(response.choices[0]);
-  if (choiceOpt.isNone) {
-    return Err("openai-reasoner: API response contained no choices");
-  }
-  const choice = choiceOpt.value;
-
-  const toolCalls = choice.message.tool_calls;
-  if (!toolCalls || toolCalls.length === 0) {
-    return Err(
-      `openai-reasoner: model did not call a tool (finish_reason: "${choice.finish_reason}")`,
-    );
-  }
-
-  // Narrow the union: only function-type tool calls carry a .function property.
-  const callOpt = option(toolCalls[0]);
-  if (callOpt.isNone || callOpt.value.type !== "function") {
-    return Err(
-      `openai-reasoner: unexpected tool type "${callOpt.isSome ? callOpt.value.type : "none"}" — expected "function"`,
-    );
-  }
-  const call = callOpt.value;
-
-  const argsResult = await safeTry(async () => JSON.parse(call.function.arguments) as Record<string, unknown>);
-  if (argsResult.isErr) return Err(`openai-reasoner: failed to parse tool arguments as JSON: ${call.function.arguments}`);
-  const args = argsResult.value;
-
-  // Explicit completion signal — the goal is satisfied, no further action.
-  if (call.function.name === FINISH_TOOL_NAME) {
-    const reason = typeof args["reason"] === "string" ? args["reason"] : undefined;
-    return Ok({ kind: "done", ...(reason !== undefined ? { reason } : {}) });
-  }
-
-  // Delegation — hand a scoped sub-goal to another agent.
-  if (call.function.name === DELEGATE_TOOL_NAME) {
-    const goal = args["goal"];
-    if (typeof goal !== "string" || goal.length === 0) {
-      return Err(`openai-reasoner: delegate goal is missing or not a string in arguments: ${JSON.stringify(args)}`);
-    }
-    const agentName = args["agent_name"];
-    if (typeof agentName !== "string" || agentName.length === 0) {
-      return Err(`openai-reasoner: delegate agent_name is missing or not a string in arguments: ${JSON.stringify(args)}`);
-    }
-    if (!availableAgents.includes(agentName)) {
-      return Err(
-        `openai-reasoner: model chose to delegate to "${agentName}" which is not in availableAgents ${JSON.stringify(availableAgents)}`,
-      );
-    }
-    const budget = parseBudget(args["budget"]);
-    return Ok({
-      kind: "delegate",
-      delegation: { goal, agentName, ...(budget !== undefined ? { budget } : {}) },
-    });
-  }
-
-  // Mention — leave a teammate a note on this task (no child task spawned).
-  if (call.function.name === MENTION_TOOL_NAME) {
-    const agentName = args["agent_name"];
-    if (typeof agentName !== "string" || agentName.length === 0) {
-      return Err(`openai-reasoner: mention agent_name is missing or not a string in arguments: ${JSON.stringify(args)}`);
-    }
-    if (!availableAgents.includes(agentName)) {
-      return Err(
-        `openai-reasoner: model chose to mention "${agentName}" which is not in availableAgents ${JSON.stringify(availableAgents)}`,
-      );
-    }
-    const message = args["message"];
-    if (typeof message !== "string" || message.length === 0) {
-      return Err(`openai-reasoner: mention message is missing or not a string in arguments: ${JSON.stringify(args)}`);
-    }
-    return Ok({ kind: "mention", mention: { agentName, message } });
-  }
-
-  // Communication — send a message through a bound channel.
-  if (call.function.name === SEND_MESSAGE_TOOL_NAME) {
-    const channel = args["channel"];
-    if (typeof channel !== "string" || channel.length === 0) {
-      return Err(`openai-reasoner: send_message channel is missing or not a string in arguments: ${JSON.stringify(args)}`);
-    }
-    if (!availableChannels.includes(channel)) {
-      return Err(
-        `openai-reasoner: model chose channel "${channel}" which is not in availableChannels ${JSON.stringify(availableChannels)}`,
-      );
-    }
-    const body = args["body"];
-    if (typeof body !== "string" || body.length === 0) {
-      return Err(`openai-reasoner: send_message body is missing or not a string in arguments: ${JSON.stringify(args)}`);
-    }
-    return Ok({ kind: "communicate", communication: { channel, body } });
-  }
-
-  // Tool execution — model wants to run a reusable utility. Validated against
-  // availableTools so a model cannot call a tool that was not offered this turn.
-  if (call.function.name === USE_TOOL_NAME) {
-    const toolName = args["tool_name"];
-    if (typeof toolName !== "string" || toolName.length === 0) {
-      return Err(`openai-reasoner: system:use_tool tool_name is missing or not a string in arguments: ${JSON.stringify(args)}`);
-    }
-    if (!availableToolNames.includes(toolName)) {
-      return Err(`openai-reasoner: model chose tool "${toolName}" which is not in availableTools ${JSON.stringify(availableToolNames)}`);
-    }
-    const rawToolInput = args["input"];
-    const toolInput: Record<string, unknown> =
-      rawToolInput !== null && typeof rawToolInput === "object" && !Array.isArray(rawToolInput)
-        ? (rawToolInput as Record<string, unknown>)
-        : {};
-    return Ok({ kind: "tool", toolCall: { toolName, input: toolInput } });
-  }
-
-  // Tool schema request — model wants to see a tool's input shape before calling it.
-  if (call.function.name === GET_TOOL_SCHEMA_NAME) {
-    const toolName = args["tool_name"];
-    if (typeof toolName !== "string" || toolName.length === 0) {
-      return Err(`openai-reasoner: system:get_tool_schema tool_name is missing or not a string in arguments: ${JSON.stringify(args)}`);
-    }
-    if (!availableToolNames.includes(toolName)) {
-      return Err(`openai-reasoner: model asked for schema of tool "${toolName}" which is not in availableTools ${JSON.stringify(availableToolNames)}`);
-    }
-    return Ok({ kind: "tool-info", request: { type: "schema", toolName } });
-  }
-
-  // Tool history — model wants the full recorded tool history (truncated entries).
-  if (call.function.name === GET_TOOL_HISTORY_NAME) {
-    return Ok({ kind: "tool-info", request: { type: "history" } });
-  }
-
-  // Tool history entry — model wants a single full (untruncated) entry by index.
-  if (call.function.name === GET_TOOL_HISTORY_ENTRY_NAME) {
-    const index = args["index"];
-    if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
-      return Err(`openai-reasoner: system:get_tool_history_entry index must be a non-negative integer in arguments: ${JSON.stringify(args)}`);
-    }
-    return Ok({ kind: "tool-info", request: { type: "history-entry", index } });
-  }
-
-  // Search commits — model wants to query the commit store for past records.
-  // Builds a CommitQuery from optional args; the scheduler executes it and
-  // stores the result in toolInfoResult (same pattern as tool-info).
-  if (call.function.name === SEARCH_COMMITS_NAME) {
-    const query: { query?: string; workflowName?: string; allAgents?: boolean; limit?: number } = {};
-    if (typeof args["query"] === "string" && args["query"].length > 0) query.query = args["query"];
-    if (typeof args["workflow_name"] === "string" && args["workflow_name"].length > 0) query.workflowName = args["workflow_name"];
-    if (typeof args["all_agents"] === "boolean") query.allAgents = args["all_agents"];
-    if (typeof args["limit"] === "number" && args["limit"] > 0) query.limit = Math.min(args["limit"], 100);
-    return Ok({ kind: "search-commits", query });
-  }
-
-  // Commit — model wants to record a voluntary checkpoint during the free-loop.
-  // The optional notes are passed through; the scheduler creates the Commit record.
-  if (call.function.name === COMMIT_NAME) {
-    const notes = typeof args["notes"] === "string" && args["notes"].length > 0 ? args["notes"] : undefined;
-    return Ok({ kind: "commit", notes });
-  }
-
-  if (call.function.name !== "request_action") {
-    return Err(
-      `openai-reasoner: unexpected tool name "${call.function.name}" — expected "request_action", "delegate_task", "mention_teammate", "send_message", "finish_task", "system:use_tool", "system:get_tool_schema", "system:get_tool_history", "system:get_tool_history_entry", "system:search_commits", or "system:commit"`,
-    );
-  }
-
-  const actionName = args["action_name"];
-  if (typeof actionName !== "string" || actionName.length === 0) {
-    return Err(
-      `openai-reasoner: action_name is missing or not a string in arguments: ${JSON.stringify(args)}`,
-    );
-  }
-
-  if (!availableActions.includes(actionName)) {
-    return Err(
-      `openai-reasoner: model chose "${actionName}" which is not in availableActions ${JSON.stringify(availableActions)}`,
-    );
-  }
-
-  const rawInput = args["input"];
-  const actionInput: Record<string, string | number | boolean | null> =
-    rawInput !== null &&
-    typeof rawInput === "object" &&
-    !Array.isArray(rawInput)
-      ? (rawInput as Record<string, string | number | boolean | null>)
-      : {};
-
-  const reasoning =
-    typeof args["reasoning"] === "string" ? args["reasoning"] : undefined;
-
-  return Ok({
-    kind: "act",
-    request: {
-      actionName,
-      input: actionInput,
-      reasoningCost: reasoningCostFrom(response, latencyMs),
-      ...(reasoning !== undefined ? { reasoning } : {}),
-    },
-  });
 };
 
 // ── Factory ───────────────────────────────────────────────────────────────────

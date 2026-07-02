@@ -10,7 +10,7 @@
  * (spec §Markov Constraints, Decision: Stateless Governance Engine).
  */
 
-import type { Cost, ExecutionStatus, RiskState, TrustState } from "../shared/types";
+import type { Attachment, Cost, ExecutionStatus, RiskState, TrustState } from "../shared/types";
 import type { KalmanState } from "../governance/types";
 import type { ToolHistoryEntry } from "../authoring/types";
 
@@ -76,6 +76,17 @@ export type TaskStateSnapshot = {
 
   /** Tool execution history for audit and checkpointing. Every tool call is recorded with full context. */
   toolHistory?: ToolHistoryEntry[];
+
+  /**
+   * Attachments supplied at send() time, engine-issued ids attached. Persists
+   * across the whole task run (checkpointed like toolHistory) and is forwarded
+   * to ReasonerInput on every reasoner call unchanged — the same "always resend
+   * relevant state" pattern the rest of the snapshot already follows, since each
+   * reasoner call is a fresh reconstruction with no native provider-side
+   * conversation memory. Also surfaced to tools via ToolContext.attachments so a
+   * future extraction tool can look up raw bytes by id.
+   */
+  attachments?: Attachment[];
 
   /**
    * Result of the model's most recent `tool-info` request (schema, history, or

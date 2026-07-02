@@ -1,0 +1,8 @@
+[
+  { "type": "file", "name": "api-overview", "label": "API Overview" },
+  { "type": "file", "name": "adapters", "label": "Adapters" },
+  { "type": "file", "name": "types", "label": "Types" },
+  { "type": "file", "name": "faq", "label": "FAQ" },
+  { "type": "file", "name": "llms-txt", "label": "LLMs" },
+  { "type": "file", "name": "llms-full-txt", "label": "LLMs Full" }
+]

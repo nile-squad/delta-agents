@@ -23,9 +23,9 @@
 - If you can read it from code, it doesn't need to be here
 - Only document what's **non-obvious** from reading source files
 
-## Current State (as of 2026-07-01)
+## Current State (as of 2026-07-02)
 
-All packages A–J are implemented and tested (911 tests pass). Public surface at `src/index.ts`. `dist/` loads under plain Node. Full spec in `docs/internal/delta-agents.spec.md`.
+All packages A–J are implemented and tested (913 tests pass). Public surface at `src/index.ts`. `dist/` loads under plain Node. Full spec in `docs/internal/delta-agents.spec.md`.
 
 All H-series subsystems are wired into the live path. Remaining work is catalogued below, not whole subsystems.
 
@@ -44,13 +44,14 @@ All H-series subsystems are wired into the live path. Remaining work is catalogu
 - **E1-E3 (comms + skills):** `ReasonerDecision.kind:"communicate"` -> channel dispatch with optional approval. Chat SDK bridged structurally (no dep). `ActionContext.communicate()` for declarative path. Skills: `folder`-based, engine reads `SKILL.md` internally, scoped by agent/phase/action.
 - **F (memory retrieval):** `Memory` type + `memories` table (libsql). `retrieveContext` before each `reason()` call. `ctx.remember()` for write. Keyword ranking (no embeddings).
 - **G (optimization + trust):** surprise erodes trust (>0.4 threshold). Degraded trust (<0.3) escalates. Bellman MPC pre-block on workflow. Action ranking cheapest-first.
-- **Multi-axis Cost:** `Cost` = `{ tokens, durationMs, memory?, latency? }`. Opt-in enforcement. Flows through budget, MPC, subtask scoping.
+- **Multi-axis Cost:** `Cost` = `{ tokens, durationMs, memory?, latency?, money?: Money, content?: ContentCost }`. Opt-in enforcement. Flows through budget, MPC, subtask scoping. `money` carries an explicit `{ value, currency }` pair, not a bare number.
 - **H1/H3 re-run fidelity:** retry from `failedIndex`, restart from phase entry, resume from checkpoint. Active child rehydration on resume. Per-action workflow inputs (`actionInputs`).
 - **Storylines:** `Workflow.storyline?` + `Phase.storyline?` (free-prose narrative of ideal user flow). Injected into `ActionContext.storyline` + `ActionContext.phaseStoryline` via the execution gateway — single channel, no duplicate injection. Free loop (no workflow) sees `undefined`. NOT persisted in `TaskStateSnapshot` (authoring content, plumbed fresh from definitions).
 - **System prompt + time awareness:** `DeltaEngineConfig.systemPrompt?` (static org instructions, baked into system message prefix for prompt cache) + `DeltaEngineConfig.timezone?` (grounds agents with time awareness). Current time (humanized + ISO + tz) injected into user message per `reason()` call. Prior messages loaded from store with relative time (`formatDistanceToNow`). System message = cacheable prefix only; user message = all varying content. `buildMessages` exported for direct testing.
 - **Package I (correctness):** `deploy()` gates `send()`. All `as unknown` casts centralized to `snapshotFromJson`/`snapshotToJson` (exactly 1 cast in `src/`).
 - **Package J (surface + docs):** Complete public API at `src/index.ts`. README rewritten from shipped surface.
 - **Agent Commit Feature:** All 7 phases done. Commit entity with storage (in-memory + Drizzle), post-workflow commit step, hard-block on pendingCommit, resume support, context injection (recent N commits into reasoner prompt), `system:search_commits` tool, free-loop optional `system:commit`, full unit + integration test coverage.
+- **Multimodal Input / Attachments:** `SendInput.attachments?: AttachmentInput[]` (`kind: "image" | "file" | "audio"`, engine assigns ids). Images embed as `image_url` vision content parts, audio as `input_audio` parts (base64 + wav/mp3 format), when the resolved model declares `ModelDef.vision`/`audio: true`; `send()` fails fast (`Err`, no task created) on a capability mismatch or a malformed attachment (missing data/url, unsupported audio mimeType). Files never go to the model as raw bytes — text note only, referenceable by id via `ToolContext.attachments` for a future extraction tool. `loadAttachmentFromFile`/`loadAttachmentFromUrl` (public exports) turn a local file or remote URL into an `AttachmentInput`. Persisted on `TaskStateSnapshot.attachments` (checkpointed, resume just works). Foundational plumbing phase — builtin tools (document extraction, web search) land next, one at a time.
 
 ### What's deferred (catalogued)
 - Per-action reasoner-filled inputs (single shared `input` bag today)
@@ -62,6 +63,10 @@ All H-series subsystems are wired into the live path. Remaining work is catalogu
 - Richer future-cost estimation for `computeActionValue` (uniform term = ranking reduces to immediate cost)
 - MPC horizon in free reasoner loop (only workflow path has declared horizon)
 - `Queue` entity is spec-aligned but NOT engine-driven (engine uses `TaskTree.queuedChildren` + `Message`s)
+- File-attachment extraction tool (OCR/document parsing) — `ToolContext.attachments` plumbing exists, no builtin tool reads it yet
+- Web search builtin tool (Exa or similar) — not started
+- Attachment "shown once" optimization — images currently re-embed on every reasoner step within a task run (see Multimodal Input tradeoffs)
+- `ContentCost` is populated but not enforced by any budget axis yet
 
 ### Storage
 All 9 entities have working store methods in both adapters (in-memory + Drizzle). New `commits` table added for the Agent Commit Feature (Drizzle schema + migrations). No remaining work needs new DB schema. New persisted state rides inside `TaskStateSnapshot` JsonRecord.
@@ -228,6 +233,64 @@ All 9 entities have working store methods in both adapters (in-memory + Drizzle)
 
 ---
 
+## Multimodal Input / Attachments + Money (2026-07-02)
+
+### Decision: Attachments as send()-time plumbing, not a new runtime entity
+- `AttachmentInput` (`{ kind: "image" | "file", mimeType, data?, url?, name? }`) is caller-facing on `SendInput.attachments`. The engine assigns the id (`attachmentId()`) — callers never self-assign, same as every other engine-issued id (TaskID, MessageID, etc.).
+- `Attachment` (`AttachmentInput & { id: string }`) lives on `TaskStateSnapshot.attachments`, not as a DB column on `Task`. Same pattern as `workflowInput`/`workflowActionInputs` — per-send data threaded into the snapshot, checkpointed as JSON, no schema migration needed.
+- `kind` is explicit and required, never inferred from `mimeType` (a PDF could contain images; inferring would be ambiguous).
+
+### Decision: Images go to the model directly (vision); files never do
+- `kind: "image"` attachments are embedded as real `image_url` content parts in the OpenAI reasoner's `buildMessages()` when the resolved model declares `vision: true` on its `ModelDef`.
+- `kind: "file"` attachments are never sent as raw bytes to the model — no provider eats arbitrary files as chat content. They surface only as a one-line text note (id, mimeType, name) pointing the model at a future extraction tool. The `Attachment[]` list is also threaded into `ToolContext.attachments` so a tool can look up the raw bytes by id later in the task.
+
+### Decision: Fail-fast on vision mismatch, not silent drop
+- `send()` rejects (`Err`) before creating any task when an image attachment is sent to an agent whose resolved model does not declare `vision: true`. No task is created, no partial state. Matches principle 1 (the engine owns enforcement) — a dropped image would be a silent capability gap, which the spec explicitly avoids elsewhere (e.g. invariant 19's explicit-Result philosophy).
+- The check is skipped (not enforced) when using the `configReasoner` test override or when no `models` are configured — both are escape hatches with no `ModelDef` to validate against.
+
+### Decision: Attachments persist for the whole task run, not just the first turn
+- Every `stepTask` call in a multi-step task rebuilds `[system, user]` from scratch (no native provider-side conversation memory — see the existing `priorMessages`-as-text pattern). Attachments follow the same "always resend relevant state" rule as `toolHistory`/`goal` rather than a "shown once" model — there is no snapshot mechanism today that would let the model "remember" seeing an image on a prior turn, so re-embedding is the only way it stays visible across steps. Noted as a token-cost tradeoff below, not solved here.
+
+### Decision: Money becomes `{ value, currency }`, not a bare number
+- `Cost.money` was `number` (assumed USD cents). Multi-region use breaks that assumption, so it's now `Money = { value: number; currency: string }` (ISO 4217 code).
+- Cost axes are trusted to use consistent units within a task, the same way `memory`/`latency` already are — the engine does not cross-validate currency on every `addCosts`/`isOverBudget` call. When both operands of `addCosts` carry a `Money`, the result takes `a`'s currency and sums `.value`; when only one side carries it, that side's `Money` passes through unchanged.
+- `costRatio`'s `money` return stays a plain `number` — it's a dimensionless ratio, not an amount, so it never needed a currency.
+
+### Decision: ContentCost as a new optional Cost axis, populated but not yet enforced
+- `ContentCost = { count, bytes, unitType?: "tokens"|"pages"|"images"|"bytes", itemSize? }` — `count`/`bytes` are always meaningful regardless of content kind; `unitType`/`itemSize` let a future tool (document extraction, etc.) report richer per-type cost without redesigning `Cost` again.
+- `addCosts` sums `content` the same "include only when at least one operand carries it" way as `memory`/`latency`. `isOverBudget`/`remainingCost`/`costRatio` do NOT read `content` — no budget declares a content limit yet, so there's nothing to enforce or report headroom for. Scope-limited on purpose; revisit once a real budget use case exists.
+
+### Files
+- `src/shared/types.ts`: `Money`, `AttachmentInput`, `Attachment`, `ContentCost` types; `Cost.money: Money`, `Cost.content?: ContentCost`
+- `src/shared/cost.ts`: `addCosts`/`isOverBudget`/`remainingCost`/`costRatio` updated for `Money` + `content`
+- `src/shared/id.ts`: `attachmentId()` generator
+- `src/engine/types.ts`: `ModelDef.vision?: boolean`, `SendInput.attachments?: AttachmentInput[]`
+- `src/state-space/types.ts`: `TaskStateSnapshot.attachments?: Attachment[]`
+- `src/authoring/types.ts`: `ToolContext.attachments?: Attachment[]`
+- `src/ports/reasoner-port.ts`: `ReasonerInput.attachments?: Attachment[]`
+- `src/engine/create-delta-engine.ts`: `resolveModelDef()` helper, attachment id assignment + vision fail-fast check in `send()`
+- `src/engine/runtime.ts`: `runSendLoop`/`runWorkflowTask` accept `attachments`, seed initial snapshot (fresh-call-wins-else-keep-checkpointed for the workflow path, matching `workflowInput`)
+- `src/engine/scheduler.ts`: forwards `snapshot.attachments` into `ReasonerInput`
+- `src/engine/tool-dispatch.ts`: forwards `snapshot.attachments` into `ToolContext`
+- `src/ports/openai-reasoner.ts`: `buildMessages()` emits `image_url` content parts for image attachments, text note for file attachments
+
+### Tradeoffs accepted
+- Re-embedding image bytes on every reasoner step within a multi-step task (see "persist for whole run" decision above) costs real vision tokens repeatedly. Accepted for Phase 1 consistency with how the rest of the snapshot already works; a "shown once" optimization is future work if this proves costly in practice.
+- No budget axis enforces `content` yet (see ContentCost decision). The type exists and is populated so a future tool can report richer cost without a second migration, but nothing gates on it today.
+- File attachments have no consumer yet — the extraction tool that reads them by id is deliberately out of scope for this phase (multimodal input plumbing ships first; builtin tools land one at a time afterward, per explicit direction).
+- `resolveModelDef()` in `create-delta-engine.ts` duplicates the model-lookup logic already inside `resolveReasoner()` (same `agentDef.model ?? default` lookup) rather than refactoring `resolveReasoner` to expose the resolved `ModelDef`. Small, contained duplication; refactoring `resolveReasoner` to return `{ modelDef, reasoner }` was judged not worth the churn for two call sites.
+
+### Addendum (2026-07-02): Audio attachments + file/URL loaders
+
+- `AttachmentInput.kind` extended to `"image" | "file" | "audio"`. `ModelDef.audio?: boolean` mirrors `vision` exactly — same fail-fast gate in `send()`, same "escape hatch skips the check" behavior for `configReasoner`/no-`models` setups.
+- OpenAI's `input_audio` content part takes **base64 `data` + an explicit `format: "wav" | "mp3"`** — no URL path, unlike `image_url`. `audioFormatFromMimeType()` (`src/shared/attachment-format.ts`) maps mimeType → format; an unmappable mimeType is a `send()`-time `Err`, not a runtime surprise from the provider.
+- `send()` now also rejects an attachment with neither `data` nor `url` at all (a real gap in the original Phase 1 validation — an attachment with neither would have silently produced a broken request downstream, e.g. `data:image/png;base64,` with empty data). And specifically rejects an audio attachment that has only `url` and no `data`, pointing the caller at `loadAttachmentFromUrl`.
+- `loadAttachmentFromFile`/`loadAttachmentFromUrl` (`src/shared/attachment-loader.ts`, both exported publicly) turn a local file or remote URL into an `AttachmentInput` with base64 `data`. Deliberately NOT wired into `send()` itself — the engine never touches the filesystem or the network; the caller resolves bytes explicitly and awaits it before calling `send()`, the same way they'd already await a DB read. Confirmed appropriate for this project: it's a Node-only backend framework (`engines.node >= 18` in package.json), so `node:fs/promises` and global `fetch` are always available — no browser/edge portability concern to hedge against.
+- `Attachment`, `AttachmentInput`, `Money`, `ContentCost` were defined in `src/shared/types.ts` since the original Phase 1 pass but never actually exported from `src/index.ts` — a real gap (consumers couldn't import the types to annotate their own code). Fixed in the same pass as the audio work since it touched the same export block.
+- mimeType inference in the loaders (extension map for files, `Content-Type` header for URLs) fails closed: an unrecognized extension or missing header is an `Err` requiring an explicit `mimeType` override, never a silent guess — a wrong guess would corrupt what the model or a tool receives.
+
+---
+
 ## slang-ts idiom conventions
 
 **Patterns — apply everywhere, no exceptions:**
@@ -263,7 +326,7 @@ Delta Agents is a shipped, fully-implemented deterministic autonomous control pl
 ## Quality Bar (Authoritative — correctness is non-negotiable)
 - No logical flaws. Every governance decision must be provably correct.
 - Every core mechanism tested (unit + integration). Tests are self-contained, never skipped, never faked.
-- No `any`, no `unknown`. `type` over `interface`, no `enum`. Explicit return types on public functions.
+- No `any`. `unknown` only at genuine external/consumer boundaries (`Result<unknown, string>` on user-supplied fn returns, tool I/O) — never as a substitute for a knowable type; prefer `JsonRecord` where the shape is known to be JSON. `type` over `interface`, no `enum`. Explicit return types on public functions.
 - JSDoc on all public APIs (explain WHY, not what).
 - Provenance auditable — every event attributable to a TaskID.
 
@@ -293,7 +356,7 @@ Delta Agents is a shipped, fully-implemented deterministic autonomous control pl
 
 ## DX Pattern
 
-Factory functions everywhere, no classes. `createDeltaEngine({...})` returns one plain object — the entire surface. Authoring: `delta.action()`, `delta.workflow()`, `delta.agent()`. Runtime: `delta.deploy()`, `delta.send()`, `delta.approve()`, `delta.pause()`, `delta.resume()`, `delta.inspect()`. Developer never creates Task, Checkpoint, TrustState, or TaskTree. Delta owns the runtime.
+Factory functions everywhere, no classes. `createDeltaEngine({...})` returns one plain object — the entire surface. Authoring: `delta.action()`, `delta.workflow()`, `delta.agent()`. Runtime: `delta.deploy()`, `delta.send()`, `delta.approve()`, `delta.reject()`, `delta.pause()`, `delta.resume()`, `delta.inspect()`. Developer never creates Task, Checkpoint, TrustState, or TaskTree. Delta owns the runtime.
 
 Phases are plain objects in `delta.workflow({ phases: [...] })` — no `delta.phase()`. Models declared on engine (`models: ModelDef[]`), agents reference by name (`agent.model`). `createOpenAIReasoner` is internal; pass `createMockReasoner(...)` in tests.
 

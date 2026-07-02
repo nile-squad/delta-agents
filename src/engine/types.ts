@@ -11,7 +11,7 @@
  */
 
 import type { Result } from "slang-ts";
-import type { Cost, Task, Execution, Checkpoint, ApprovalRequest, EscalationRecord } from "../shared/types";
+import type { Cost, Task, Execution, Checkpoint, ApprovalRequest, EscalationRecord, AttachmentInput } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort } from "../ports/reasoner-port";
 import type { RetryOptions } from "../infra";
@@ -53,6 +53,21 @@ export type ModelDef = {
   apiKey?: string;
   /** Per-model provider options. Merged over engine-level `options` (per-model wins). */
   options?: ModelOptions;
+  /**
+   * Declares this model can accept image content in the chat request (vision).
+   * When an agent's resolved model does not declare `vision: true`, `send()`
+   * rejects any `kind: "image"` attachment before creating a task (fail-fast —
+   * no silent degrade). Defaults to false/undefined.
+   */
+  vision?: boolean;
+  /**
+   * Declares this model can accept audio content in the chat request. When an
+   * agent's resolved model does not declare `audio: true`, `send()` rejects any
+   * `kind: "audio"` attachment before creating a task (fail-fast — no silent
+   * degrade), the same way `vision` gates image attachments. Defaults to
+   * false/undefined.
+   */
+  audio?: boolean;
 };
 
 export type DeltaEngineConfig = {
@@ -177,6 +192,15 @@ export type SendInput = {
    * reasoner loop. (Reasoner-filled inputs remain a separate, future path.)
    */
   actionInputs?: Record<string, Record<string, string | number | boolean | null>>;
+  /**
+   * Images or files the agent should have access to for this task. `kind: "image"`
+   * attachments are embedded as real vision content in the reasoner call when the
+   * resolved model declares `vision: true` (send() rejects them otherwise, before
+   * any task is created). `kind: "file"` attachments are never sent as raw bytes
+   * to the model — they persist on the task, referenceable by id, for a future
+   * extraction tool to read via `ToolContext.attachments`.
+   */
+  attachments?: AttachmentInput[];
 };
 
 export type SendResult = {
@@ -235,6 +259,13 @@ export type DeltaEngine = {
    * After approving, call resume(taskId) to continue a blocked task.
    */
   approve: (approvalId: string) => Promise<Result<ApprovalRequest, string>>;
+  /**
+   * Reject a pending human approval request.
+   * The (taskId, action) pair stays permanently blocked: the engine never
+   * re-opens a rejected approval (spec §Human Oversight, prohibition 11), so a
+   * later resume re-checks the status and blocks again rather than executing.
+   */
+  reject: (approvalId: string) => Promise<Result<ApprovalRequest, string>>;
   /** Suspend a task and save its current state as a checkpoint. */
   pause: (taskId: string) => Promise<Result<void, string>>;
   /**

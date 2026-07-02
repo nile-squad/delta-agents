@@ -1,0 +1,16 @@
+# Delta Agents
+
+> Deterministic governance and control-plane engine for AI agents
+
+## Guide
+
+- [Getting Started](/delta-agents/guide/start/getting-started.md): Install delta-agents and run your first governed agent
+- [Actions](/delta-agents/guide/basics/actions.md): An action is a named, schema-validated operation that an agent may propose. The agent never executes an action directly; it requests one, and the engine's execution gateway decides whether to run it.
+- [Agents and Workflows](/delta-agents/guide/basics/agents-and-workflows.md)
+- [Human Oversight and Approvals](/delta-agents/guide/basics/human-oversight-and-approvals.md): Every task remains eligible for human intervention. An agent can propose an irreversible or high-risk action, but the engine will not run it without a human decision when the action requires one, and it will pause a task on its own when its risk, trust, or budget signals cross a threshold.
+- [Execution Gateway](/delta-agents/guide/internals/execution-gateway.md): Every action a deployed agent requests passes through the same execution gateway before it runs. This page describes what the gateway guarantees, not how it is implemented.
+- [Delegation and Teams](/delta-agents/guide/internals/delegation-and-teams.md): An agent can hand off a scoped piece of work to another agent. Delegation exists to reduce complexity for a single agent; the engine keeps it from creating a new kind of complexity of its own.
+- [Tools and Memory](/delta-agents/guide/internals/tools-and-memory.md)
+- [FAQ](/delta-agents/guide/reference/faq.md): Common questions about delta-agents, with answers that reflect the current implementation.
+- [LLMs](/delta-agents/guide/reference/llms-txt.md): View LLMs.txt This file is generated from the documentation on this site and is formatted for consumption by AI coding assistants and other LLM-based tools.
+- [LLMs Full](/delta-agents/guide/reference/llms-full-txt.md): View LLMs Full

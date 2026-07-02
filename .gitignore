@@ -1,5 +1,6 @@
-# dependencies (bun install)
+# dependencies
 node_modules
+bun.lock
 
 # output
 out
@@ -14,6 +15,12 @@ coverage
 logs
 _.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+
+# generated docs site build output (packages/web)
+doc_build
+
+# local database data directories (packages/example)
+packages/*/data
 
 # dotenv environment variable files
 .env

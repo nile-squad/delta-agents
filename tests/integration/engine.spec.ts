@@ -464,6 +464,76 @@ describe("approve — resolve a pending approval", () => {
   });
 });
 
+// ── reject ────────────────────────────────────────────────────────────────────
+
+describe("reject — deny a pending approval (prohibition 11)", () => {
+  it("reject marks the approval as rejected", async () => {
+    const store = createInMemoryStore();
+    const delta = await createDeltaEngine({ store, reasoner: createMockReasoner() });
+
+    const { requestApproval } = await import("../../src/oversight");
+    const req = await requestApproval({ taskId: "tsk_test", action: "pay", reason: "needs sign-off", store });
+    if (!req.isOk) return;
+
+    const result = await delta.reject(req.value.id);
+    expect(result.isOk).toBe(true);
+    if (result.isOk) expect(result.value.status).toBe("rejected");
+  });
+
+  it("a rejected approval stays permanently blocked — resume does not re-authorize", async () => {
+    const store = createInMemoryStore();
+    const executed: string[] = [];
+    const delta = await createDeltaEngine({
+      store,
+      reasoner: createMockReasoner({ responses: [{ actionName: "pay", input: { amount: 100 } }] }),
+    });
+
+    const pay = delta.action({
+      name: "pay",
+      description: "send payment",
+      schema: z.object({ amount: z.number() }),
+      requiresApproval: true,
+      fn: async () => { executed.push("paid"); return Ok("paid"); },
+    });
+    const ag = delta.agent({ name: "payer3", description: "test action", role: "r", rolePrompt: ".", actions: [pay] });
+    delta.deploy(ag);
+
+    // First send — blocked waiting for approval.
+    const blocked = await delta.send({ goal: "pay 100", agentName: "payer3" });
+    if (!blocked.isOk || blocked.value.status !== "blocked") return;
+
+    const approvalId = blocked.value.reason?.match(/appr_\S+/)?.[0];
+    if (approvalId === undefined) return;
+
+    // Reject, then attempt to resume — the gateway must re-block, not execute.
+    const rejected = await delta.reject(approvalId);
+    expect(rejected.isOk && rejected.value.status).toBe("rejected");
+
+    const delta2 = await createDeltaEngine({
+      store,
+      reasoner: createMockReasoner({ responses: [{ actionName: "pay", input: { amount: 100 } }] }),
+    });
+    const pay2 = delta2.action({
+      name: "pay",
+      description: "send payment",
+      schema: z.object({ amount: z.number() }),
+      requiresApproval: true,
+      fn: async () => { executed.push("paid-resumed"); return Ok("paid"); },
+    });
+    const ag2 = delta2.agent({ name: "payer3", description: "test action", role: "r", rolePrompt: ".", actions: [pay2] });
+    delta2.deploy(ag2);
+
+    const resumed = await delta2.resume(blocked.value.taskId);
+    expect(resumed.isOk).toBe(true);
+    if (resumed.isOk) {
+      expect(resumed.value.status).toBe("blocked");
+      expect(resumed.value.reason).toMatch(/approval-required/);
+    }
+    // The action never ran — rejection is terminal.
+    expect(executed).toEqual([]);
+  });
+});
+
 // ── lastTask + invariant 25/26 ────────────────────────────────────────────────
 
 describe("lastTask — retrieval without stored TaskID (invariant 25)", () => {

@@ -743,6 +743,10 @@ type ToolContext = {
   taskId: string;
   phaseName?: string;
   toolHistory: ToolHistoryEntry[];
+  // Attachments supplied at send() time — lets a tool look up raw content
+  // (e.g. a file to extract text from) by id. Absent or empty when the task
+  // carries none.
+  attachments?: Attachment[];
 };
 
 type ToolHistoryEntry = {
@@ -778,7 +782,43 @@ The detector is created fresh per `runScheduler` call, so paused/resumed tasks g
 
 Tools may declare a budget for cost tracking. Unlike action budgets, tool budgets are optional and purely advisory for cost awareness. When a tool's budget is exceeded, the engine blocks further calls and returns a humanized message.
 
-Budgets track the `Cost` axes: tokens, durationMs, memory, latency, and money (financial cost in USD cents or fractional currency units).
+Budgets track the `Cost` axes: tokens, durationMs, memory, latency, money (an explicit `{ value, currency }` amount), and content (attachment/content resource consumption).
+
+---
+
+# Multimodal Input
+
+A caller may attach images, audio, or files to a goal through `SendInput.attachments`. Attachments give the agent access to content beyond plain text without changing the state-space, budget, or risk model — they are input, not action.
+
+## Attachment Kind Is Explicit
+
+An attachment declares `kind: "image"`, `kind: "audio"`, or `kind: "file"`. The kind is supplied by the caller, never inferred from `mimeType` — a file could contain images, so inference would be ambiguous. The engine assigns the attachment's id; a caller never self-assigns one (the same rule that governs TaskIDs: identifiers are engine-issued, never caller-guessable or caller-supplied).
+
+An attachment must carry at least one of `data` (base64-encoded content) or `url` (a remote URL). Neither is not a legal attachment — `send()` rejects it before any task is created.
+
+## Images and Audio Reach the Model; Files Do Not
+
+An image or audio attachment is embedded as real multimodal content in the reasoner's request when the agent's resolved model declares the matching capability. The model literally sees the image or hears the audio.
+
+Audio has a narrower path than image: an image may reach the model via a remote `url` (the provider fetches it) or inline `data`, but an audio attachment must carry `data` — the provider's audio content part accepts no URL. An audio attachment that carries only `url` is rejected at `send()` time rather than silently failing downstream, with the rejection naming the loader that resolves it (`loadAttachmentFromUrl`, part of the DX described below). An audio attachment's `mimeType` must also map to a format the provider supports; an unmappable one is rejected the same way.
+
+A file attachment is never sent to the model as raw bytes — no assumption is made that every provider or model can ingest arbitrary file content as part of a chat request. Instead the model sees a short reference (an id, a MIME type, a name) and is expected to read the file's contents through a tool built for that purpose. Reading a file is a tool's job; seeing or hearing image/audio content is the model's.
+
+## Capability Is Declared, Not Assumed
+
+A model definition may declare `vision: true` and/or `audio: true`. Sending an image attachment to an agent whose resolved model does not declare vision capability — or an audio attachment where audio capability is not declared — is rejected before any task is created — a deterministic failure, not a silent drop. Principle 1 governs here the same as everywhere else: the engine owns enforcement, not the model's actual capability at request time.
+
+Why:
+
+A dropped image or audio clip is a silent capability gap — the caller believes the model received something it never got. Rejecting up front, before a task exists, keeps the failure attributable and immediate instead of discovered later as an unexplained gap in the agent's behavior.
+
+## Attachments Persist For The Life Of The Task
+
+An attachment supplied at send time remains part of the task's state for the duration of that task's run, the same way tool history and the task goal do. Every reasoner turn is a fresh reconstruction of the model's context from current task state — there is no assumption of provider-side conversation memory — so an attachment stays available to be shown again on a later turn rather than being consumed once and discarded.
+
+## Resolving Bytes Is the Caller's Job, Not the Engine's
+
+The engine never touches the filesystem and never makes an outbound network call to resolve an attachment's content. A caller who has a local file or a remote URL resolves it into `data` themselves before calling `send()` — optionally through a provided loader (a convenience DX, not a governance mechanism, so it carries no invariant of its own beyond producing a well-formed attachment). This keeps `send()` itself free of I/O side effects that the engine would otherwise have to govern, retry, or account for.
 
 ---
 
@@ -955,6 +995,12 @@ Allowing unbounded task creation per agent produces the same failure as unbounde
 28. Tool names must not start with "system:" — this prefix is reserved for internal framework tools.
 29. Tool results are truncated and stored in tool history. Full results are retrievable on demand via system:get_tool_history_entry.
 30. Every tool call is logged with agent name, phase, timestamp, input, output, and token count for audit.
+31. Every attachment id is engine-issued; a caller never self-assigns one.
+32. An image attachment is rejected before task creation when the resolved model does not declare vision capability.
+33. A file attachment is never transmitted to the model as raw content — only a reference (id, mimeType, name).
+34. An audio attachment is rejected before task creation when the resolved model does not declare audio capability.
+35. An audio attachment is rejected before task creation unless it carries `data` and a `mimeType` mappable to a supported format.
+36. Every attachment carries at least one of `data` or `url`; an attachment with neither is rejected before task creation.
 
 ---
 
@@ -984,6 +1030,10 @@ Allowing unbounded task creation per agent produces the same failure as unbounde
 22. A caller never needs a stored TaskID to retrieve their agent's current or most recent task.
 23. Tools must not modify task state space (completedActions, completedWorkflows, budget, risk, trust).
 24. Tool names must not collide with action names or internal tool names.
+25. The engine never silently drops an image attachment sent to a non-vision model — it rejects the send.
+26. The engine never sends a file attachment's raw content to the model.
+27. The engine never silently drops an audio attachment sent to a non-audio-capable model — it rejects the send.
+28. The engine never fetches or reads an attachment's content on the caller's behalf — resolving `data` from a file or URL is the caller's responsibility.
 
 ---
 
@@ -1543,17 +1593,40 @@ type SupervisionPolicy = {
 ### Cost
 
 ```ts
+// Financial cost as an explicit amount + currency pair. A bare number would
+// assume a single currency; Money makes the currency part of the value so
+// governance math never silently mixes regions.
+type Money = {
+  value: number;     // amount in the currency's minor unit (e.g. cents for USD), integer
+  currency: string;  // ISO 4217 code, e.g. "USD", "EUR", "NGN"
+};
+
+// Attachment/content resource consumption. count/bytes are always meaningful
+// regardless of content kind; unitType/itemSize let a tool (e.g. document
+// extraction) report richer per-type cost (pages, tokens) without another
+// Cost redesign.
+type ContentCost = {
+  count: number;
+  bytes: number;
+  unitType?: "tokens" | "pages" | "images" | "bytes";
+  itemSize?: number;
+};
+
 // Multi-axis resource consumption vector. Cost is more than tokens and time:
-// memory, latency, and money are first-class axes so the engine can budget,
-// project (MPC), and scope them like any other resource.
+// memory, latency, money, and content are first-class axes so the engine can
+// budget, project (MPC), and scope them like any other resource.
 // The optional axes are only enforced by a budget that declares them:
-// an undeclared memory/latency/money budget means "unlimited on that axis".
+// an undeclared memory/latency/money/content budget means "unlimited on that
+// axis". Cost axes are trusted to use consistent units within a task the same
+// way memory/latency already are — the engine does not cross-validate
+// currency or unitType on every operation.
 type Cost = {
   tokens: number;
   durationMs: number;
   memory?: number;
   latency?: number;
-  money?: number;  // financial cost in USD cents (integer) or fractional currency units
+  money?: Money;
+  content?: ContentCost;
 };
 ```
 
@@ -1594,6 +1667,13 @@ type TaskStateSnapshot = {
   // Most recent tool-info result (schema, history, or history-entry).
   // Carried through so the model sees it on the next reason() call.
   lastToolInfoResult?: string;
+
+  // Attachments supplied at send() time, engine-issued ids attached. Persists
+  // across the whole task run (checkpointed like toolHistory) and is
+  // forwarded to ReasonerInput on every reasoner call unchanged — the same
+  // "always resend relevant state" pattern the rest of the snapshot follows.
+  // Also surfaced to tools via ToolContext.attachments.
+  attachments?: Attachment[];
 };
 ```
 
@@ -1673,12 +1753,40 @@ type ReasonerInput = {
   // single history entry). Forwarded from TaskStateSnapshot.lastToolInfoResult
   // on the next turn.
   toolInfoResult?: string;
+
+  // Attachments supplied at send() time. kind: "image" entries are embedded
+  // as vision content parts by an adapter that supports it. kind: "file"
+  // entries are surfaced only as a short text note (id, mimeType, name) —
+  // never as raw bytes — since reading them is a tool's job.
+  attachments?: Attachment[];
 };
+```
+
+### Attachment
+
+```ts
+// Content the caller wants the agent to have access to. kind is explicit and
+// required — the caller states intent, it is never inferred from mimeType (a
+// PDF could contain images; inference would be ambiguous).
+type AttachmentInput = {
+  kind: "image" | "file" | "audio";
+  mimeType: string;   // e.g. "image/png", "application/pdf", "audio/wav"
+  data?: string;       // base64-encoded content
+  url?: string;         // remote URL, alternative to inline data (image only — audio requires data)
+  name?: string;         // filename, for audit/display
+};
+
+// Engine-issued: same as AttachmentInput, plus the id the engine assigns so
+// tools can reference the raw content later. Attachment ids are engine-issued,
+// never caller-guessable or self-assigned — the same rule that governs TaskIDs.
+type Attachment = AttachmentInput & { id: string };
 ```
 
 ---
 
 # Delta DX
+
+> **Note (as-built):** The DX below is the original design sketch. The shipped surface differs in places — most notably, there is **no `delta.phase()`**; phases are plain objects passed to `delta.workflow({ phases: [...] })`. See the DX Pattern section of `context.md` for the canonical, as-built engine surface. The examples here remain useful for intent and shape, not exact signatures.
 
 Delta is created through a factory function, never a class. A developer imports the package, calls `createDeltaEngine`, and receives an engine object whose methods are the entire runtime surface. There is no `new`, no inheritance, no global singleton the developer has to wire up.
 

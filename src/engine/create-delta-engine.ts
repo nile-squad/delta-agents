@@ -22,7 +22,7 @@
 
 import { Ok, Err, option } from "slang-ts";
 import { defaultRetryOptions } from "../infra";
-import type { DeltaEngineConfig, DeltaEngine } from "./types";
+import type { DeltaEngineConfig, DeltaEngine, ModelDef } from "./types";
 import type { ReasonerPort } from "../ports/reasoner-port";
 import { createInMemoryStore } from "../ports/in-memory-store";
 import { createCachedStore } from "../ports/cached-store";
@@ -35,8 +35,9 @@ import { makeDefineAgent } from "../authoring/define-agent";
 import { makeDefineDataSource } from "../authoring/define-data-source";
 import { makeDefineTool } from "../authoring/define-tool";
 import type { Agent } from "../authoring/types";
-import type { Message } from "../shared/types";
-import { taskId, messageId } from "../shared/id";
+import type { Message, Attachment } from "../shared/types";
+import { taskId, messageId, attachmentId } from "../shared/id";
+import { audioFormatFromMimeType } from "../shared/attachment-format";
 import { initialRiskState, initialTrust } from "../governance";
 import { snapshotFromTask } from "../state-space/task-state";
 import { createEngineLogger } from "../shared/logger";
@@ -153,6 +154,21 @@ export const createDeltaEngine = async ({
     return resolved;
   };
 
+  /**
+   * Resolve the ModelDef for an agent without constructing a reasoner — used by
+   * the attachment vision check in send(). Returns undefined when using the
+   * configReasoner test override or when no models are configured (both are
+   * escape hatches with no ModelDef to check against; the vision gate is skipped
+   * in that case since there's nothing to validate).
+   */
+  const resolveModelDef = (agentDef: Agent): ModelDef | undefined => {
+    if (configReasoner !== undefined) return undefined;
+    if (configModels === undefined || configModels.length === 0) return undefined;
+    return agentDef.model !== undefined
+      ? configModels.find((m) => m.name === agentDef.model)
+      : configModels.find((m) => m.default === true);
+  };
+
   // Await the store's readiness gate before the engine serves any request. An
   // adapter that needs async warm-up (open a connection, run migrations) signals
   // it here; construction fails loudly if the data layer cannot come up, rather
@@ -185,7 +201,7 @@ export const createDeltaEngine = async ({
     }
   };
 
-  const send: DeltaEngine["send"] = async ({ goal, agentName, budget = DEFAULT_BUDGET, workflow: workflowName, input, actionInputs }) => {
+  const send: DeltaEngine["send"] = async ({ goal, agentName, budget = DEFAULT_BUDGET, workflow: workflowName, input, actionInputs, attachments: attachmentsInput }) => {
     // ── Opportunistic cleanup ──────────────────────────────────────────────
     // Sweep expired cache entries on every send. Synchronous and cheap (a
     // single map scan); no store I/O. Keeps the cache from accumulating
@@ -264,6 +280,48 @@ export const createDeltaEngine = async ({
     }
     const agentDef = agentResult.value;
 
+    // ── Attachments: assign engine-issued ids, fail-fast on invalid/unsupported ──
+    // content before any task is created — deterministic failure, not a silent
+    // drop or a broken request built later (principle 1: the engine owns
+    // enforcement).
+    let attachments: Attachment[] | undefined;
+    if (attachmentsInput !== undefined && attachmentsInput.length > 0) {
+      for (const a of attachmentsInput) {
+        const label = `attachment (kind "${a.kind}"${a.name !== undefined ? `, name "${a.name}"` : ""})`;
+        if (a.data === undefined && a.url === undefined) {
+          return Err(`send failed: ${label} has neither "data" nor "url" — one is required`);
+        }
+        if (a.kind === "audio") {
+          if (a.data === undefined) {
+            return Err(
+              `send failed: ${label} has only a "url" — OpenAI's audio content part requires base64 "data", not a URL. Use loadAttachmentFromUrl to fetch and embed it first.`,
+            );
+          }
+          if (audioFormatFromMimeType(a.mimeType) === undefined) {
+            return Err(`send failed: ${label} has unsupported mimeType "${a.mimeType}" — only wav and mp3 audio are supported`);
+          }
+        }
+      }
+      const hasImage = attachmentsInput.some((a) => a.kind === "image");
+      const hasAudio = attachmentsInput.some((a) => a.kind === "audio");
+      if (hasImage || hasAudio) {
+        const modelDef = resolveModelDef(agentDef);
+        if (modelDef !== undefined) {
+          if (hasImage && modelDef.vision !== true) {
+            return Err(
+              `send failed: model "${modelDef.name}" is not vision-capable (vision: true not set) — cannot process image attachments for agent "${agentName}"`,
+            );
+          }
+          if (hasAudio && modelDef.audio !== true) {
+            return Err(
+              `send failed: model "${modelDef.name}" is not audio-capable (audio: true not set) — cannot process audio attachments for agent "${agentName}"`,
+            );
+          }
+        }
+      }
+      attachments = attachmentsInput.map((a) => ({ ...a, id: attachmentId() }));
+    }
+
     // ── Create and persist the task ─────────────────────────────────────
     const id = taskId();
     const now = new Date();
@@ -305,14 +363,19 @@ export const createDeltaEngine = async ({
         timezone: configTimezone,
         logger,
         commitMaxRetries: configCommitMaxRetries,
+        attachments,
       })
-      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, providerRetry, timezone: configTimezone, logger, diagnostics, commitContextLimit: configCommitContextLimit });
+      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, providerRetry, timezone: configTimezone, logger, diagnostics, commitContextLimit: configCommitContextLimit, attachments });
 
     return Ok(result);
   };
 
   const approve: DeltaEngine["approve"] = async (approvalId) => {
     return resolveApproval({ approvalId, decision: "approved", store });
+  };
+
+  const reject: DeltaEngine["reject"] = async (approvalId) => {
+    return resolveApproval({ approvalId, decision: "rejected", store });
   };
 
   const pause: DeltaEngine["pause"] = async (taskId_) => {
@@ -367,5 +430,5 @@ export const createDeltaEngine = async ({
     return runCleanup({ store, cache, options, logger });
   };
 
-  return { action, workflow, dataSource, tool, agent, deploy, send, approve, pause, resume, inspect, lastTask, cleanup };
+  return { action, workflow, dataSource, tool, agent, deploy, send, approve, reject, pause, resume, inspect, lastTask, cleanup };
 };

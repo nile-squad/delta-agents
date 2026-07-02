@@ -12,6 +12,27 @@
 export type Json = string | number | boolean | null | Json[] | JsonRecord;
 export type JsonRecord = { [key: string]: Json };
 
+// Financial cost as an explicit amount + currency pair — a bare number assumes
+// a single currency (previously USD cents), which breaks for multi-region use.
+export type Money = {
+  /** Amount in the currency's minor unit (e.g. cents for USD, kobo for NGN), as an integer. Avoids floating-point drift. */
+  value: number;
+  /** ISO 4217 currency code, e.g. "USD", "EUR", "NGN". */
+  currency: string;
+};
+
+// Attachment/content resource consumption — a new optional Cost axis, sibling
+// to memory/latency/money. count and bytes are always meaningful regardless of
+// content kind; unitType + itemSize let a future tool report richer per-type
+// cost (e.g. a document-extraction tool reporting pages, a vision call
+// reporting tokens) without redesigning Cost again.
+export type ContentCost = {
+  count: number;
+  bytes: number;
+  unitType?: "tokens" | "pages" | "images" | "bytes";
+  itemSize?: number;
+};
+
 // Resource consumption for a task or action execution — a multi-axis vector.
 // Cost is more than tokens and time: memory and latency are first-class axes so
 // the engine can budget, project (MPC), and scope them like any other resource.
@@ -19,17 +40,23 @@ export type JsonRecord = { [key: string]: Json };
 //   durationMs — wall-clock execution time of the work itself.
 //   memory     — memory footprint (developer-chosen unit, e.g. bytes/MB). Optional.
 //   latency    — added delay beyond execution time, e.g. a comms round-trip. Optional.
-//   money      — financial cost in USD cents (integer) or fractional currency units. Optional.
+//   money      — financial cost, carried as an explicit { value, currency } Money pair. Optional.
+//   content    — attachment/content resource consumption. See ContentCost. Optional.
 // The optional axes are only *enforced* by a budget that declares them: an
 // undeclared memory/latency/money budget means "unlimited on that axis", not zero — so
-// existing { tokens, durationMs } code stays unconstrained on the new axes.
+// existing { tokens, durationMs } code stays unconstrained on the new axes. Cost
+// axes are trusted to use consistent units within a task the same way memory/latency
+// already are — the engine does not cross-validate currency on every operation,
+// matching how it doesn't cross-validate memory/latency units either.
 export type Cost = {
   tokens: number;
   durationMs: number;
   memory?: number;
   latency?: number;
-  /** Financial cost in USD cents (integer) or fractional currency units. Optional. Used for tool call cost tracking. */
-  money?: number;
+  /** Financial cost, carried as an explicit { value, currency } Money pair. Optional. Used for tool call cost tracking. */
+  money?: Money;
+  /** Attachment/content resource consumption for this task or execution. See ContentCost. Optional. */
+  content?: ContentCost;
 };
 
 export type ExecutionStatus =
@@ -156,6 +183,29 @@ export type Message = {
    */
   consumed?: boolean;
 };
+
+// Content the caller wants the agent to have access to (spec: multimodal input).
+// `kind` is explicit and required — the caller states intent, it is never
+// inferred from mimeType (a PDF could contain images; ambiguity would be a bug).
+// "image" embeds as vision content, "audio" embeds as audio content (both gated
+// by the resolved model's capability flags), "file" is never sent as raw bytes.
+export type AttachmentInput = {
+  kind: "image" | "file" | "audio";
+  /** MIME type, e.g. "image/png", "application/pdf". */
+  mimeType: string;
+  /** Base64-encoded content. */
+  data?: string;
+  /** Remote URL, alternative to inline `data`. */
+  url?: string;
+  /** Filename, for audit/display. */
+  name?: string;
+};
+
+// Engine-issued attachment: same as AttachmentInput, plus the id the engine
+// assigns so tools can reference the raw content later (spec principle 5:
+// TaskIDs — and by extension attachment ids — are engine-issued, never
+// caller-guessable or self-assigned).
+export type Attachment = AttachmentInput & { id: string };
 
 // A retrieved-on-demand piece of context (spec principle 4: memory is retrieved,
 // not carried). Owned by an agent and attributable to the TaskID in whose context
