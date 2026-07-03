@@ -42,6 +42,39 @@ pnpm add @llamaindex/liteparse sharp
 
 Its input is `{ attachmentId: string }` — it reads bytes from an attachment already on the task, and never takes a filesystem path or arbitrary URL. That keeps an agent from ever directing it to read a resource outside the task's own attachments.
 
+## `web-search`
+
+Searches the web for grounding via [Exa](https://exa.ai) and returns the top results as title, url, and query-relevant highlights. Requires the `exa-js` optional peer dependency:
+
+```bash
+pnpm add exa-js
+```
+
+The API key is **required and explicit** — enabling web search means passing an `apiKey`, and the tool never falls back to an environment variable. If you keep your key in the environment, read it yourself and pass it in:
+
+```ts
+const delta = await createDeltaEngine({
+  models: [...],
+  tools: {
+    builtin: {
+      webSearch: { apiKey: process.env.EXA_API_KEY, maxResults: 10 },
+    },
+  },
+});
+```
+
+Enabling `webSearch` without a key is a type error, and also throws at construction if bypassed. Its input is `{ query: string }`; the search runs with Exa's balanced `auto` type and returns query-relevant highlights (the token-efficient content mode for grounding).
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `apiKey` | — (required) | Exa API key. Never read from the environment. |
+| `maxResults` | `10` | Maximum number of results to return. |
+
+```ts
+const res = await delta.tools.invoke({ tool: "web-search", input: { query: "latest in AI safety" } });
+if (res.isOk) console.log(res.value); // "Title\nhttps://url\nhighlight … highlight\n\n…"
+```
+
 ## Invoking a Tool Directly
 
 Any registered tool — builtin or custom — can be invoked straight from your code with `delta.tools.invoke({ tool, input, ctx? })`. The call shape is the same for every tool. The same tool serves both an agent (which calls it through the model) and you (which calls it directly):

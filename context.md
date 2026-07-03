@@ -74,6 +74,13 @@ All 9 entities have working store methods in both adapters (in-memory + Drizzle)
 
 ---
 
+## Naming Conventions (public API)
+
+Names on the public surface must be precise and self-explaining — no lazy or ambiguous language. Rules learned/enforced:
+- A ceiling is `maxX`, not `numX` / `xCount`. `numResults` reads as an exact count; `maxResults` correctly says "at most". (Applies even when a wrapped SDK uses the vaguer name — expose the precise name and map at the boundary, e.g. our `maxResults` → Exa's `numResults` inside the tool fn.)
+- Prefer names that state intent and unit: `inboxCap`, `maxCallsPerTask`, `maxResults`, `commitContextLimit` — not `limit`, `size`, `count`, `num`.
+- When a third-party option name is vaguer than ours, translate at the integration boundary; never leak the vaguer name into our config type.
+
 ## Critical Decisions
 
 - **Build: Bun -> tsup (esbuild) on Node.** Ships as a library into Node backends; must not require Bun. Extensionless barrel imports + ESM-only deps forced a Node-native bundler. tsup over raw esbuild for `.d.ts` emit.
@@ -330,6 +337,12 @@ First builtin (framework-provided) tool — `document-extract` (file/image → t
 ### Tradeoffs accepted
 - The `LiteParse`/`sharp` API surfaces are typed locally (minimal structural types in `document-extract.ts`) rather than depending on their `.d.ts` at build — because they're optional peer deps that may be absent at typecheck time for a consumer. Localized to one file.
 - Test happy-path uses a hand-generated minimal PDF (xref offsets computed programmatically in-test) rather than a committed binary fixture — deterministic, no binary in the repo, exercises the real pdfium text-extraction path.
+
+### Addendum (2026-07-03): web-search builtin (Exa)
+- Second builtin tool: `web-search` (Exa) for grounding. `src/tools/web-search.ts` → `createWebSearchTool`, `WebSearchOptions`. Same pattern as document-extract: opt-in via `tools.builtin.webSearch`, `exa-js` as optional peer dep, dynamic import gated on opt-in, factory throws at construction on missing dep/key. Scope fixed to Exa `type: "auto"` + `contents: { highlights: true }` (token-efficient excerpts for LLM grounding); only `maxResults` (default 10) exposed — our public option is `maxResults` (it's a ceiling), mapped to Exa's own `numResults` param only at the SDK call. Returns a formatted plain string (title / url / highlights per result), same contract as document-extract. Schema `{ query }`, no ctx needed.
+- **Key is required and explicit — no env fallback** (user directive, reversed from an initial env-fallback design): `WebSearchOptions.apiKey: string` (required at the type level, not optional), and `BuiltinToolsConfig.webSearch?: WebSearchOptions` (NOT `boolean | ...` — you can't enable it without a key). The factory also runtime-guards a missing/empty key (throws) so a JS caller bypassing types still can't run an env-fallback search. The Exa SDK *would* fall back to `EXA_API_KEY` if passed undefined; we prevent that by guarding before construction. This diverges from document-extract's `boolean | Options` (document-extract needs no credential) — justified divergence.
+- Live e2e in `tests/e2e/web-search.e2e.ts` (imports `dist/`, gated on `EXA_API_KEY` loaded from `.env` by the e2e config); deterministic registration + construction-throws tests in `tests/integration/web-search.spec.ts` (schema-invalid round-trip proves registration without a network call). Live path verified working against a real Exa key.
+- Node can't run the `src/` barrel imports directly (extensionless dir imports) — use `bun`/`tsx`, or run through vitest, for a src-level smoke; the e2e suite runs against the built `dist/`.
 
 ---
 

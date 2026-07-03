@@ -54,6 +54,7 @@
     "@llamaindex/liteparse": "^2.4.0",
     "@types/ms": "^2.1.0",
     "@vitest/ui": "^4.0.15",
+    "exa-js": "2.14.0",
     "sharp": "^0.35.2",
     "tsup": "^8.5.1",
     "typescript": "^5",
@@ -74,10 +75,14 @@
   },
   "peerDependencies": {
     "@llamaindex/liteparse": "^2.4.0",
+    "exa-js": "^2.14.0",
     "sharp": "^0.35.2"
   },
   "peerDependenciesMeta": {
     "@llamaindex/liteparse": {
+      "optional": true
+    },
+    "exa-js": {
       "optional": true
     },
     "sharp": {

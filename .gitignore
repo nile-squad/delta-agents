@@ -37,6 +37,9 @@ packages/*/data
 # IntelliJ based IDEs
 .idea
 
+# Claude Code local state (agent worktrees, local settings)
+.claude/
+
 # Finder (MacOS) folder config
 .DS_Store
 backups

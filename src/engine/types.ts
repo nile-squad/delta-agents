@@ -26,6 +26,7 @@ import type { RosterEntry } from "./roster";
 // a static runtime import of the document-extract module (which loads the heavy
 // optional peer deps). Type-only imports are erased at build.
 import type { DocumentExtractOptions } from "../tools/document-extract";
+import type { WebSearchOptions } from "../tools/web-search";
 
 /**
  * Opt-in configuration for framework-provided (builtin) tools. Declaring a
@@ -40,6 +41,13 @@ export type BuiltinToolsConfig = {
    * @llamaindex/liteparse and sharp optional peer dependencies to be installed.
    */
   documentExtract?: boolean | DocumentExtractOptions;
+  /**
+   * Register the web-search tool (Exa) for grounding. Must be an options object
+   * with an explicit `apiKey` (required — never read from the environment);
+   * `maxResults` is optional. Requires the exa-js optional peer dependency.
+   * Throws at construction if the key is missing.
+   */
+  webSearch?: WebSearchOptions;
 };
 
 /**

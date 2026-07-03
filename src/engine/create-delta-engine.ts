@@ -202,16 +202,23 @@ export const createDeltaEngine = async ({
   }
 
   // Builtin tools are opt-in and loaded lazily, so consumers who never opt in
-  // never load the heavy native peer deps (@llamaindex/liteparse, sharp). The
-  // dynamic import is required (not static): it keeps the document-extract
-  // module — and the peer deps it pulls — out of the `import "delta-agents"`
-  // graph entirely.
+  // never load the optional peer deps. The dynamic import is required (not
+  // static): it keeps each tool module — and the peer deps it pulls — out of the
+  // `import "delta-agents"` graph entirely.
   const documentExtract = configTools?.builtin?.documentExtract;
   if (documentExtract !== undefined && documentExtract !== false) {
     const { createDocumentExtractTool } = await import("../tools/document-extract");
     const opts = documentExtract === true ? {} : documentExtract;
     const docTool = await createDocumentExtractTool(opts);
     const reg = registry.registerTool(docTool);
+    if (reg.isErr) throw new Error(`createDeltaEngine: failed to register builtin tool: ${reg.error}`);
+  }
+
+  const webSearch = configTools?.builtin?.webSearch;
+  if (webSearch !== undefined) {
+    const { createWebSearchTool } = await import("../tools/web-search");
+    const searchTool = await createWebSearchTool(webSearch);
+    const reg = registry.registerTool(searchTool);
     if (reg.isErr) throw new Error(`createDeltaEngine: failed to register builtin tool: ${reg.error}`);
   }
 

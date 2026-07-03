@@ -767,6 +767,8 @@ When a declared builtin's optional dependencies are absent, engine construction 
 
 The first builtin is document extraction: it reads a file or image attachment (by id) off the task and returns its text, using a document parser and OCR. Its only input is an attachment id, resolved against the task's own attachments — it never accepts a filesystem path or an arbitrary URL, so an agent can never direct it to read a resource outside the task's declared attachments.
 
+The second builtin is web search: it queries the web for grounding and returns the top results as title, url, and query-relevant highlights. Its API credential is required and explicit — enabling the tool without a key is rejected at construction, and the key is never read from the environment. The credential a search runs under is always the one the developer declared, never an ambient environment variable.
+
 ## Direct Tool Invocation
 
 A tool may be invoked directly from developer code, not only by an agent mid-task. The same registered tool serves both callers: an agent reaches it through the reasoner's `system:use_tool` decision (with full task-scoped governance — loop detection, budget, tool-history recording); a developer reaches it through a direct invocation that validates the input against the tool's schema and runs it.

@@ -44,6 +44,7 @@ export type { DeltaEngine, DeltaEngineConfig, SendInput, SendResult, InspectResu
 // not pull the document-extract module (or its optional peer deps) into the
 // runtime graph of `import "delta-agents"`.
 export type { DocumentExtractOptions } from "./tools/document-extract";
+export type { WebSearchOptions } from "./tools/web-search";
 
 // Shared domain types the developer encounters in send results, inspect results,
 // and action context. Budget is expressed as Cost (the same multi-axis vector
