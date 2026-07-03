@@ -52,6 +52,7 @@ All H-series subsystems are wired into the live path. Remaining work is catalogu
 - **Package J (surface + docs):** Complete public API at `src/index.ts`. README rewritten from shipped surface.
 - **Agent Commit Feature:** All 7 phases done. Commit entity with storage (in-memory + Drizzle), post-workflow commit step, hard-block on pendingCommit, resume support, context injection (recent N commits into reasoner prompt), `system:search_commits` tool, free-loop optional `system:commit`, full unit + integration test coverage.
 - **Multimodal Input / Attachments:** `SendInput.attachments?: AttachmentInput[]` (`kind: "image" | "file" | "audio"`, engine assigns ids). Images embed as `image_url` vision content parts, audio as `input_audio` parts (base64 + wav/mp3 format), when the resolved model declares `ModelDef.vision`/`audio: true`; `send()` fails fast (`Err`, no task created) on a capability mismatch or a malformed attachment (missing data/url, unsupported audio mimeType). Files never go to the model as raw bytes — text note only, referenceable by id via `ToolContext.attachments` for a future extraction tool. `loadAttachmentFromFile`/`loadAttachmentFromUrl` (public exports) turn a local file or remote URL into an `AttachmentInput`. Persisted on `TaskStateSnapshot.attachments` (checkpointed, resume just works). Foundational plumbing phase — builtin tools (document extraction, web search) land next, one at a time.
+- **Team Roster + Agent Mailbox:** `engine.roster({team?})` — derived read-model of per-agent load (major/subtasks/queued + overloaded flag), computed from live task/message state (never stored). Surfaced to agents in reasoning context (load-aware teammate block, replaces the bare name list) and to developers via `roster()`. Mailbox: `engine.inbox/outbox/recall` over an evolved `Message` (`deliveredAt`/`readAt`/`recalledAt`, `consumed` kept in lockstep for back-compat). Turn-only delivery stamps `readAt` (dual-sided receipt, visible in sender's outbox); recall allowed only while unread; `mailbox.inboxCap` evicts oldest **read** first (never unread). New store methods: `getActiveTasksByAgent`, `getMessagesBySender`, `markMessageRead`, `recallMessage`, `evictReadMessages` (in-memory + Drizzle, all optional with graceful degrade).
 
 ### What's deferred (catalogued)
 - Per-action reasoner-filled inputs (single shared `input` bag today)
@@ -63,7 +64,7 @@ All H-series subsystems are wired into the live path. Remaining work is catalogu
 - Richer future-cost estimation for `computeActionValue` (uniform term = ranking reduces to immediate cost)
 - MPC horizon in free reasoner loop (only workflow path has declared horizon)
 - `Queue` entity is spec-aligned but NOT engine-driven (engine uses `TaskTree.queuedChildren` + `Message`s)
-- File-attachment extraction tool (OCR/document parsing) — `ToolContext.attachments` plumbing exists, no builtin tool reads it yet
+- ~~File-attachment extraction tool (OCR/document parsing)~~ — DONE: `document-extract` builtin tool (see Builtin Tools section)
 - Web search builtin tool (Exa or similar) — not started
 - Attachment "shown once" optimization — images currently re-embed on every reasoner step within a task run (see Multimodal Input tradeoffs)
 - `ContentCost` is populated but not enforced by any budget axis yet
@@ -291,6 +292,47 @@ All 9 entities have working store methods in both adapters (in-memory + Drizzle)
 
 ---
 
+## Builtin Tools + `delta.tools.invoke` (2026-07-02)
+
+First builtin (framework-provided) tool — `document-extract` (file/image → text via `@llamaindex/liteparse` + `sharp`) — plus the general mechanism for invoking any registered tool from developer code. This is the template every future builtin (web search via Exa is next) follows.
+
+### Decision: ALL tools declared at engine definition via `DeltaEngineConfig.tools`; no `delta.tool()` method
+- `tools: { builtin: { documentExtract: true | DocumentExtractOptions }, custom: Tool[] }`. Both builtin and custom tools are declared in ONE place at `createDeltaEngine`, not registered piecemeal across app code. The `delta.tool()` authoring method was **removed** (moved `src/authoring/define-tool.ts` → `trash/`); custom tools are now plain `Tool` objects in `tools.custom`, validated (`validateTool`) + registered at construction.
+- Why: user directive — "tools are defined at engine definition not littered across code" + AGENTS.md "one clear way." Actions/workflows/agents still use `delta.action()`/etc. (per-agent, composed), but tools are global/reusable so declaring them once at engine level is more coherent.
+- Blast radius was tests only (`delta.tool(x)` → `tools: { custom: [x] }` across 4 integration specs; `define-tool.spec.ts` → trash, its coverage folded into `tools-invoke.spec.ts` construction-time tests).
+- Builtin left undeclared = not registered, peer deps never loaded. Config sets defaults once; tool referred to by name after. Same "configure once, refer later" shape as `systemPrompt`/`cache`/`timezone`.
+
+### Decision: heavy peer deps loaded lazily via dynamic import, gated on opt-in
+- `@llamaindex/liteparse` (~22MB native binding) and `sharp` are **optional peer dependencies** (`peerDependenciesMeta.*.optional`), not regular deps. `pnpm add delta-agents` pulls neither. They're also `devDependencies` so the repo's own tests/build have them.
+- `create-delta-engine.ts` uses `await import("../tools/document-extract")` — **must be dynamic, not static**. A static import would load liteparse's native binding on every `import "delta-agents"`, crashing consumers who never opted in and never installed it. Verified: the only non-`import type` reference to the module is that one dynamic import (grep-checked; the `import type` in `engine/types.ts` and `index.ts` are erased at build).
+- The tool factory (`createDocumentExtractTool`) is async and imports the deps itself, throwing an actionable install hint (`pnpm add @llamaindex/liteparse sharp`) if absent — a construction-time setup error, surfaced immediately (same shape as the existing "no default model" throw), not a mid-task `Err`.
+- Optionality proven end-to-end in dev: with liteparse renamed away, an engine without `tools.builtin.documentExtract` still constructs; opting in throws the install hint.
+
+### Decision: `delta.tools.invoke({ tool, input, ctx? })` — named args, one uniform shape for ANY tool
+- Serves the "tools are for both humans and agents" requirement. Works for custom and builtin tools alike. `src/engine/tools-facade.ts`. **Named params, not positional** (AGENTS.md: named keys over positional; `InvokeArgs` type) — so the call shape is identical regardless of tool. `ctx` is a nested `Partial<ToolContext>` (keeps top-level params stable at `tool`/`input`/`ctx`).
+- **Governance split**: `invoke` validates input against the tool's schema and runs the fn with a synthesized `ToolContext` (placeholder `agentName: "system:invoke"`, `taskId: "none"`), but does NOT record tool history, touch the store, or run the loop-detector/budget. Those are task-scoped governance; a standalone dev call has no task to govern. The agent path (`system:use_tool` → `handleToolExecution` in `tool-dispatch.ts`) keeps full governance and is untouched.
+- **safeTry flattening gotcha (learned here):** `safeTry(async () => tool.fn(...))` where `tool.fn` returns a `Result` yields the *flattened* Result, not `Ok(Result)` — a tool returning `Err("x")` surfaces as `Err("x")`, not `Ok(Err("x"))`. So `invoke` just `return`s the safeTry result directly; no unwrapping. (Matches how `tool-dispatch.ts` treats `safeTry(tool.fn)`.) An initial "unwrap one level" version double-wrapped errors and returned raw values instead of Results — caught by tests.
+
+### Decision: document-extract input is `{ attachmentId }` only — no filesystem/URL in the tool itself
+- The tool reads bytes from an attachment on `ctx.attachments` (base64 `data`, or `fetch(url)`). It never takes a `path`. An agent therefore can't make it read an arbitrary file or fetch an arbitrary URL (no SSRF / arbitrary-read surface). A dev with a local file resolves it first via `loadAttachmentFromFile` and passes the attachment through `invoke`'s ctx.
+- Returns a plain string (`Ok(text)`). Rejects `kind: "audio"`. `isComplex()` auto-skip (default on): when OCR is enabled, a cheap pre-check skips OCR for documents whose text layer is already clean — best-effort, falls back to configured `ocrEnabled` if the pre-check errors.
+- Missing-system-dep failures (LibreOffice for Office formats, ImageMagick for images) are detected in the parse error string and rethrown as actionable `Err`s naming the dependency, not raw native stacks.
+
+### Files
+- `src/tools/document-extract.ts`: `createDocumentExtractTool`, `DocumentExtractOptions`
+- `src/engine/tools-facade.ts`: `makeToolsFacade` → `{ invoke }` (named-args `InvokeArgs`)
+- `src/engine/types.ts`: `BuiltinToolsConfig`, `ToolsConfig`, `InvokeArgs`, `DeltaEngineConfig.tools`, `DeltaEngine.tools`; removed `DeltaEngine.tool`
+- `src/engine/create-delta-engine.ts`: custom-tool validate+register loop + dynamic builtin registration + facade wiring; removed `makeDefineTool`
+- `src/authoring/define-tool.ts` → `trash/` (method removed); barrel export dropped from `src/authoring/index.ts`
+- `src/index.ts` / `src/engine/index.ts`: type exports (`BuiltinToolsConfig`, `ToolsConfig`, `InvokeArgs`, `DocumentExtractOptions`)
+- `package.json`: liteparse/sharp → optional peerDependencies + devDependencies
+
+### Tradeoffs accepted
+- The `LiteParse`/`sharp` API surfaces are typed locally (minimal structural types in `document-extract.ts`) rather than depending on their `.d.ts` at build — because they're optional peer deps that may be absent at typecheck time for a consumer. Localized to one file.
+- Test happy-path uses a hand-generated minimal PDF (xref offsets computed programmatically in-test) rather than a committed binary fixture — deterministic, no binary in the repo, exercises the real pdfium text-extraction path.
+
+---
+
 ## slang-ts idiom conventions
 
 **Patterns — apply everywhere, no exceptions:**
@@ -348,7 +390,7 @@ Delta Agents is a shipped, fully-implemented deterministic autonomous control pl
 
 ## Key Types
 
-**Authoring:** `Action` (name, description, schema, risk 1-5?, estimatedCost?, requiresApproval?, prerequisites?, hooks?, fn, skills?), `Workflow` (name, description, version, phases, estimatedCost?), `Phase` (name, description, actions, checkpoint, supervision?, skills?), `Agent` (name, description, role, rolePrompt, model?, actions, workflows?, skills?, channels?, team?), `Skill` (name, description, folder), `Channel`
+**Authoring:** `Action` (name, description, schema, risk 1-5?, estimatedCost?, requiresApproval?, prerequisites?, hooks?, fn, skills?), `Workflow` (name, description, version, phases, estimatedCost?), `Phase` (name, description, actions, checkpoint, supervision?, skills?), `Agent` (name, description, role, rolePrompt, model?, actions, workflows?, skills?, channels?, team?), `Skill` (name, description, folder), `Channel`, `Tool` (name, description, schema, fn, limits?, cost?, budget? — declared in engine `tools` config, not a `delta.tool()` method)
 
 **Runtime:** `Task` (id, rootId, parentId?, status, goal, assignedAgent, workflow?, currentPhase?, budget, risk, trust, createdAt, updatedAt), `TaskTree` (rootTaskId, activeChildren, queuedChildren, maxConcurrency:2), `Execution`, `Checkpoint`, `ApprovalRequest`, `RiskState`, `TrustState`, `Message`, `Queue`, `Memory`, `SupervisionPolicy`
 
@@ -356,11 +398,36 @@ Delta Agents is a shipped, fully-implemented deterministic autonomous control pl
 
 ## DX Pattern
 
-Factory functions everywhere, no classes. `createDeltaEngine({...})` returns one plain object — the entire surface. Authoring: `delta.action()`, `delta.workflow()`, `delta.agent()`. Runtime: `delta.deploy()`, `delta.send()`, `delta.approve()`, `delta.reject()`, `delta.pause()`, `delta.resume()`, `delta.inspect()`. Developer never creates Task, Checkpoint, TrustState, or TaskTree. Delta owns the runtime.
+Factory functions everywhere, no classes. `createDeltaEngine({...})` returns one plain object — the entire surface. Authoring: `delta.action()`, `delta.workflow()`, `delta.agent()`. Runtime: `delta.deploy()`, `delta.send()`, `delta.approve()`, `delta.reject()`, `delta.pause()`, `delta.resume()`, `delta.inspect()`, `delta.tools.invoke({ tool, input, ctx? })`. Developer never creates Task, Checkpoint, TrustState, or TaskTree. Delta owns the runtime.
 
-Phases are plain objects in `delta.workflow({ phases: [...] })` — no `delta.phase()`. Models declared on engine (`models: ModelDef[]`), agents reference by name (`agent.model`). `createOpenAIReasoner` is internal; pass `createMockReasoner(...)` in tests.
+Phases are plain objects in `delta.workflow({ phases: [...] })` — no `delta.phase()`. Tools are plain `Tool` objects declared in `createDeltaEngine({ tools: { builtin, custom } })` — no `delta.tool()` method; invoked from code via `delta.tools.invoke({ tool, input, ctx? })` (named args). Models declared on engine (`models: ModelDef[]`), agents reference by name (`agent.model`). `createOpenAIReasoner` is internal; pass `createMockReasoner(...)` in tests.
 
 Skills: `agent.skills?: Skill[]`. `phase.skills` and `action.skills` accept `(string | Skill)[]`. Engine reads `SKILL.md` from `folder` internally — no consumer-side `loadSkill`. String refs validated at `delta.agent()` time.
+
+## Team Roster + Agent Mailbox (2026-07-02)
+
+### Decision: Roster is a derived read-model, not a live cache
+Per-agent load is computed on demand from task/message state (`computeRosterEntries`), not maintained in a mutable registry. Always consistent, survives restarts, no bookkeeping to drift. Cost is a per-turn store query scoped to teammates — acceptable at team scale; revisit with a cache if it becomes hot. Reported load mirrors the concurrency model (1 major + 2 subtasks + queue); overloaded = all slots used or a queued backlog.
+
+### Decision: Surface roster in the user message, never the system prefix
+The roster is time-varying, so folding it into the cacheable system prefix would break prompt caching. It rides the user message alongside `availableAgents`, replacing the bare teammate list with a load-aware block (`formatRosterLine`).
+
+### Decision: Evolve `Message`, don't add Inbox/Outbox entities
+Inbox = rows where `receiver=agent`, outbox = `sender=agent`. Added `deliveredAt`/`readAt`/`recalledAt`; kept `consumed` in lockstep with `readAt` so existing mention-dedup, roster queued-count, and cleanup keep working unchanged. No migration churn beyond three nullable columns.
+
+### Decision: Turn-only delivery, no agent-internal wake
+A message never interrupts a running task; it waits for the recipient's next turn (existing mention timing). Reactive "you have mail" is a developer-surface concern (inbox views/receipts), not a scheduler wake. Read = the turn folds it in → stamps `readAt` (dual-sided receipt).
+
+### Decision: Recall only while unread; eviction drops oldest read first
+Recall (`engine.recall`) guards on `readAt` unset — the turn-only window makes this deterministic. `mailbox.inboxCap` eviction (opportunistic on `send`/`inbox`) removes oldest **read**, non-recalled messages; unread are never dropped.
+
+### Files
+- `src/engine/roster.ts` (new — `computeRosterEntries`, `RosterEntry` re-export), `src/shared/types.ts` (`RosterEntry`, `Message` fields), `src/engine/types.ts` (`roster`/`inbox`/`outbox`/`recall`, `mailbox` config), `src/engine/create-delta-engine.ts` (wiring + eviction), `src/engine/scheduler.ts` (roster into ReasonerInput, delivery stamps `readAt`), `src/ports/reasoner-port.ts` + `openai-reasoner.ts` (roster in input + render), `src/ports/storage-port.ts` + `in-memory-store.ts` + `cached-store.ts` + `drizzle/{tasks,messages,converters}.ts` + `db/models/{schema,migrate}.ts` (new store methods + columns), `src/index.ts`/`engine/index.ts` (exports).
+- Tests: `tests/unit/engine/roster.spec.ts`, `tests/integration/roster.spec.ts`, `tests/integration/mailbox.spec.ts`.
+
+### Tradeoffs accepted
+- Per-turn roster query instead of an incrementally-maintained cache (simplicity + correctness over micro-perf).
+- Drizzle paths are typecheck-verified only; the in-memory adapter carries the behavioral test coverage (matches existing DB-test posture).
 
 ## Dependencies (all installed)
 

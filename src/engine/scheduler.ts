@@ -44,6 +44,7 @@ import type { RetryOptions } from "../infra";
 import { dispatchCommunication, makeContextCommunicate } from "../comms";
 import { retrieveContext, makeContextRemember } from "../memory";
 import { computeActionValue } from "../governance";
+import { computeRosterEntries } from "./roster";
 import { enforceSubtaskScope, requestSlot, releaseSlot, abortEntireTree } from "../supervision";
 import { initialRiskState, initialTrust } from "../governance";
 import { taskId, checkpointId, messageId } from "../shared/id";
@@ -216,9 +217,15 @@ const stepTask = async ({
   const mentionLines: string[] = [];
   if (inbound.isOk) {
     for (const m of inbound.value) {
-      if (m.sender === "caller" || m.consumed === true) continue;
+      // Skip caller-queue messages (per-task drain), already-read mentions, and
+      // any the sender recalled before this turn read them.
+      if (m.sender === "caller" || m.consumed === true || m.recalledAt !== undefined) continue;
       mentionLines.push(`Teammate ${m.sender} mentioned you: ${String(m.payload)}`);
-      await store.markMessageConsumed(m.id);
+      // Folding a mention into this turn IS the read: stamp the receipt (visible
+      // to the sender's outbox) via markMessageRead, falling back to the legacy
+      // consumed marker for adapters that don't support receipts.
+      if (store.markMessageRead !== undefined) await store.markMessageRead(m.id, new Date());
+      else await store.markMessageConsumed(m.id);
     }
   }
   const reasonContext = [retrieved.context, ...mentionLines].filter((s) => s.length > 0).join("\n");
@@ -268,6 +275,13 @@ const stepTask = async ({
       }));
   }
 
+  // Team roster for the reasoner: what each teammate is doing and how loaded, so
+  // the model can route delegations/mentions to idle teammates and away from
+  // overloaded ones. Scoped to teammates (same set as availableAgents).
+  const rosterEntries = teammates.length > 0
+    ? await computeRosterEntries({ store, agentNames: teammates })
+    : [];
+
   const reasonInput = {
     task: { ...task, risk: snapshot.risk, trust: snapshot.trust, updatedAt: new Date() },
     availableActions: rankedActions.map((a) => a.name),
@@ -287,6 +301,7 @@ const stepTask = async ({
         : { name, description: "" };
     }),
     availableAgents: teammates,
+    ...(rosterEntries.length > 0 ? { roster: rosterEntries } : {}),
     availableChannels: (agent.channels ?? []).filter((c) => c.enabled).map((c) => c.type),
     availableSkills,
     agentRole: agent.role,

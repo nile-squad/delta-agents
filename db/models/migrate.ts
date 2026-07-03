@@ -72,13 +72,16 @@ CREATE TABLE IF NOT EXISTS escalations (
 );
 
 CREATE TABLE IF NOT EXISTS messages (
-  id         TEXT    PRIMARY KEY,
-  task_id    TEXT    NOT NULL,
-  sender     TEXT    NOT NULL,
-  receiver   TEXT    NOT NULL,
-  payload    TEXT    NOT NULL,
-  created_at INTEGER NOT NULL,
-  consumed   INTEGER NOT NULL DEFAULT 0
+  id           TEXT    PRIMARY KEY,
+  task_id      TEXT    NOT NULL,
+  sender       TEXT    NOT NULL,
+  receiver     TEXT    NOT NULL,
+  payload      TEXT    NOT NULL,
+  created_at   INTEGER NOT NULL,
+  consumed     INTEGER NOT NULL DEFAULT 0,
+  delivered_at INTEGER,
+  read_at      INTEGER,
+  recalled_at  INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS queues (

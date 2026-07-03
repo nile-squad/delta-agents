@@ -11,16 +11,50 @@
  */
 
 import type { Result } from "slang-ts";
-import type { Cost, Task, Execution, Checkpoint, ApprovalRequest, EscalationRecord, AttachmentInput } from "../shared/types";
+import type { Cost, Task, Execution, Checkpoint, ApprovalRequest, EscalationRecord, AttachmentInput, Message } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort } from "../ports/reasoner-port";
 import type { RetryOptions } from "../infra";
-import type { Action, Workflow, Agent, DataSource, Tool } from "../authoring/types";
+import type { Action, Workflow, Agent, DataSource, Tool, ToolContext } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 import type { LoggerConfig } from "../shared/logger-types";
 import type { CacheConfig } from "../shared/cache";
 import type { CleanupOptions } from "./cleanup";
 import type { DiagnosticsConfig } from "../shared/diagnostics";
+import type { RosterEntry } from "./roster";
+// Type-only import: referencing DocumentExtractOptions as a type must NOT create
+// a static runtime import of the document-extract module (which loads the heavy
+// optional peer deps). Type-only imports are erased at build.
+import type { DocumentExtractOptions } from "../tools/document-extract";
+
+/**
+ * Opt-in configuration for framework-provided (builtin) tools. Declaring a
+ * builtin registers it at construction time (globally visible to every agent)
+ * and lazily loads its optional peer dependencies. A builtin left undeclared is
+ * never registered and its peer deps are never loaded.
+ */
+export type BuiltinToolsConfig = {
+  /**
+   * Register the document-extract tool (file/image → text via liteparse + OCR).
+   * `true` uses defaults; an options object overrides them. Requires the
+   * @llamaindex/liteparse and sharp optional peer dependencies to be installed.
+   */
+  documentExtract?: boolean | DocumentExtractOptions;
+};
+
+/**
+ * All tools an engine exposes, declared in one place at engine definition
+ * (rather than registered piecemeal across application code). `builtin` turns on
+ * framework-provided tools; `custom` supplies developer-authored `Tool` objects.
+ * Every tool declared here — builtin or custom — is global, agent-visible, and
+ * invokable through `delta.tools.invoke`.
+ */
+export type ToolsConfig = {
+  /** Framework-provided tools to turn on. */
+  builtin?: BuiltinToolsConfig;
+  /** Developer-authored tools. Validated and registered at construction time. */
+  custom?: Tool[];
+};
 
 /**
  * Provider options forwarded verbatim to the model API each call.
@@ -163,6 +197,18 @@ export type DeltaEngineConfig = {
    * auto-committing with no notes. Default 3.
    */
   commitMaxRetries?: number;
+  /**
+   * All tools this engine exposes — builtin (framework-provided, opt-in) and
+   * custom (developer-authored) — declared in one place. Omit to expose none.
+   * A builtin left undeclared loads none of its optional peer dependencies.
+   */
+  tools?: ToolsConfig;
+  /**
+   * Agent mailbox tuning. `inboxCap` bounds how many non-recalled messages an
+   * agent's inbox retains; once exceeded, the oldest READ messages are evicted
+   * first (unread messages are never dropped). Omit to leave inboxes unbounded.
+   */
+  mailbox?: { inboxCap?: number };
 };
 
 export type SendInput = {
@@ -238,8 +284,6 @@ export type DeltaEngine = {
   workflow: (def: Workflow) => Workflow;
   /** Define a named, owned store of governed CRUD operations. */
   dataSource: (def: DataSource) => DataSource;
-  /** Define a reusable, stateless utility available to all agents. */
-  tool: (def: Tool) => Tool;
   /** Define a role with its allowed actions, workflows, and data sources. */
   agent: (def: Agent) => Agent;
 
@@ -286,10 +330,66 @@ export type DeltaEngine = {
    */
   lastTask: (agentName: string) => Promise<Result<Task | null, string>>;
   /**
+   * Team-awareness read-model: who is doing what, and how loaded each agent is
+   * (major task + active subtasks + queued backlog). Derived from live task
+   * state, so it is always consistent and needs no separate bookkeeping. Pass
+   * `{ team }` to scope to one team; omit to list every registered agent. The
+   * same data is surfaced to agents in their reasoning context to guide
+   * delegation and mentions (avoid overloaded teammates).
+   */
+  roster: (query?: { team?: string }) => Promise<Result<RosterEntry[], string>>;
+
+  // ── Mailbox (inbox / outbox / recall) ──────────────────────────────────────
+  /**
+   * An agent's inbox: messages addressed to it, unread first then oldest-first,
+   * with recalled messages excluded. Each message carries its read receipt
+   * (`readAt`) and delivery time. Reading the inbox also enforces the configured
+   * `mailbox.inboxCap` (evicting oldest read messages).
+   */
+  inbox: (args: { agent: string }) => Promise<Result<Message[], string>>;
+  /**
+   * An agent's outbox: messages it sent, newest first, including recalled ones.
+   * Read receipts are visible here (`readAt` set once the recipient read it), so
+   * a sender can see whether — and when — a message was read.
+   */
+  outbox: (args: { agent: string }) => Promise<Result<Message[], string>>;
+  /**
+   * Recall (unsend) a message the agent sent, allowed only while it is still
+   * unread. Returns the updated (recalled) message, or Err if it was already read,
+   * already recalled, or not found.
+   */
+  recall: (args: { messageId: string }) => Promise<Result<Message, string>>;
+  /**
    * Manually prune completed/failed tasks and consumed messages past their
    * retention windows, and evict expired cache entries. Destructive store
    * operations are opt-in via `CleanupOptions` — omit retention params to skip.
    * Cache eviction runs by default; pass `evictCache: false` to disable.
    */
   cleanup: (options?: CleanupOptions) => Promise<Result<void, string>>;
+
+  // ── Tools ──────────────────────────────────────────────────────────────────
+  /**
+   * Direct, developer-facing invocation for any registered tool (builtin or
+   * custom). Validates the input against the tool's schema and runs it with a
+   * synthesized context. Unlike an agent's `system:use_tool` path, this does not
+   * record tool history or apply loop/budget governance — it is an out-of-band
+   * call with no task to govern. The call shape is identical for every tool:
+   * `{ tool, input, ctx? }`.
+   */
+  tools: {
+    invoke: (args: InvokeArgs) => Promise<Result<unknown, string>>;
+  };
+};
+
+/** Named arguments for `delta.tools.invoke` — a uniform shape across all tools. */
+export type InvokeArgs = {
+  /** Registered name of the tool to invoke. */
+  tool: string;
+  /** Input for the tool, validated against its schema. */
+  input: unknown;
+  /**
+   * Optional tool context. Most callers supply only `attachments`; identity
+   * fields (`agentName`, `taskId`) default to standalone-call placeholders.
+   */
+  ctx?: Partial<ToolContext>;
 };

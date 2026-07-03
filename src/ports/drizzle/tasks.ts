@@ -89,6 +89,18 @@ export const taskMethods = (db: DB) => ({
     }
   },
 
+  getActiveTasksByAgent: async (agentName: string): Promise<Result<Task[], string>> => {
+    try {
+      // Active = pending | running. Both count toward an agent's load on the
+      // team roster (major task + subtasks).
+      const rows = await db.select().from(tasks)
+        .where(and(eq(tasks.assignedAgent, agentName), inArray(tasks.status, ["pending", "running"])));
+      return Ok(rows.map(toTask));
+    } catch (e) {
+      return Err(`failed to get active tasks for agent "${agentName}": ${String(e)}`);
+    }
+  },
+
   // ── Cleanup ───────────────────────────────────────────────────────────────
   // Destructive operations for retention pruning. Cascade in dependency order:
   // child rows first, then the task itself. Wrapping each delete in its own

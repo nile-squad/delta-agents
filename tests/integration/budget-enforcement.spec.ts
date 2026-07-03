@@ -50,8 +50,7 @@ describe("budget enforcement: tools with cost but no budget", () => {
       fn: async () => Ok("ok"),
       cost: { tokens: 100, durationMs: 10 },
     };
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "free-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "call free", agentName: "free-agent" });
@@ -81,8 +80,7 @@ describe("budget enforcement: tools with cost + budget", () => {
       cost: { tokens: 50, durationMs: 10 },
       budget: { tokens: 100, durationMs: 1000 },
     };
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "metered-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "call metered", agentName: "metered-agent" });
@@ -112,8 +110,7 @@ describe("budget enforcement: tools with cost + budget", () => {
       cost: { tokens: 1, durationMs: 1 },
       budget: { tokens: 100, durationMs: 1000 },
     };
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "cheap-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "call cheap", agentName: "cheap-agent" });
@@ -142,8 +139,7 @@ describe("budget enforcement: tools with cost + budget", () => {
       cost: { tokens: 0, durationMs: 60 },
       budget: { tokens: 1_000, durationMs: 100 },
     };
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "slow-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "call slow", agentName: "slow-agent" });

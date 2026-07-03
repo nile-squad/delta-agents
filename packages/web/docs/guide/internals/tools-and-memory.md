@@ -4,10 +4,10 @@
 
 A tool is a reusable, stateless utility registered at the engine level. Unlike an action, a tool has no prerequisites, no risk, no state impact, and no budget of its own; it provides reasoning context rather than changing system state. Web search, a calculation, or a document lookup are typical tools. An action changes business state; a tool informs the model.
 
-Tools are visible to every agent across all tasks.
+Tools are visible to every agent across all tasks. You define a `Tool` object and declare it — along with any [builtin tools](/guide/basics/builtin-tools) (like `document-extract`) — in the engine's `tools` config, in one place. Any registered tool, builtin or custom, is also invokable directly from your code with `delta.tools.invoke()`.
 
 ```ts
-const webSearch = delta.tool({
+const webSearch: Tool = {
   name: "web-search",
   description: "Search the web for current information",
   schema: z.object({ query: z.string() }),
@@ -22,6 +22,11 @@ const webSearch = delta.tool({
     cooldownMs: 1000,
   },
   budget: { tokens: 1000, money: { value: 500, currency: "USD" } },
+};
+
+const delta = await createDeltaEngine({
+  models: [{ name: "fast", model: "gpt-4o-mini", default: true }],
+  tools: { custom: [webSearch] },
 });
 ```
 
@@ -55,7 +60,7 @@ Every tool call is logged for audit: agent, phase, timestamp, input, output, and
 
 ### Internal Tools
 
-Tool names starting with `system:` are reserved for framework-provided capabilities; a user-registered tool cannot use that prefix. These are always available to a deployed agent, without being registered through `delta.tool()`:
+Tool names starting with `system:` are reserved for framework-provided capabilities; a user-registered tool cannot use that prefix. These are always available to a deployed agent, without being declared in the `tools` config:
 
 | Tool | Purpose |
 |------|---------|

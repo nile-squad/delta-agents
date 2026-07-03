@@ -14,10 +14,9 @@ description: The full delta.* method surface, authoring and runtime
 | `delta.action(def)` | Define a named, schema-validated operation. Returns the definition. |
 | `delta.workflow(def)` | Define an ordered procedure composed of phases. Returns the definition. |
 | `delta.dataSource(def)` | Define a named, owned store of governed CRUD operations. Returns the definition. |
-| `delta.tool(def)` | Define a reusable, stateless utility available to every agent. Returns the definition. |
 | `delta.agent(def)` | Define a role with its allowed actions, workflows, data sources, skills, and channels. Returns the definition. |
 
-There is no `delta.phase()`. A phase is a plain object passed directly inside `delta.workflow({ phases: [...] })`.
+There is no `delta.phase()`. A phase is a plain object passed directly inside `delta.workflow({ phases: [...] })`. There is no `delta.tool()` either — tools (builtin and custom) are declared in the `tools` config at engine creation; see [Builtin Tools](/guide/basics/builtin-tools).
 
 ## Runtime Methods
 
@@ -31,7 +30,12 @@ There is no `delta.phase()`. A phase is a plain object passed directly inside `d
 | `delta.resume(taskId)` | Resume a paused or blocked task from its latest checkpoint. |
 | `delta.inspect(taskId)` | Read the full governance state: task, executions, checkpoint, escalations, approvals. |
 | `delta.lastTask(agentName)` | Return the most recent task for a named agent, without the caller needing to store a `TaskID`. |
+| `delta.roster(query?)` | Team-awareness read-model: who is doing what and how loaded each agent is. Pass `{ team }` to scope. See [Delegation and Teams](/guide/internals/delegation-and-teams). |
+| `delta.inbox({ agent })` | An agent's inbox — messages addressed to it, unread first, recalled excluded, with read receipts. |
+| `delta.outbox({ agent })` | An agent's outbox — messages it sent, newest first, showing whether/when each was read. |
+| `delta.recall({ messageId })` | Recall (unsend) a message the agent sent, allowed only while it is still unread. |
 | `delta.cleanup(options?)` | Manually prune old completed tasks and consumed messages, and evict expired cache entries. Destructive parts are opt-in. |
+| `delta.tools.invoke({ tool, input, ctx? })` | Invoke any registered tool (builtin or custom) directly from code. Validates input against the tool's schema; not task-governed. See [Builtin Tools](/guide/basics/builtin-tools). |
 
 ## SendResult
 

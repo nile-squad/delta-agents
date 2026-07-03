@@ -33,7 +33,7 @@ import { makeDefineAction } from "../authoring/define-action";
 import { makeDefineWorkflow } from "../authoring/define-workflow";
 import { makeDefineAgent } from "../authoring/define-agent";
 import { makeDefineDataSource } from "../authoring/define-data-source";
-import { makeDefineTool } from "../authoring/define-tool";
+import { validateTool } from "../authoring/validate";
 import type { Agent } from "../authoring/types";
 import type { Message, Attachment } from "../shared/types";
 import { taskId, messageId, attachmentId } from "../shared/id";
@@ -46,6 +46,8 @@ import { createDiagnostics } from "../shared/diagnostics";
 import type { Diagnostics } from "../shared/diagnostics";
 import { runSendLoop, runWorkflowTask, pauseTask, resumeTask, inspectTask, resolveApproval } from "./runtime";
 import { runCleanup, opportunisticCleanup } from "./cleanup";
+import { makeToolsFacade } from "./tools-facade";
+import { computeRosterEntries } from "./roster";
 
 const DEFAULT_BUDGET = { tokens: 10_000, durationMs: 300_000 };
 
@@ -65,6 +67,8 @@ export const createDeltaEngine = async ({
   diagnostics: configDiagnostics,
   commitContextLimit: configCommitContextLimit,
   commitMaxRetries: configCommitMaxRetries,
+  tools: configTools,
+  mailbox: configMailbox,
 }: DeltaEngineConfig = {}): Promise<DeltaEngine> => {
   // Per-engine logger: built once, owned by the engine closure, threaded into
   // every module that needs it via DI. The default is a dev-mode pino-pretty
@@ -185,8 +189,34 @@ export const createDeltaEngine = async ({
   const action = makeDefineAction({ registry });
   const workflow = makeDefineWorkflow({ registry });
   const dataSource = makeDefineDataSource({ registry });
-  const tool = makeDefineTool({ registry });
   const agent = makeDefineAgent({ registry, modelNames });
+
+  // ── Tools (declared in one place at engine definition) ─────────────────────
+  // Custom tools first: validate each (same checks makeDefineTool ran) and
+  // register. A bad tool definition is a programming error, so we throw.
+  for (const customTool of configTools?.custom ?? []) {
+    const validation = validateTool(customTool);
+    if (validation.isErr) throw new Error(`createDeltaEngine: invalid custom tool: ${validation.error}`);
+    const reg = registry.registerTool(customTool);
+    if (reg.isErr) throw new Error(`createDeltaEngine: failed to register custom tool: ${reg.error}`);
+  }
+
+  // Builtin tools are opt-in and loaded lazily, so consumers who never opt in
+  // never load the heavy native peer deps (@llamaindex/liteparse, sharp). The
+  // dynamic import is required (not static): it keeps the document-extract
+  // module — and the peer deps it pulls — out of the `import "delta-agents"`
+  // graph entirely.
+  const documentExtract = configTools?.builtin?.documentExtract;
+  if (documentExtract !== undefined && documentExtract !== false) {
+    const { createDocumentExtractTool } = await import("../tools/document-extract");
+    const opts = documentExtract === true ? {} : documentExtract;
+    const docTool = await createDocumentExtractTool(opts);
+    const reg = registry.registerTool(docTool);
+    if (reg.isErr) throw new Error(`createDeltaEngine: failed to register builtin tool: ${reg.error}`);
+  }
+
+  // ── Tools facade (delta.tools.invoke) ──────────────────────────────────────
+  const tools = makeToolsFacade({ registry });
 
   // ── Runtime methods ──────────────────────────────────────────────────────
 
@@ -430,5 +460,63 @@ export const createDeltaEngine = async ({
     return runCleanup({ store, cache, options, logger });
   };
 
-  return { action, workflow, dataSource, tool, agent, deploy, send, approve, reject, pause, resume, inspect, lastTask, cleanup };
+  // Best-effort inbox cap enforcement: evict oldest READ messages for a receiver
+  // down to the configured cap. Turn-only and side-effect-safe — never touches
+  // unread messages. No-op when no cap is set or the store can't evict.
+  const enforceInboxCap = async (agentName: string): Promise<void> => {
+    const cap = configMailbox?.inboxCap;
+    if (cap !== undefined && store.evictReadMessages !== undefined) {
+      await store.evictReadMessages(agentName, cap);
+    }
+  };
+
+  const inbox: DeltaEngine["inbox"] = async ({ agent: agentName }) => {
+    await enforceInboxCap(agentName);
+    const res = await store.getMessagesByReceiver(agentName);
+    if (res.isErr) return Err(`inbox failed: ${res.error}`);
+    // Recalled messages are gone from the inbox; unread first, then oldest-first.
+    const visible = res.value.filter((m) => m.recalledAt === undefined);
+    const sorted = [...visible].sort((a, b) => {
+      const aRead = a.readAt === undefined ? 0 : 1;
+      const bRead = b.readAt === undefined ? 0 : 1;
+      if (aRead !== bRead) return aRead - bRead; // unread (0) before read (1)
+      return a.createdAt.getTime() - b.createdAt.getTime();
+    });
+    return Ok(sorted);
+  };
+
+  const outbox: DeltaEngine["outbox"] = async ({ agent: agentName }) => {
+    if (store.getMessagesBySender === undefined) {
+      return Err("outbox unavailable: store adapter does not implement getMessagesBySender");
+    }
+    const res = await store.getMessagesBySender(agentName);
+    if (res.isErr) return Err(`outbox failed: ${res.error}`);
+    // Newest first — a sender scans recent sends and their read receipts.
+    const sorted = [...res.value].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    return Ok(sorted);
+  };
+
+  const recall: DeltaEngine["recall"] = async ({ messageId }) => {
+    if (store.recallMessage === undefined) {
+      return Err("recall unavailable: store adapter does not implement recallMessage");
+    }
+    return store.recallMessage(messageId);
+  };
+
+  const roster: DeltaEngine["roster"] = async (query) => {
+    // Which agents to board: everyone, or one team. Team membership reads off the
+    // agent's declared `team` (opt-in scoping); an unknown-agent lookup is simply
+    // skipped rather than failing the whole roster.
+    const allNames = registry.listAgents();
+    const agentNames = query?.team !== undefined
+      ? allNames.filter((n) => {
+          const a = registry.getAgent(n);
+          return a.isOk && a.value.team === query.team;
+        })
+      : allNames;
+    const entries = await computeRosterEntries({ store, agentNames });
+    return Ok(entries);
+  };
+
+  return { action, workflow, dataSource, agent, deploy, send, approve, reject, pause, resume, inspect, lastTask, cleanup, roster, inbox, outbox, recall, tools };
 };

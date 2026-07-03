@@ -168,6 +168,30 @@ export type EscalationRecord = {
 
 // All messages are TaskID-attributable (invariant 9).
 // payload is JSON-serialized to stay storable without schema drift.
+// A single agent's line on the team roster (spec §Team Awareness). A derived
+// read-model of "who is doing what, and how loaded" — not stored, always computed
+// from live task/message state. Reported load mirrors the concurrency model:
+// 1 major task + up to 2 active subtasks + an unbounded queue.
+export type RosterEntry = {
+  agent: string;
+  /** "busy" when the agent holds any active task, else "idle". */
+  status: "idle" | "busy";
+  /** The agent's current major task (or first active subtask), or null when idle. */
+  doing: { taskId: string; goal: string; phase?: string } | null;
+  load: {
+    /** Active top-level tasks (parentId unset). At most 1 under invariant 26. */
+    major: number;
+    /** Active subtasks (parentId set). At most 2 under the binary supervision tree. */
+    subtasks: number;
+    /** Unread queued goals waiting behind the current work (caller messages). */
+    queued: number;
+    /** Human-readable slot usage, e.g. "3/3". */
+    capacity: string;
+    /** True when fully tasked (all slots used) or carrying a backlog. */
+    overloaded: boolean;
+  };
+};
+
 export type Message = {
   id: string;
   taskId: string;
@@ -180,8 +204,29 @@ export type Message = {
    * folds a mention addressed to it into its reasoning context, so a mention is
    * delivered exactly once across all of the recipient's tasks. Absent/false
    * means undelivered. (Caller-queue messages use the per-task drain instead.)
+   * Kept in lockstep with `readAt` for backward compatibility — a read message
+   * is always `consumed`.
    */
   consumed?: boolean;
+  /**
+   * When the message entered the recipient's reasoning turn (its inbox → context
+   * transition). Set together with `readAt` at fold time. Absent means still
+   * queued, not yet surfaced.
+   */
+  deliveredAt?: Date;
+  /**
+   * When the recipient actually read it (folded it into a turn). This is the
+   * read receipt: visible to both the receiver (their inbox) and the sender
+   * (their outbox). Absent means unread — and only an unread message can be
+   * recalled.
+   */
+  readAt?: Date;
+  /**
+   * When the sender recalled (unsent) the message. Only possible while `readAt`
+   * is unset. A recalled message is excluded from inbox delivery and views, but
+   * remains visible in the sender's outbox as recalled.
+   */
+  recalledAt?: Date;
 };
 
 // Content the caller wants the agent to have access to (spec: multimodal input).

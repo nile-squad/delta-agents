@@ -92,7 +92,10 @@ export const messages = sqliteTable("messages", {
   receiver:  text("receiver").notNull(),
   payload:   text("payload").notNull(),       // JSON: Json
   createdAt: integer("created_at").notNull(), // ms epoch
-  consumed:  integer("consumed").notNull().default(0), // 0/1: mention delivered to receiver
+  consumed:    integer("consumed").notNull().default(0), // 0/1: mention delivered to receiver
+  deliveredAt: integer("delivered_at"),                  // ms epoch, null until surfaced
+  readAt:      integer("read_at"),                        // ms epoch, null until read (the receipt)
+  recalledAt:  integer("recalled_at"),                    // ms epoch, null unless sender unsent it
 });
 
 // ── Memories ───────────────────────────────────────────────────────────────────

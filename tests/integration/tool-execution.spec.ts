@@ -64,8 +64,7 @@ describe("tool execution: model requests a tool, scheduler runs it and records h
       const next = calls[i++];
       return next ? next() : { kind: "done" };
     });
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "tool-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "use the tool", agentName: "tool-agent" });
@@ -106,8 +105,7 @@ describe("tool execution: model requests a tool, scheduler runs it and records h
     ];
     let i = 0;
     const { reasoner } = captureReasoner(() => calls[i++]!());
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "strict-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "bad input", agentName: "strict-agent" });
@@ -141,8 +139,7 @@ describe("tool execution: model requests a tool, scheduler runs it and records h
     ];
     let i = 0;
     const { reasoner } = captureReasoner(() => calls[i++]!());
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "flaky-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "use flaky", agentName: "flaky-agent" });
@@ -174,8 +171,7 @@ describe("tool-info: model fetches schema / history / entry", () => {
         return { kind: "done" };
       };
     })());
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "info-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "what is the input shape", agentName: "info-agent" });
@@ -208,8 +204,7 @@ describe("tool-info: model fetches schema / history / entry", () => {
         return { kind: "done" };
       };
     })());
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "hist-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "use then review", agentName: "hist-agent" });
@@ -242,8 +237,7 @@ describe("tool-info: model fetches schema / history / entry", () => {
         return { kind: "done" };
       };
     })());
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "entry-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "get the full entry", agentName: "entry-agent" });
@@ -277,8 +271,7 @@ describe("tool history appears in the reasoner user message", () => {
         return { kind: "done" };
       };
     })());
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "msgs-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     await delta.send({ goal: "tool then inspect", agentName: "msgs-agent" });
@@ -307,8 +300,7 @@ describe("token stamping on tool history entries", () => {
         return { kind: "done" };
       };
     })());
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "tk-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "token", agentName: "tk-agent" });

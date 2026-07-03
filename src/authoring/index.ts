@@ -31,4 +31,3 @@ export { makeDefineAction } from "./define-action";
 export { makeDefineWorkflow } from "./define-workflow";
 export { makeDefineDataSource, ownershipAdjustedRisk, EXTERNAL_RISK_FLOOR } from "./define-data-source";
 export { makeDefineAgent } from "./define-agent";
-export { makeDefineTool } from "./define-tool";

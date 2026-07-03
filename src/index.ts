@@ -38,12 +38,17 @@ export type {
 // The engine factory and the types that describe runtime state a developer
 // reads back via inspect() / send() / resume().
 export { createDeltaEngine } from "./engine";
-export type { DeltaEngine, DeltaEngineConfig, SendInput, SendResult, InspectResult, ModelDef, ModelOptions, CleanupOptions } from "./engine";
+export type { DeltaEngine, DeltaEngineConfig, SendInput, SendResult, InspectResult, ModelDef, ModelOptions, CleanupOptions, BuiltinToolsConfig, ToolsConfig, InvokeArgs } from "./engine";
+
+// Builtin tool option types. Type-only re-export — erased at build, so it does
+// not pull the document-extract module (or its optional peer deps) into the
+// runtime graph of `import "delta-agents"`.
+export type { DocumentExtractOptions } from "./tools/document-extract";
 
 // Shared domain types the developer encounters in send results, inspect results,
 // and action context. Budget is expressed as Cost (the same multi-axis vector
 // used for declarations and runtime measurements).
-export type { Cost, Money, ContentCost, Task, SupervisionPolicy, Memory, Commit, CommitQuery, Attachment, AttachmentInput } from "./shared/types";
+export type { Cost, Money, ContentCost, Task, SupervisionPolicy, Memory, Commit, CommitQuery, Attachment, AttachmentInput, RosterEntry, Message } from "./shared/types";
 
 // ── Logger ────────────────────────────────────────────────────────────────────
 // Per-engine logger configuration. The engine creates a default dev logger when

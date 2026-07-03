@@ -43,6 +43,21 @@ import {
 } from "./openai-tool-defs";
 import { parseToolCall } from "./openai-parse";
 import { audioFormatFromMimeType } from "../shared/attachment-format";
+import type { RosterEntry } from "../shared/types";
+
+/**
+ * One team-roster line for the user message. Idle teammates read as available;
+ * busy ones show their headline work and load so the model can avoid piling onto
+ * an overloaded teammate when it delegates or mentions.
+ */
+const formatRosterLine = (r: RosterEntry): string => {
+  if (r.status === "idle") return `${r.agent} — idle; free to take work`;
+  const activity = r.doing !== null
+    ? `"${r.doing.goal}"${r.doing.phase !== undefined ? ` (${r.doing.phase})` : ""}`
+    : "working";
+  const flag = r.load.overloaded ? " (OVERLOADED)" : "";
+  return `${r.agent} — busy${flag}: ${activity} — load ${r.load.major} major / ${r.load.subtasks} subtasks / ${r.load.queued} queued`;
+};
 
 // Matches the Fetch type the OpenAI client constructor accepts.
 type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -102,8 +117,9 @@ const DEFAULT_MAX_TOKENS = 512;
  * without standing up a live reasoner.
  */
 export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
-  const { task, availableActions, availableAgents, availableChannels, availableSkills, availableActionSchemas, availableTools, toolHints, agentRole, rolePrompt, context, commitContext, systemPrompt, currentTimestamp, priorMessages, toolHistory, toolInfoResult, attachments } = input;
+  const { task, availableActions, availableAgents, availableChannels, availableSkills, availableActionSchemas, availableTools, toolHints, agentRole, rolePrompt, context, commitContext, systemPrompt, currentTimestamp, priorMessages, toolHistory, toolInfoResult, attachments, roster } = input;
   const canDelegate = availableAgents !== undefined && availableAgents.length > 0;
+  const hasRoster = roster !== undefined && roster.length > 0;
   const canCommunicate = availableChannels !== undefined && availableChannels.length > 0;
   const hasSkills = availableSkills !== undefined && availableSkills.length > 0;
   const hasSystemPrompt = systemPrompt !== undefined && systemPrompt.length > 0;
@@ -166,7 +182,15 @@ export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[
     }
   }
   if (canDelegate) {
-    userLines.push(`Available teammates (to delegate to or mention): ${availableAgents.join(", ")}`);
+    // Roster block when available (load-aware); otherwise the bare name list. The
+    // roster is time-varying, so it correctly lives here in the user message and
+    // never in the cacheable system prefix.
+    if (hasRoster) {
+      userLines.push("", "Team roster (who is doing what — prefer idle teammates, avoid overloaded ones):");
+      for (const r of roster) userLines.push(`  ${formatRosterLine(r)}`);
+    } else {
+      userLines.push(`Available teammates (to delegate to or mention): ${availableAgents.join(", ")}`);
+    }
   }
   if (canCommunicate) {
     userLines.push(`Available channels to send through: ${availableChannels.join(", ")}`);

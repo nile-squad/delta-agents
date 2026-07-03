@@ -45,6 +45,13 @@ export type StoragePort = {
    * Used for invariants 25 (always retrievable) and 26 (no duplicate task creation).
    */
   getLatestTaskByAgent: (agentName: string) => Promise<Result<Task | null, string>>;
+  /**
+   * Return all active (pending/running) tasks assigned to an agent, across trees.
+   * Used by the team roster to report per-agent load (major task + active
+   * subtasks). Optional — adapters that don't implement it degrade the roster to
+   * "latest task only" (subtask count reads as a floor of 0), never an error.
+   */
+  getActiveTasksByAgent?: (agentName: string) => Promise<Result<Task[], string>>;
 
   // Task trees — one per root task
   saveTaskTree: (tree: TaskTree) => Promise<Result<TaskTree, string>>;
@@ -77,11 +84,37 @@ export type StoragePort = {
   saveMessage: (message: Message) => Promise<Result<Message, string>>;
   getMessages: (taskId: string) => Promise<Result<Message[], string>>;
   /** All messages addressed to an agent (the `receiver`), across tasks. Used to
-   *  deliver mentions to a teammate regardless of which task they were sent from. */
+   *  deliver mentions to a teammate regardless of which task they were sent from,
+   *  and to build the agent's inbox view. */
   getMessagesByReceiver: (receiver: string) => Promise<Result<Message[], string>>;
+  /** All messages sent by an agent (the `sender`), across tasks. Backs the
+   *  agent's outbox view (with read receipts). Optional — adapters that don't
+   *  implement it disable the outbox (engine returns a clear Err). */
+  getMessagesBySender?: (sender: string) => Promise<Result<Message[], string>>;
   /** Mark a message delivered so a mention is folded into its receiver's context
    *  exactly once (idempotent across the recipient's tasks and across restarts). */
   markMessageConsumed: (id: string) => Promise<Result<void, string>>;
+  /**
+   * Mark a message read at `at`: stamps `readAt` (the receipt, seen by both
+   * sides), sets `deliveredAt` if unset, and keeps `consumed` true for
+   * backward-compatible mention dedup. Idempotent. Optional — when absent the
+   * engine falls back to `markMessageConsumed` (receipts then unavailable).
+   */
+  markMessageRead?: (id: string, at: Date) => Promise<Result<void, string>>;
+  /**
+   * Recall (unsend) a message: allowed only while it is unread (`readAt` unset).
+   * Stamps `recalledAt` and returns the updated message. Returns Err if the
+   * message is missing, already read, or already recalled. Optional — adapters
+   * that don't implement it disable recall.
+   */
+  recallMessage?: (id: string) => Promise<Result<Message, string>>;
+  /**
+   * Enforce a per-receiver inbox size cap by evicting the oldest READ,
+   * non-recalled messages until at most `cap` non-recalled messages remain.
+   * Unread messages are never evicted. Returns the count removed. Optional —
+   * absent means no size-cap eviction.
+   */
+  evictReadMessages?: (receiver: string, cap: number) => Promise<Result<number, string>>;
 
   // Memories — retrieved on demand, not carried (spec principle 4). Each write is
   // TaskID-attributable (invariant 8); retrieval scopes by owning agent.

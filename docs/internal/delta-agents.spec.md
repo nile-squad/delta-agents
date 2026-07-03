@@ -462,6 +462,52 @@ FIFO ordering guarantees deterministic replay and auditability.
 
 ---
 
+# Team Awareness
+
+Agents collaborate within a team (agents sharing a non-empty `team`; a team-less
+agent peers with everyone). Collaboration needs awareness: a bare list of
+teammate names tells an agent nothing about whether a teammate is free or buried.
+
+The **roster** is a derived read-model of "who is doing what, and how loaded".
+For each teammate it reports current activity (the goal/phase of the major task)
+and load against the concurrency model — 1 major task + up to 2 active subtasks +
+an unbounded queue. An agent is **overloaded** when all slots are used or it
+carries a queued backlog.
+
+The roster is *derived*, never stored: each entry is computed from live task and
+message state, so it is always consistent and survives restarts with no
+bookkeeping to drift. It is surfaced two ways:
+
+* To agents, folded into the reasoning context (scoped to teammates), so
+  delegation and mentions route toward idle teammates and away from overloaded
+  ones. It is time-varying and therefore lives in the user message, never the
+  cacheable system prefix.
+* To developers, via `engine.roster()` (optionally scoped to one team).
+
+# Agent Mailbox
+
+Every agent has a durable **inbox** (messages addressed to it) and **outbox**
+(messages it sent). Both are queued and TaskID-attributable (invariant 9).
+Delivery is **turn-only**: a message never interrupts an agent mid-task; it waits
+until the recipient's next turn folds it into context. That fold *is* the read.
+
+* **Read receipts** are dual-sided and time-aware. Reading stamps `readAt`, which
+  the receiver sees on its inbox and the sender sees on its outbox — a sender can
+  tell whether, and when, a message was read.
+* **Recall (unsend)** is allowed only while a message is unread (`readAt` unset).
+  The turn-only model gives a clean window: the sender can retract a message
+  before the recipient's next turn reads it. A recalled message is removed from
+  the inbox and excluded from delivery, but remains visible (as recalled) in the
+  sender's outbox.
+* **Eviction** bounds inbox growth. A configurable per-agent cap
+  (`mailbox.inboxCap`) evicts the oldest **read** messages first once exceeded;
+  unread messages are never dropped.
+
+Notifications are a developer-surface concern (inbox views, read receipts), not
+an agent-internal wake — consistent with the turn-only, no-interrupt model.
+
+---
+
 # Workflow Hierarchy
 
 ## Action
@@ -710,6 +756,22 @@ Internal tools:
 - `system:get_tool_schema` — return the full Zod schema for a named tool. Called by the model on demand (progressive disclosure).
 - `system:get_tool_history` — return the full tool history for the current task. Provides the complete execution log beyond the truncated view in context.
 - `system:get_tool_history_entry` — return a single tool history entry by index, including the full (untruncated) output. Allows the model to "deep dive" into a specific tool result without re-executing the tool.
+
+## Builtin Tools
+
+Builtin tools are framework-provided, ready-made tools a developer turns on through engine configuration rather than authoring by hand. A declared builtin is registered exactly like a user tool — global, agent-visible, callable through the same paths — but its definition and dependencies come from the framework.
+
+Builtin tools are opt-in. Declaring one registers it; leaving it undeclared registers nothing and loads none of its dependencies. This matters because a builtin may rely on heavy optional dependencies (native document parsers, image libraries) that a consumer who never uses the tool should never be forced to install or load. The dependencies of an opted-out builtin are never touched.
+
+When a declared builtin's optional dependencies are absent, engine construction fails immediately with an actionable message naming what to install — a setup error surfaced at construction, not a deferred failure discovered mid-task.
+
+The first builtin is document extraction: it reads a file or image attachment (by id) off the task and returns its text, using a document parser and OCR. Its only input is an attachment id, resolved against the task's own attachments — it never accepts a filesystem path or an arbitrary URL, so an agent can never direct it to read a resource outside the task's declared attachments.
+
+## Direct Tool Invocation
+
+A tool may be invoked directly from developer code, not only by an agent mid-task. The same registered tool serves both callers: an agent reaches it through the reasoner's `system:use_tool` decision (with full task-scoped governance — loop detection, budget, tool-history recording); a developer reaches it through a direct invocation that validates the input against the tool's schema and runs it.
+
+Direct invocation is deliberately not governed the way an agent's tool call is. There is no task, so there is nothing to record history against, no budget to charge, and no loop to detect. Direct invocation validates and runs; task-scoped governance remains exclusive to the agent path.
 
 ## Tool Hints
 
@@ -1001,6 +1063,8 @@ Allowing unbounded task creation per agent produces the same failure as unbounde
 34. An audio attachment is rejected before task creation when the resolved model does not declare audio capability.
 35. An audio attachment is rejected before task creation unless it carries `data` and a `mimeType` mappable to a supported format.
 36. Every attachment carries at least one of `data` or `url`; an attachment with neither is rejected before task creation.
+37. A builtin tool is registered only when explicitly declared in engine configuration; an undeclared builtin loads none of its dependencies.
+38. Direct (developer-code) tool invocation validates input against the tool's schema, and never records tool history, charges budget, or applies loop detection — that governance belongs to the agent's task-scoped tool path alone.
 
 ---
 
@@ -1095,6 +1159,7 @@ Action
 DataSource
 Channel
 Skill
+Tool          (declared in engine `tools` config, not via a delta.tool() method)
 
 Runtime API (Delta owns)
 ------------------------
@@ -1701,6 +1766,29 @@ type DeltaEngineConfig = {
   // Timezone for humanized time in reasoner messages (e.g. "Africa/Lagos").
   // Defaults to the system timezone. Grounds agents with time awareness.
   timezone?: string;
+
+  // All tools this engine exposes — builtin (framework-provided, opt-in) and
+  // custom (developer-authored) — declared in one place. A builtin left
+  // undeclared loads none of its optional peer dependencies. There is no
+  // delta.tool() authoring method; this is the single place tools are declared.
+  tools?: {
+    builtin?: { documentExtract?: boolean | DocumentExtractOptions };
+    custom?: Tool[];
+  };
+};
+```
+
+### InvokeArgs
+
+```ts
+// Named arguments for delta.tools.invoke — a uniform call shape for every tool.
+// Validates `input` against the tool's schema and runs it with a synthesized
+// context. Not task-governed (no history/budget/loop limits) — that governance
+// belongs to the agent's system:use_tool path.
+type InvokeArgs = {
+  tool: string;                 // registered tool name
+  input: unknown;               // validated against the tool's schema
+  ctx?: Partial<ToolContext>;   // usually just { attachments }
 };
 ```
 
@@ -1811,7 +1899,9 @@ delta.action({ ... });   // define an executable operation
 delta.workflow({ ... });  // define an ordered procedure
 delta.phase({ ... });     // define a workflow stage
 delta.agent({ ... });     // define a role and its capabilities
-delta.tool({ ... });      // define a reusable, stateless utility
+// Tools (builtin + custom) are NOT authored via a delta.tool() method — they are
+// declared in the `tools` config at createDeltaEngine time and invoked via
+// delta.tools.invoke({ tool, input, ctx? }). See §Builtin Tools.
 ```
 
 Runtime methods (drive execution):

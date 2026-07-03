@@ -12,7 +12,7 @@
  */
 
 import type { Result } from "slang-ts";
-import type { Task, Cost, CommitQuery, Attachment } from "../shared/types";
+import type { Task, Cost, CommitQuery, Attachment, RosterEntry } from "../shared/types";
 import type { ToolHistoryEntry } from "../authoring/types";
 
 // What the reasoner returns: a proposed action and the input it wants to pass.
@@ -120,6 +120,14 @@ export type ReasonerInput = {
    * delegation is not offered this turn.
    */
   availableAgents?: string[];
+  /**
+   * Team roster surfaced to guide delegation and mentions: for each teammate,
+   * what they are doing and how loaded they are (major/subtasks/queued). Advisory
+   * only — the model still chooses. Time-varying, so it lives in the user message,
+   * never the cacheable system prefix. Absent/empty when the agent has no
+   * teammates. Parallel to `availableAgents` (same set of names, enriched).
+   */
+  roster?: RosterEntry[];
   /**
    * Channel types this agent may send through. Constrains the `communicate`
    * decision; empty (or absent) means communication is not offered this turn.

@@ -100,10 +100,10 @@ Both return `Result<AttachmentInput, string>` — `Err` on a missing file, an un
 
 ## Reading a File From a Tool
 
-A tool's execution context carries the task's attachments so a future extraction tool can look one up by id:
+A tool's execution context carries the task's attachments so a tool can look one up by id. Declare it in the `tools.custom` config:
 
 ```ts
-const extractText = delta.tool({
+const extractText: Tool = {
   name: "extract-text",
   description: "Extract text from an attached file",
   schema: z.object({ attachmentId: z.string() }),
@@ -114,7 +114,9 @@ const extractText = delta.tool({
     // ... decode attachment.data / fetch attachment.url and parse it
     return Ok("extracted text");
   },
-});
+};
+
+const delta = await createDeltaEngine({ models: [...], tools: { custom: [extractText] } });
 ```
 
-See [Tools and Memory](/guide/internals/tools-and-memory) for how tools are registered and called.
+The framework ships a ready-made version of exactly this — the `document-extract` [builtin tool](/guide/basics/builtin-tools) — so you usually don't write your own. See [Tools and Memory](/guide/internals/tools-and-memory) for how tools are registered and called.

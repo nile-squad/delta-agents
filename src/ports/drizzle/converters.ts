@@ -98,6 +98,9 @@ export const toMessage = (r: typeof messages.$inferSelect): Message => ({
   payload:   JSON.parse(r.payload) as Json,
   createdAt: new Date(r.createdAt),
   consumed:  r.consumed === 1,
+  ...(r.deliveredAt !== null && r.deliveredAt !== undefined ? { deliveredAt: new Date(r.deliveredAt) } : {}),
+  ...(r.readAt !== null && r.readAt !== undefined ? { readAt: new Date(r.readAt) } : {}),
+  ...(r.recalledAt !== null && r.recalledAt !== undefined ? { recalledAt: new Date(r.recalledAt) } : {}),
 });
 
 export const toQueue = (r: typeof queues.$inferSelect): Queue => ({

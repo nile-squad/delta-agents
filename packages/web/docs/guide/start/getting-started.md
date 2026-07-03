@@ -97,6 +97,7 @@ if (inspection.isOk) {
 - [Actions](/guide/basics/actions) — schemas, risk, and cost
 - [Agents and Workflows](/guide/basics/agents-and-workflows) — phases, supervision, storylines, and structuring multi-step work
 - [Attachments](/guide/basics/attachments) — sending images, audio, and files alongside a goal
+- [Builtin Tools](/guide/basics/builtin-tools) — document extraction and invoking tools from code
 - [Cost and Budget](/guide/basics/cost-and-budget) — the full multi-axis cost model
 - [Human Oversight and Approvals](/guide/basics/human-oversight-and-approvals) — approval gates and escalation
 - [Execution Gateway](/guide/internals/execution-gateway) — what every action passes through

@@ -62,6 +62,12 @@ export const createInMemoryStore = (): StoragePort => {
       const sorted = [...all].sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
       return Ok(sorted[0] ?? null);
     },
+    getActiveTasksByAgent: async (agentName) => {
+      const active = [...tasks.values()].filter(
+        (t) => t.assignedAgent === agentName && (t.status === "running" || t.status === "pending"),
+      );
+      return Ok(active);
+    },
 
     // Task trees
     saveTaskTree: async (tree) => {
@@ -163,6 +169,10 @@ export const createInMemoryStore = (): StoragePort => {
       const all = [...messagesByTask.values()].flat().filter((m) => m.receiver === receiver);
       return Ok(all);
     },
+    getMessagesBySender: async (sender) => {
+      const all = [...messagesByTask.values()].flat().filter((m) => m.sender === sender);
+      return Ok(all);
+    },
     markMessageConsumed: async (id) => {
       for (const [taskId, msgs] of messagesByTask.entries()) {
         const idx = msgs.findIndex((m) => m.id === id);
@@ -174,6 +184,65 @@ export const createInMemoryStore = (): StoragePort => {
         }
       }
       return Err(`message "${id}" not found`);
+    },
+    markMessageRead: async (id, at) => {
+      for (const [taskId, msgs] of messagesByTask.entries()) {
+        const idx = msgs.findIndex((m) => m.id === id);
+        if (idx !== -1) {
+          const prev = msgs[idx]!;
+          const updated = [...msgs];
+          // deliveredAt is set at read time if it was never stamped; consumed
+          // stays in lockstep with readAt for backward-compatible dedup.
+          updated[idx] = { ...prev, consumed: true, deliveredAt: prev.deliveredAt ?? at, readAt: prev.readAt ?? at };
+          messagesByTask.set(taskId, updated);
+          return Ok(undefined);
+        }
+      }
+      return Err(`message "${id}" not found`);
+    },
+    recallMessage: async (id) => {
+      for (const [taskId, msgs] of messagesByTask.entries()) {
+        const idx = msgs.findIndex((m) => m.id === id);
+        if (idx !== -1) {
+          const prev = msgs[idx]!;
+          if (prev.readAt !== undefined) return Err(`message "${id}" was already read — cannot recall`);
+          if (prev.recalledAt !== undefined) return Err(`message "${id}" was already recalled`);
+          const updated = [...msgs];
+          const recalled = { ...prev, recalledAt: new Date() };
+          updated[idx] = recalled;
+          messagesByTask.set(taskId, updated);
+          return Ok(recalled);
+        }
+      }
+      return Err(`message "${id}" not found`);
+    },
+    evictReadMessages: async (receiver, cap) => {
+      // Collect this receiver's non-recalled messages with their owning task so we
+      // can rewrite each task bucket. Unread messages are never candidates.
+      let removed = 0;
+      const live: Array<{ taskId: string; msg: Message }> = [];
+      for (const [taskId, msgs] of messagesByTask.entries()) {
+        for (const m of msgs) {
+          if (m.receiver === receiver && m.recalledAt === undefined) live.push({ taskId, msg: m });
+        }
+      }
+      if (live.length <= cap) return Ok(0);
+      // Evict oldest READ first until at/under cap (or no read messages remain).
+      const readOldestFirst = live
+        .filter((x) => x.msg.readAt !== undefined)
+        .sort((a, b) => a.msg.createdAt.getTime() - b.msg.createdAt.getTime());
+      const toRemove = Math.min(live.length - cap, readOldestFirst.length);
+      const removeIds = new Set(readOldestFirst.slice(0, toRemove).map((x) => x.msg.id));
+      if (removeIds.size === 0) return Ok(0);
+      for (const [taskId, msgs] of messagesByTask.entries()) {
+        const kept = msgs.filter((m) => !removeIds.has(m.id));
+        if (kept.length !== msgs.length) {
+          removed += msgs.length - kept.length;
+          if (kept.length === 0) messagesByTask.delete(taskId);
+          else messagesByTask.set(taskId, kept);
+        }
+      }
+      return Ok(removed);
     },
 
     // Memories — newest-first retrieval scoped to the owning agent

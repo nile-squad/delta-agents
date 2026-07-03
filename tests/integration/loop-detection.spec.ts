@@ -73,8 +73,7 @@ describe("loop detection: cooldown", () => {
       fn: async () => Ok("pong"),
       limits: { cooldownMs: 10_000 },
     };
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "cooldown-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "ping twice", agentName: "cooldown-agent" });
@@ -110,8 +109,7 @@ describe("loop detection: cooldown", () => {
       fn: async ({ data }: { data: unknown }) => Ok({ echoed: (data as { message: string }).message }),
       limits: { cooldownMs: 0 },
     };
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "nocd-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "echo", agentName: "nocd-agent" });
@@ -140,9 +138,7 @@ describe("loop detection: cooldown", () => {
       name: "beta", description: "b", schema: z.object({}),
       fn: async () => Ok("b"), limits: { cooldownMs: 10_000 },
     };
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(alpha);
-    delta.tool(beta);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [alpha, beta] } });
     delta.deploy(delta.agent({ name: "cross-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "two tools", agentName: "cross-agent" });
@@ -168,8 +164,7 @@ describe("loop detection: max calls per phase / task", () => {
       name: "search", description: "s", schema: z.object({}),
       fn: async () => Ok("result"), limits: { maxCallsPerPhase: 2 },
     };
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "phase-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "search", agentName: "phase-agent" });
@@ -194,8 +189,7 @@ describe("loop detection: max calls per phase / task", () => {
       name: "expensive", description: "x", schema: z.object({}),
       fn: async () => Ok("ok"), limits: { maxCallsPerTask: 2 },
     };
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(tool);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [tool] } });
     delta.deploy(delta.agent({ name: "task-cap-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "call", agentName: "task-cap-agent" });
@@ -225,9 +219,7 @@ describe("loop detection: max calls per phase / task", () => {
       name: "b", description: "b", schema: z.object({}),
       fn: async () => Ok("b"), limits: { maxCallsPerTask: 2 },
     };
-    const delta = await createDeltaEngine({ store, reasoner });
-    delta.tool(a);
-    delta.tool(b);
+    const delta = await createDeltaEngine({ store, reasoner, tools: { custom: [a, b] } });
     delta.deploy(delta.agent({ name: "isolated-agent", description: "d", role: "r", rolePrompt: ".", actions: [registerNoop(delta)] }));
 
     const result = await delta.send({ goal: "iso", agentName: "isolated-agent" });

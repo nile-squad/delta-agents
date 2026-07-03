@@ -113,6 +113,7 @@ export const createCachedStore = (inner: StoragePort, config?: CacheConfig): Cac
         return result;
       },
       getLatestTaskByAgent: inner.getLatestTaskByAgent,
+      ...(inner.getActiveTasksByAgent !== undefined ? { getActiveTasksByAgent: inner.getActiveTasksByAgent } : {}),
 
       // ── Task trees: pass-through (not on the hot path) ──
       saveTaskTree: inner.saveTaskTree,
@@ -151,6 +152,10 @@ export const createCachedStore = (inner: StoragePort, config?: CacheConfig): Cac
       getMessages: inner.getMessages,
       getMessagesByReceiver: inner.getMessagesByReceiver,
       markMessageConsumed: inner.markMessageConsumed,
+      ...(inner.getMessagesBySender !== undefined ? { getMessagesBySender: inner.getMessagesBySender } : {}),
+      ...(inner.markMessageRead !== undefined ? { markMessageRead: inner.markMessageRead } : {}),
+      ...(inner.recallMessage !== undefined ? { recallMessage: inner.recallMessage } : {}),
+      ...(inner.evictReadMessages !== undefined ? { evictReadMessages: inner.evictReadMessages } : {}),
 
       // ── Memories: cache per-(agent, limit), invalidate on save ──
       saveMemory: async (memory: Memory) => {
