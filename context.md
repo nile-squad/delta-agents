@@ -23,9 +23,9 @@
 - If you can read it from code, it doesn't need to be here
 - Only document what's **non-obvious** from reading source files
 
-## Current State (as of 2026-07-02)
+## Current State (as of 2026-07-03)
 
-All packages A–J are implemented and tested (913 tests pass). Public surface at `src/index.ts`. `dist/` loads under plain Node. Full spec in `docs/internal/delta-agents.spec.md`.
+All packages A–J are implemented and tested (955 tests pass). Framework lives at `packages/delta/` (public surface `packages/delta/index.ts` → `src/`). `dist/` loads under plain Node. Full spec in `docs/internal/delta-agents.spec.md`. Monorepo root (`delta-agents-workspace`) is pure setup — scripts delegate to the `delta-agents` package via `pnpm --filter`.
 
 All H-series subsystems are wired into the live path. Remaining work is catalogued below, not whole subsystems.
 
@@ -89,6 +89,7 @@ Names on the public surface must be precise and self-explaining — no lazy or a
 - **Queue entity = spec-aligned but engine-unused.** Engine FIFO via `TaskTree.queuedChildren` + `Message`s avoids redundant parallel queue subsystem.
 - **Storyline injection = ActionContext only, not reasoner context.** Workflows are reasoner-less (deterministic execution), so injecting storyline into the reasoner would be dead weight in workflow mode. ActionContext reaches action fns + hooks in both paths via the single gateway chokepoint. Free loop has no storyline source (no workflow) — fields stay `undefined`, no duplication possible. Storyline is authoring content, plumbed through `RunPhaseInput` — NOT persisted in `TaskStateSnapshot` (avoids duplicating long narrative strings in every checkpoint).
 - **System prompt = cacheable prefix, time = user message.** `systemPrompt` is baked into the system message at reasoner creation time (per-agent, cached instance). Time/varying content (current timestamp, prior messages with relative time) goes in the user message only — never the system message — to preserve the prompt cache prefix. `buildMessages` exported for direct testing. `getMessages` called directly (not safeTry-wrapped) because it returns `Result` and never throws — matches existing `getMessagesByReceiver` pattern.
+- **Monorepo restructure (2026-07-03): framework moved to `packages/delta/`.** Root is now pure monorepo setup (`delta-agents-workspace`, private, no deps, scripts delegate via `pnpm --filter delta-agents`). The published `delta-agents` package lives at `packages/delta/` with all source, tests, db schema, configs, and `.env`. `packages/example` and `packages/web` are siblings. Key insight that made this safe: `src/` and `db/` cross-reference via relative paths (`../../../db/models/...`) — moving both together into `packages/delta/` preserves the depth relationship, so zero import paths changed. Same for `tests/` → `../../src/...` and e2e → `../../dist/index.js`. The `.env` moved with the package (e2e config reads from cwd, which is now `packages/delta/`). `docs/` stays at root (project-level, not package-level).
 
 ---
 
