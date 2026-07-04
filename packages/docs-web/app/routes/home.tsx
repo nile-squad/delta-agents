@@ -15,8 +15,8 @@ import {
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { ShikiCode } from "@/components/shiki-code";
 import { baseOptions } from "@/lib/layout.shared";
-import { highlightCode } from "@/lib/shiki-code";
 import type { Route } from "./+types/home";
 
 export function meta(_args: Route.MetaArgs) {
@@ -98,11 +98,7 @@ const CAPABILITIES: ReadonlyArray<{
   },
 ];
 
-export default function Home() {
-  const [copied, setCopied] = useState(false);
-
-  const copyCode = async () => {
-    await navigator.clipboard.writeText(`import { createDeltaEngine, Ok } from "delta-agents";
+const QUICK_START_CODE = `import { createDeltaEngine, Ok } from "delta-agents";
 import { z } from "zod";
 
 const delta = await createDeltaEngine({
@@ -133,7 +129,13 @@ const result = await delta.send({
   agentName: "support-agent",
   input: { customerId: "C-42" },
   budget: { tokens: 5000, durationMs: 30_000 },
-});`);
+});`;
+
+export default function Home() {
+  const [copied, setCopied] = useState(false);
+
+  const copyCode = async () => {
+    await navigator.clipboard.writeText(QUICK_START_CODE);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -281,7 +283,7 @@ const result = await delta.send({
               <ArrowRight className="size-3.5" />
             </Link>
           </div>
-          <div className="relative overflow-x-auto rounded-xl border border-fd-border bg-[#0a0a0f] p-6 shadow-2xl shadow-black/20">
+          <div className="relative overflow-x-auto rounded-xl border border-fd-border p-6 quick-start-code">
             <button
               type="button"
               onClick={copyCode}
@@ -299,42 +301,7 @@ const result = await delta.send({
                 </>
               )}
             </button>
-            <pre className="text-sm leading-7 font-mono">
-              <code>
-                {highlightCode(`import { createDeltaEngine, Ok } from "delta-agents";
-import { z } from "zod";
-
-const delta = await createDeltaEngine({
-  apiKey: process.env.OPENAI_API_KEY,
-  models: [{ name: "fast", model: "gpt-4o-mini", default: true }],
-});
-
-const lookupCustomer = delta.action({
-  name: "lookup-customer",
-  description: "Look up a customer account by ID",
-  risk: 1,
-  schema: z.object({ customerId: z.string() }),
-  fn: async ({ customerId }) => Ok(await db.customer.find(customerId)),
-});
-
-const supportAgent = delta.agent({
-  name: "support-agent",
-  description: "Handles customer support requests",
-  role: "Customer Support Specialist",
-  rolePrompt: "Help customers resolve their issues.",
-  actions: [lookupCustomer],
-});
-
-delta.deploy(supportAgent);
-
-const result = await delta.send({
-  goal: "Look up customer C-42",
-  agentName: "support-agent",
-  input: { customerId: "C-42" },
-  budget: { tokens: 5000, durationMs: 30_000 },
-});`)}
-              </code>
-            </pre>
+            <ShikiCode code={QUICK_START_CODE} lang="typescript" />
           </div>
         </div>
       </section>

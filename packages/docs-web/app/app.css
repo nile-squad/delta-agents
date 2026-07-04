@@ -12,6 +12,14 @@
   --color-fd-primary-foreground: oklch(1 0 0);
 }
 
+.quick-start-code {
+  background-color: #eff1f5;
+}
+
+.dark .quick-start-code {
+  background-color: #1a1b26;
+}
+
 html {
   scrollbar-gutter: stable;
 }
