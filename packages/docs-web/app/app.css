@@ -286,6 +286,76 @@ html:not(.dark) .delta-glow {
   animation-direction: reverse;
 }
 
+/* award medallions in "more about delta": gradient medal disc with a
+   dashed seal ring and two ribbon tails hanging beneath */
+.award-badge {
+  /* per-badge medal colors, set inline from the markup */
+  --badge-hi: #fbbf24;
+  --badge-mid: #f97316;
+  --badge-lo: #ea580c;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(
+    160deg,
+    var(--badge-hi) 0%,
+    var(--badge-mid) 55%,
+    var(--badge-lo) 100%
+  );
+  outline: 2px dashed color-mix(in srgb, var(--badge-mid) 55%, transparent);
+  outline-offset: 4px;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.35),
+    0 4px 14px color-mix(in srgb, var(--badge-lo) 35%, transparent);
+}
+
+.award-badge::before,
+.award-badge::after {
+  content: "";
+  position: absolute;
+  top: 78%;
+  width: 11px;
+  height: 26px;
+  background: linear-gradient(
+    var(--badge-lo),
+    color-mix(in srgb, var(--badge-lo) 65%, black)
+  );
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%);
+  z-index: -1;
+}
+
+.award-badge::before {
+  left: 26%;
+  transform: rotate(18deg);
+}
+
+.award-badge::after {
+  right: 26%;
+  transform: rotate(-18deg);
+}
+
+/* the features-highlight bulb: warm amber glow with a slow breathe */
+.bulb-glow {
+  animation: bulb-breathe 3s ease-in-out infinite;
+}
+
+@keyframes bulb-breathe {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 6px rgb(245 158 11 / 0.55))
+      drop-shadow(0 0 18px rgb(245 158 11 / 0.3));
+  }
+  50% {
+    filter: drop-shadow(0 0 10px rgb(245 158 11 / 0.75))
+      drop-shadow(0 0 26px rgb(245 158 11 / 0.45));
+  }
+}
+
 /* step-by-step walkthrough of the loop: the active in-card element
    gets a soft accent ring while everything else stays put */
 .loop-step {
@@ -316,8 +386,14 @@ html:not(.dark) .delta-glow {
   .delta-glow::before,
   .delta-glow::after,
   .flow-line-h,
-  .flow-line-v {
+  .flow-line-v,
+  .bulb-glow {
     animation: none;
+  }
+
+  .bulb-glow {
+    filter: drop-shadow(0 0 6px rgb(245 158 11 / 0.55))
+      drop-shadow(0 0 18px rgb(245 158 11 / 0.3));
   }
 
   .delta-glow {

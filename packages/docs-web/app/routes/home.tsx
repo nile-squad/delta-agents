@@ -1,15 +1,21 @@
 import { HomeLayout } from "fumadocs-ui/layouts/home";
 import {
   ArrowRight,
-  BookOpen,
+  Award,
   Check,
   ClipboardCopy,
   Clock,
+  Cpu,
   Eye,
   GitBranch,
-  Layers,
+  Lightbulb,
   Lock,
+  Medal,
   MessagesSquare,
+  Route as RouteIcon,
+  Send,
+  Star,
+  Trophy,
   Zap,
 } from "lucide-react";
 import {
@@ -18,13 +24,13 @@ import {
   useScroll,
   useTransform,
 } from "motion/react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { GovernanceLoop } from "@/components/governance-loop";
 import { HowToUse } from "@/components/how-to-use";
-import { ShikiCode } from "@/components/shiki-code";
 import { baseOptions } from "@/lib/layout.shared";
+import { appName, gitConfig } from "@/lib/shared";
 import type { Route } from "./+types/home";
 
 export function meta(_args: Route.MetaArgs) {
@@ -86,40 +92,30 @@ const CAPABILITIES: ReadonlyArray<{
       "Web search, document extraction, and custom tools all route through the same budget and audit pipeline. No exception paths, no untracked side effects.",
     accent: "#F59E0B",
   },
+  {
+    icon: <RouteIcon className="size-5" />,
+    title: "Workflows run deterministically",
+    description:
+      "Multi-phase SOPs run the same way every time, regardless of which model executes them. Conditional branching and declared prerequisites keep execution predictable.",
+    accent: "#8B5CF6",
+  },
+  {
+    icon: <Send className="size-5" />,
+    title: "Agents work in your channels",
+    description:
+      "Agents communicate through Slack, Teams, Discord, or Telegram. Execution is decoupled from delivery, so agents keep working even when a channel is down.",
+    accent: "#2CD46B",
+  },
+  {
+    icon: <Cpu className="size-5" />,
+    title: "Bring your own models",
+    description:
+      "OpenAI, OpenRouter, or any OpenAI-compatible endpoint. Swap models freely; the governance layer stays exactly the same.",
+    accent: "#F97316",
+  },
 ];
 
-const QUICK_START_CODE = `import { createDeltaEngine, Ok } from "delta-agents";
-import { z } from "zod";
-
-const delta = await createDeltaEngine({
-  apiKey: process.env.OPENAI_API_KEY,
-  models: [{ name: "fast", model: "gpt-4o-mini", default: true }],
-});
-
-const lookupCustomer = delta.action({
-  name: "lookup-customer",
-  description: "Look up a customer account by ID",
-  risk: 1,
-  schema: z.object({ customerId: z.string() }),
-  fn: async ({ customerId }) => Ok(await db.customer.find(customerId)),
-});
-
-const supportAgent = delta.agent({
-  name: "support-agent",
-  description: "Handles customer support requests",
-  role: "Customer Support Specialist",
-  rolePrompt: "Help customers resolve their issues.",
-  actions: [lookupCustomer],
-});
-
-delta.deploy(supportAgent);
-
-const result = await delta.send({
-  goal: "Look up customer C-42",
-  agentName: "support-agent",
-  input: { customerId: "C-42" },
-  budget: { tokens: 5000, durationMs: 30_000 },
-});`;
+const INSTALL_COMMAND = "npm install delta-agents";
 
 export default function Home() {
   const [copied, setCopied] = useState(false);
@@ -131,8 +127,8 @@ export default function Home() {
   });
   const glow = useTransform(scrollYProgress, [0, 1], [1, 0.15]);
 
-  const copyCode = async () => {
-    await navigator.clipboard.writeText(QUICK_START_CODE);
+  const copyInstall = async () => {
+    await navigator.clipboard.writeText(INSTALL_COMMAND);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -194,7 +190,7 @@ export default function Home() {
       </section>
 
       {/* How it works */}
-      <section className="border-b border-fd-border">
+      <section>
         <div className="mx-auto max-w-7xl px-6 py-20 sm:py-28">
           <h2 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
             How it works
@@ -211,7 +207,7 @@ export default function Home() {
       </section>
 
       {/* How to use the Delta framework */}
-      <section className="border-b border-fd-border">
+      <section>
         <div className="mx-auto max-w-7xl px-6 py-20 sm:py-28">
           <h2 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
             How to use the Delta framework
@@ -225,21 +221,27 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Capabilities */}
-      <section className="border-b border-fd-border">
-        <div className="mx-auto max-w-5xl px-6 py-20 sm:py-28">
-          <h2 className="text-xs font-semibold text-[#5F57E3] tracking-widest uppercase mb-10">
-            Capabilities
-          </h2>
-          <div className="grid gap-px border border-fd-border bg-fd-border sm:grid-cols-2 lg:grid-cols-3">
+      {/* Features highlight */}
+      <section>
+        <div className="mx-auto max-w-7xl px-6 py-20 sm:py-28">
+          <div className="flex items-center gap-4">
+            <h2 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
+              Features highlight
+            </h2>
+            <Lightbulb
+              className="bulb-glow size-8 shrink-0 text-[#F59E0B] sm:size-10"
+              aria-hidden="true"
+            />
+          </div>
+          <div className="mt-14 grid gap-px border border-fd-border bg-fd-border sm:mt-20 sm:grid-cols-2 lg:grid-cols-3">
             {CAPABILITIES.map((cap) => (
               <div
                 key={cap.title}
-                className="bg-fd-background p-6 transition-colors hover:bg-fd-accent/30 border-t-2"
+                className="border-t-2 bg-fd-background p-8 transition-colors hover:bg-fd-accent/30 sm:p-10"
                 style={{ borderTopColor: cap.accent }}
               >
                 <span
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg"
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-lg"
                   style={{
                     backgroundColor: `${cap.accent}15`,
                     color: cap.accent,
@@ -247,10 +249,10 @@ export default function Home() {
                 >
                   {cap.icon}
                 </span>
-                <h3 className="mt-4 text-sm font-semibold text-fd-foreground leading-snug">
+                <h3 className="mt-5 text-base font-semibold text-fd-foreground leading-snug">
                   {cap.title}
                 </h3>
-                <p className="mt-2 text-xs leading-relaxed text-fd-muted-foreground">
+                <p className="mt-3 text-sm leading-relaxed text-fd-muted-foreground">
                   {cap.description}
                 </p>
               </div>
@@ -259,119 +261,130 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Technical credibility */}
-      <section className="border-b border-fd-border bg-fd-muted/20">
-        <div className="mx-auto max-w-5xl px-6 py-16 sm:py-24">
-          <p className="text-xs font-semibold text-fd-muted-foreground tracking-widest uppercase mb-4">
-            Technical Foundation
-          </p>
-          <h2 className="text-[clamp(1.5rem,1.25rem+1.1vw,1.875rem)] font-semibold text-fd-foreground max-w-3xl tracking-tight">
-            Governance is not heuristic. It is control theory applied to agent
-            behavior.
-          </h2>
-          <p className="mt-6 text-base text-fd-muted-foreground max-w-2xl leading-relaxed">
-            The engine applies bounded state-space models, Markov constraints,
-            Bellman optimization, model predictive control, Kalman estimation,
-            and Bayesian updating. Every decision is deterministic, provable,
-            and auditable.
-          </p>
-          <p className="mt-6 text-sm font-semibold text-[#2CD46B] tracking-wide">
-            Deterministic. Provable. Auditable.
-          </p>
-        </div>
-      </section>
-
-      {/* Quick start */}
-      <section className="border-b border-fd-border">
-        <div className="mx-auto max-w-5xl px-6 py-20 sm:py-28">
-          <div className="flex items-end justify-between mb-8">
-            <div>
-              <h2 className="text-lg font-semibold text-fd-foreground">
-                Quick Start
-              </h2>
-              <p className="mt-1 text-sm text-fd-muted-foreground">
-                Build your first governed agent in under a minute.
-              </p>
-            </div>
-            <Link
-              to="/docs"
-              className="hidden sm:inline-flex items-center gap-1.5 text-sm font-medium text-[#5F57E3] transition-colors hover:text-[#5F57E3]/80"
-            >
-              Full guide
-              <ArrowRight className="size-3.5" />
-            </Link>
-          </div>
-          <div className="relative overflow-x-auto rounded-xl border border-fd-border p-6 quick-start-code">
-            <button
-              type="button"
-              onClick={copyCode}
-              className="absolute right-3 top-3 inline-flex h-8 items-center gap-1.5 rounded-md border border-fd-border bg-fd-background px-2.5 text-xs font-medium text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
-            >
-              {copied ? (
-                <>
-                  <Check className="size-3.5" />
-                  Copied
-                </>
-              ) : (
-                <>
-                  <ClipboardCopy className="size-3.5" />
-                  Copy
-                </>
-              )}
-            </button>
-            <ShikiCode code={QUICK_START_CODE} lang="typescript" />
-          </div>
-        </div>
-      </section>
-
-      {/* Explore */}
+      {/* More about Delta: badges, install command, docs CTA */}
       <section>
-        <div className="mx-auto max-w-5xl px-6 py-20 sm:py-28">
-          <h2 className="text-xs font-semibold text-[#5F57E3] tracking-widest uppercase mb-8">
-            Explore
-          </h2>
-          <div className="mt-4 grid gap-px border border-fd-border bg-fd-border sm:grid-cols-3">
-            <Link
-              to="/docs"
-              className="group flex flex-col bg-fd-background p-6 transition-colors hover:bg-fd-accent"
+        <div className="mx-auto max-w-3xl px-6 pb-24 pt-28 text-center sm:pb-32 sm:pt-40">
+          <div className="flex flex-wrap items-start justify-center gap-x-12 gap-y-10">
+            {(
+              [
+                {
+                  icon: Award,
+                  label: "Open source",
+                  labelClass: "text-[#4a43c4] dark:text-[#9d97ff]",
+                  colors: { hi: "#9d97ff", mid: "#5F57E3", lo: "#443DBB" },
+                },
+                {
+                  icon: Medal,
+                  label: "Free",
+                  labelClass: "text-[#1b7d43] dark:text-[#5ee695]",
+                  colors: { hi: "#5ee695", mid: "#2CD46B", lo: "#178a45" },
+                },
+                {
+                  icon: Trophy,
+                  label: "Node, Bun & Deno",
+                  labelClass: "text-[#b45309] dark:text-[#fbbf24]",
+                  colors: { hi: "#fbbf24", mid: "#f97316", lo: "#ea580c" },
+                },
+              ] as const
+            ).map(({ icon: Icon, label, labelClass, colors }) => (
+              <div
+                key={label}
+                className="flex w-36 flex-col items-center gap-4"
+              >
+                <span
+                  className="award-badge"
+                  style={
+                    {
+                      "--badge-hi": colors.hi,
+                      "--badge-mid": colors.mid,
+                      "--badge-lo": colors.lo,
+                    } as CSSProperties
+                  }
+                >
+                  <Icon className="size-6" aria-hidden="true" />
+                </span>
+                <span
+                  className={`font-mono text-xs leading-snug ${labelClass}`}
+                >
+                  {label}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
+            <div className="quick-start-code flex h-11 items-center gap-3 rounded-lg border border-[#F97316]/30 pl-4 pr-2 font-mono text-sm text-fd-foreground/90">
+              <span aria-hidden="true" className="text-[#F97316]/70">
+                $
+              </span>
+              {INSTALL_COMMAND}
+              <button
+                type="button"
+                onClick={copyInstall}
+                aria-label="Copy install command"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
+              >
+                {copied ? (
+                  <Check className="size-3.5" />
+                ) : (
+                  <ClipboardCopy className="size-3.5" />
+                )}
+              </button>
+            </div>
+            <a
+              className="inline-flex h-11 items-center gap-2 rounded-lg bg-gradient-to-b from-[#fbbf24] via-[#f97316] to-[#ea580c] px-6 font-mono text-sm font-semibold text-white transition-opacity hover:opacity-90"
+              href={`https://github.com/${gitConfig.user}/${gitConfig.repo}`}
+              rel="noreferrer"
+              target="_blank"
             >
-              <Zap className="size-5 text-fd-muted-foreground transition-colors group-hover:text-[#5F57E3]" />
-              <span className="mt-4 text-sm font-semibold text-fd-foreground">
-                Getting Started
-              </span>
-              <span className="mt-1.5 text-xs text-fd-muted-foreground leading-relaxed">
-                Install the SDK and build your first governed agent
-              </span>
-            </Link>
-
-            <Link
-              to="/docs/basics"
-              className="group flex flex-col bg-fd-background p-6 transition-colors hover:bg-fd-accent"
-            >
-              <Layers className="size-5 text-fd-muted-foreground transition-colors group-hover:text-[#5F57E3]" />
-              <span className="mt-4 text-sm font-semibold text-fd-foreground">
-                Basics
-              </span>
-              <span className="mt-1.5 text-xs text-fd-muted-foreground leading-relaxed">
-                Actions, agents, workflows, and tools
-              </span>
-            </Link>
-
-            <Link
-              to="/docs/advanced"
-              className="group flex flex-col bg-fd-background p-6 transition-colors hover:bg-fd-accent"
-            >
-              <BookOpen className="size-5 text-fd-muted-foreground transition-colors group-hover:text-[#5F57E3]" />
-              <span className="mt-4 text-sm font-semibold text-fd-foreground">
-                Advanced
-              </span>
-              <span className="mt-1.5 text-xs text-fd-muted-foreground leading-relaxed">
-                Multi-agent coordination, channels, memory, and oversight
-              </span>
-            </Link>
+              <Star className="size-4" />
+              Star on GitHub
+            </a>
           </div>
         </div>
       </section>
+
+      {/* Footer */}
+      <footer className="border-t border-fd-border">
+        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-6 px-6 py-10 sm:flex-row">
+          <div className="flex items-center gap-2.5">
+            <img
+              src="/delta-logo.svg"
+              alt=""
+              width="20"
+              height="20"
+              className="size-5 rounded"
+            />
+            <span className="text-sm font-semibold text-fd-foreground">
+              {appName}
+            </span>
+            <span className="font-mono text-xs text-fd-muted-foreground/70">
+              free and open source
+            </span>
+          </div>
+          <nav className="flex items-center gap-6 font-mono text-xs text-fd-muted-foreground">
+            <Link
+              className="transition-colors hover:text-fd-foreground"
+              to="/docs"
+            >
+              Docs
+            </Link>
+            <Link
+              className="transition-colors hover:text-fd-foreground"
+              to="/docs/reference"
+            >
+              API Reference
+            </Link>
+            <a
+              className="transition-colors hover:text-fd-foreground"
+              href={`https://github.com/${gitConfig.user}/${gitConfig.repo}`}
+              rel="noreferrer"
+              target="_blank"
+            >
+              GitHub
+            </a>
+          </nav>
+        </div>
+      </footer>
     </HomeLayout>
   );
 }

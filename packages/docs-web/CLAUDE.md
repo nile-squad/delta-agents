@@ -50,6 +50,14 @@ Design decisions and rules for the Delta Agents docs site (React Router v7 + fum
 - Cards scale subtly on hover (`motion-safe:hover:scale-[1.02]`, 300ms ease-out). Note: Tailwind v4 scale utilities set the native CSS `scale` property, not `transform`, so verify with `getComputedStyle(el).scale`.
 - Rows use `md:grid-cols-5` with text `col-span-2` and code `col-span-3` so snippets fit without horizontal scrolling; section container is `max-w-7xl`. Grid children that hold wide content (code blocks) need `min-w-0` or they stretch the track and cause page-level horizontal overflow on mobile.
 
+## Page structure (home)
+
+Hero → How it works (governance loop) → How to use the Delta framework (zig-zag steps) → Features highlight → More about Delta (badges + install + docs CTA) → footer. The old Technical Foundation, Quick Start, and Explore sections were removed deliberately; don't resurrect them. **No section divider borders** anywhere on the page; the only horizontal rule is the footer's `border-t`.
+
+- **Features highlight**: large section title with a glowing amber `Lightbulb` beside it (`.bulb-glow`, breathing drop-shadow, static under reduced motion). Nine feature cells sourced from `content/docs/index.mdx` in a JOINED mosaic grid, NOT separate rounded cards (the maintainer explicitly wants `gap-px bg-fd-border` shared hairlines, square corners): `max-w-7xl`, 1/2/3 columns, roomy `p-8 sm:p-10` cells, each with accent top border, tinted icon chip, hover background. Lucide's `Route` icon must be imported as `Route as RouteIcon` (collides with the `Route` route-types import).
+- **More about Delta**: no words beyond the badges, install command, and button. Three award-medal badges (`.award-badge`: gradient disc + dashed seal outline + two ribbon tails via clip-path pseudos, colors driven by `--badge-hi/mid/lo` custom props set inline) with lucide `Award` / `Medal` / `Trophy` icons and matching mono labels beneath. Each medal has its own brand color: purple "Open source", green "Free", orange "Node, Bun & Deno" (label deliberately without "Works with"). Then the `$ npm install delta-agents` chip with copy button and a "Star on GitHub" CTA (external link, `Star` icon) in the same amber→orange gradient as the "governance." hero text. Plain pill badges were rejected as boring; the CTA is deliberately GitHub, not docs.
+- **Footer**: single row (stacks on mobile), logo + name + "free and open source" on the left, mono Docs / API Reference / GitHub links on the right, `border-t`.
+
 ## Motion and accessibility
 
 - Scroll-linked values via `motion` (`useScroll` + `useTransform`) applied as CSS custom properties (`style={{ "--glow": glow } as MotionStyle}`).
