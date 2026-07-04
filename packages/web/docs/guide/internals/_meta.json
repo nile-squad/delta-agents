@@ -1,5 +1,0 @@
-[
-  { "type": "file", "name": "execution-gateway", "label": "Execution Gateway" },
-  { "type": "file", "name": "delegation-and-teams", "label": "Delegation and Teams" },
-  { "type": "file", "name": "tools-and-memory", "label": "Tools and Memory" }
-]

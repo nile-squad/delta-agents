@@ -1,0 +1,21 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+:root {
+  --color-fd-primary: oklch(0.457 0.24 277.023);
+  --color-fd-primary-foreground: oklch(1 0 0);
+}
+
+.dark {
+  --color-fd-primary: oklch(0.55 0.2 277.023);
+  --color-fd-primary-foreground: oklch(1 0 0);
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html:has(body[data-scroll-locked]) {
+  scrollbar-gutter: auto;
+}
