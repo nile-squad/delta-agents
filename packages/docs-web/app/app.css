@@ -25,26 +25,26 @@
   font-size: clamp(10rem, 30vw, 30rem);
   font-weight: 900;
   line-height: 0.85;
-  background: linear-gradient(
-    160deg,
-    #f59e0b 0%,
-    #f97316 18%,
-    #ea580c 36%,
-    #dc2626 52%,
-    #be123c 68%,
-    #7c3aed 86%,
-    #15803d 100%
+  background: radial-gradient(
+    ellipse 70% 55% at 50% 30%,
+    #fffbeb 0%,
+    #fef08a 8%,
+    #facc15 20%,
+    #fb923c 35%,
+    #f97316 52%,
+    #ef4444 72%,
+    #b91c1c 90%,
+    #7f1d1d 100%
   );
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   text-shadow:
     0 0 1px rgba(69, 10, 10, 0.35),
-    0 0 18px rgba(234, 88, 12, 0.2),
-    0 0 40px rgba(220, 38, 38, 0.14),
-    0 0 70px rgba(124, 58, 237, 0.09),
-    0 0 100px rgba(21, 128, 61, 0.06);
-  filter: drop-shadow(0 0 18px rgba(234, 88, 12, 0.18));
+    0 0 22px rgba(251, 146, 60, 0.45),
+    0 0 50px rgba(239, 68, 68, 0.32),
+    0 0 90px rgba(220, 38, 38, 0.2);
+  filter: drop-shadow(0 0 25px rgba(249, 115, 22, 0.35));
   user-select: none;
 }
 
@@ -52,10 +52,10 @@
 .delta-glow::after {
   content: "";
   position: absolute;
-  inset: -35%;
+  inset: -25%;
   border-radius: 50%;
-  filter: blur(120px);
-  opacity: 0.18;
+  filter: blur(100px);
+  opacity: 0.3;
   z-index: -1;
   pointer-events: none;
 }
@@ -63,19 +63,25 @@
 .delta-glow::before {
   background: radial-gradient(
     circle at 40% 40%,
-    rgba(124, 58, 237, 0.55) 0%,
+    rgba(168, 85, 247, 0.7) 0%,
+    rgba(124, 58, 237, 0.2) 50%,
     transparent 70%
   );
-  animation: delta-blob 10s ease-in-out infinite alternate;
+  animation:
+    delta-blob 10s ease-in-out infinite alternate,
+    delta-pulse 3s ease-in-out infinite alternate;
 }
 
 .delta-glow::after {
   background: radial-gradient(
     circle at 60% 60%,
-    rgba(21, 128, 61, 0.45) 0%,
+    rgba(34, 197, 94, 0.55) 0%,
+    rgba(21, 128, 61, 0.15) 50%,
     transparent 70%
   );
-  animation: delta-blob 12s ease-in-out infinite alternate-reverse;
+  animation:
+    delta-blob 10s ease-in-out infinite alternate-reverse,
+    delta-pulse 3s ease-in-out infinite alternate 1.5s;
 }
 
 @keyframes delta-blob {
@@ -84,6 +90,16 @@
   }
   100% {
     transform: translate(5%, 5%) scale(1.15);
+  }
+}
+
+@keyframes delta-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.5;
   }
 }
 
