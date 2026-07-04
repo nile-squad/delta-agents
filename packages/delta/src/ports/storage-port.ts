@@ -41,6 +41,14 @@ export type StoragePort = {
   getTask: (id: string) => Promise<Result<Task, string>>;
   updateTask: (id: string, patch: Partial<Task>) => Promise<Result<Task, string>>;
   /**
+   * Compare-and-swap status transition: set the task's status to `to` only if
+   * its current status is one of `from`; Err (naming the actual current status)
+   * otherwise. The check and the write are atomic at the adapter level, so two
+   * concurrent callers racing the same transition (e.g. two resume() calls on
+   * one paused task) cannot both win — exactly one proceeds, the other gets Err.
+   */
+  transitionTaskStatus: (id: string, from: Task["status"][], to: Task["status"]) => Promise<Result<Task, string>>;
+  /**
    * Return the most recently updated task for a given agent, or null if none exists.
    * Used for invariants 25 (always retrievable) and 26 (no duplicate task creation).
    */

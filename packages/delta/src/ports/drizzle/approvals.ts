@@ -12,12 +12,13 @@ export const approvalMethods = (db: DB) => ({
   saveApprovalRequest: async (req: ApprovalRequest): Promise<Result<ApprovalRequest, string>> => {
     try {
       await db.insert(approvalRequests).values({
-        id:        req.id,
-        taskId:    req.taskId,
-        action:    req.action,
-        reason:    req.reason,
-        status:    req.status,
-        createdAt: req.createdAt.getTime(),
+        id:              req.id,
+        taskId:          req.taskId,
+        action:          req.action,
+        reason:          req.reason,
+        status:          req.status,
+        rejectionReason: req.rejectionReason ?? null,
+        createdAt:       req.createdAt.getTime(),
       });
       return Ok(req);
     } catch (e) {
@@ -40,6 +41,7 @@ export const approvalMethods = (db: DB) => ({
     try {
       const vals: Record<string, unknown> = {};
       if (patch.status !== undefined) vals["status"] = patch.status;
+      if (patch.rejectionReason !== undefined) vals["rejectionReason"] = patch.rejectionReason;
 
       await db.update(approvalRequests).set(vals).where(eq(approvalRequests.id, id));
 

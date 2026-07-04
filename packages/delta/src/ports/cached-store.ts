@@ -112,6 +112,13 @@ export const createCachedStore = (inner: StoragePort, config?: CacheConfig): Cac
         cache.delete(KEY.task(id));
         return result;
       },
+      transitionTaskStatus: async (id, from, to) => {
+        const result = await inner.transitionTaskStatus(id, from, to);
+        // Invalidate even on Err — the CAS may have lost to a concurrent writer,
+        // so any cached copy of this task is suspect.
+        cache.delete(KEY.task(id));
+        return result;
+      },
       getLatestTaskByAgent: inner.getLatestTaskByAgent,
       ...(inner.getActiveTasksByAgent !== undefined ? { getActiveTasksByAgent: inner.getActiveTasksByAgent } : {}),
 

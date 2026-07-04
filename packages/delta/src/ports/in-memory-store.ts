@@ -55,6 +55,18 @@ export const createInMemoryStore = (): StoragePort => {
       tasks.set(id, updated);
       return Ok(updated);
     },
+    transitionTaskStatus: async (id, from, to) => {
+      // Check-and-set is atomic here: single-threaded JS with no await between
+      // the read and the write.
+      const existing = option(tasks.get(id));
+      if (existing.isNone) return Err(`task "${id}" not found`);
+      if (!from.includes(existing.value.status)) {
+        return Err(`task "${id}" status is "${existing.value.status}" — expected one of: ${from.join(", ")}`);
+      }
+      const updated: Task = { ...existing.value, status: to, updatedAt: new Date() };
+      tasks.set(id, updated);
+      return Ok(updated);
+    },
     getLatestTaskByAgent: async (agentName) => {
       const all = [...tasks.values()].filter((t) => t.assignedAgent === agentName);
       if (all.length === 0) return Ok(null);

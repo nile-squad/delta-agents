@@ -55,12 +55,13 @@ CREATE TABLE IF NOT EXISTS checkpoints (
 );
 
 CREATE TABLE IF NOT EXISTS approval_requests (
-  id         TEXT    PRIMARY KEY,
-  task_id    TEXT    NOT NULL,
-  action     TEXT    NOT NULL,
-  reason     TEXT    NOT NULL,
-  status     TEXT    NOT NULL,
-  created_at INTEGER NOT NULL
+  id               TEXT    PRIMARY KEY,
+  task_id          TEXT    NOT NULL,
+  action           TEXT    NOT NULL,
+  reason           TEXT    NOT NULL,
+  status           TEXT    NOT NULL,
+  rejection_reason TEXT,
+  created_at       INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS escalations (
@@ -112,6 +113,21 @@ CREATE TABLE IF NOT EXISTS commits (
 );
 `;
 
+/** Additive column migrations for databases created before the column existed.
+ * CREATE TABLE IF NOT EXISTS never alters an existing table, so each new column
+ * needs a best-effort ALTER: it fails harmlessly with "duplicate column name"
+ * once applied, keeping startup idempotent. */
+const COLUMN_MIGRATIONS = [
+  `ALTER TABLE approval_requests ADD COLUMN rejection_reason TEXT`,
+];
+
 export const runMigrations = async (client: Client): Promise<void> => {
   await client.executeMultiple(DDL);
+  for (const migration of COLUMN_MIGRATIONS) {
+    try {
+      await client.execute(migration);
+    } catch {
+      // Column already exists — expected on every startup after the first.
+    }
+  }
 };

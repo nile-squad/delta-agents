@@ -2,11 +2,12 @@
  * Human oversight — approvals and escalation.
  *
  * Public surface:
- *   requestApproval / resolveApproval / getApproval / getApprovalStatusForAction
+ *   requestApproval / recordAutoApproval / resolveApproval / getApproval /
+ *   getApprovalStatusForAction / approvalRequired / describeRejection
  *   checkEscalation / raiseEscalation / getEscalations
  */
 
-export { requestApproval, resolveApproval, getApproval, getApprovalStatusForAction } from "./approvals";
+export { requestApproval, recordAutoApproval, resolveApproval, getApproval, getApprovalStatusForAction, approvalRequired, describeRejection } from "./approvals";
 export { checkEscalation, raiseEscalation, getEscalations } from "./escalation";
 export { applyPostStepGovernance } from "./post-step";
 export type { PostStepGovernance } from "./post-step";

@@ -212,6 +212,24 @@ export type ReasonerInput = {
    */
   attachments?: Attachment[];
   /**
+   * The previous decision's pre-execution rejection (unknown action name or
+   * input that failed the action's schema), fed back so the model can correct
+   * itself instead of repeating the mistake. `attempt` is which consecutive
+   * failed attempt this was; `maxAttempts` is the engine's
+   * `maxInvalidDecisionRetries` ceiling — once exceeded the task fails. Absent
+   * after any valid decision (the counter resets). Rendered into the USER
+   * message only, never the cacheable system prefix.
+   */
+  lastError?: { reason: string; attempt: number; maxAttempts: number };
+  /**
+   * The task's live governance readings — current risk, evidence-derived trust,
+   * and spend against budget — surfaced so the model can self-correct (slow
+   * down, prefer cheaper paths, wrap up) before hitting a gate instead of
+   * discovering its limits only through blocks. Time-varying: rendered in the
+   * user message only, never the cacheable system prefix.
+   */
+  governanceState?: { riskScore: number; trustScore: number; spent: Cost; budget: Cost };
+  /**
    * When true, the reasoner is in commit mode: only finish_task is offered
    * (no request_action, delegate, mention, communicate, or system tools).
    * Used by the post-workflow commit step so the agent can acknowledge

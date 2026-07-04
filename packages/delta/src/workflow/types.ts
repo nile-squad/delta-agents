@@ -73,6 +73,12 @@ export type RunPhaseInput = {
    *  resume from the failed action instead of re-running from the top.
    *  Defaults to 0 (run the whole phase). */
   startIndex?: number;
+  /** True when `startIndex` points at a branch jump target (persisted as
+   *  `currentActionViaJump` on the escalation checkpoint): the resumed phase
+   *  must still terminate after that action completes, preserving the
+   *  decision-tree semantics across a pause/resume boundary (invariant 21).
+   *  Only meaningful together with `startIndex`. */
+  startViaJump?: boolean;
   /** The agent's full declared skill set, used to resolve phase/action skill refs. */
   agentSkills?: Skill[];
   /**

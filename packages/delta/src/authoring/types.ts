@@ -93,7 +93,15 @@ export type Action<TInput extends Record<string, unknown> = Record<string, unkno
   schema: ZodObject<ZodRawShape>;
   risk?: 1 | 2 | 3 | 4 | 5;
   estimatedCost?: Cost;
-  requiresApproval?: boolean;
+  /**
+   * Human approval gate. `true` requires sign-off before every execution.
+   * `{ untilTrust }` requires sign-off only until the task's evidence-derived
+   * trust score reaches the threshold (0..1); once reached, the gate is
+   * auto-approved with an auditable ApprovalRequest record. A human rejection
+   * always wins — a rejected approval is never waived, whatever the trust score
+   * (spec §Human Oversight, prohibition 11).
+   */
+  requiresApproval?: boolean | { untilTrust: number };
   prerequisites?: {
     actions?: string[];
     workflows?: string[];
@@ -187,8 +195,11 @@ export type ActionRef = string | Branch;
 /**
  * A stage of a workflow with its action list, checkpoint flag, and optional supervision.
  *
- * `checkpoint: true` means the engine writes a recoverable state boundary after
- * this phase completes (spec §Checkpointing).
+ * Checkpointing is always-on: the engine writes a recoverable state boundary
+ * after EVERY completed phase (spec §Checkpointing, invariant 10), so a resumed
+ * workflow never re-executes finished, possibly side-effectful phases. The
+ * `checkpoint` flag is retained for declaration compatibility only — it no
+ * longer changes behaviour.
  */
 export type Phase = {
   name: string;

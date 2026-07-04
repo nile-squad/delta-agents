@@ -122,6 +122,7 @@ describe("delta.cleanup() — graceful degradation for stores missing cleanup me
       saveTask: inner.saveTask,
       getTask: inner.getTask,
       updateTask: inner.updateTask,
+      transitionTaskStatus: inner.transitionTaskStatus,
       getLatestTaskByAgent: inner.getLatestTaskByAgent,
       saveTaskTree: inner.saveTaskTree,
       getTaskTree: inner.getTaskTree,

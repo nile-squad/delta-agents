@@ -52,6 +52,30 @@ export const taskMethods = (db: DB) => ({
     }
   },
 
+  transitionTaskStatus: async (id: string, from: Task["status"][], to: Task["status"]): Promise<Result<Task, string>> => {
+    try {
+      // Single conditional UPDATE — the WHERE clause is the compare, the SET is
+      // the swap, and SQLite executes the statement atomically. rowsAffected 0
+      // means another caller won the race (or the id is unknown).
+      const result = await db
+        .update(tasks)
+        .set({ status: to, updatedAt: Date.now() })
+        .where(and(eq(tasks.id, id), inArray(tasks.status, from)));
+      if (result.rowsAffected === 0) {
+        const rows = await db.select().from(tasks).where(eq(tasks.id, id));
+        const row = rows[0];
+        if (!row) return Err(`task "${id}" not found`);
+        return Err(`task "${id}" status is "${row.status}" — expected one of: ${from.join(", ")}`);
+      }
+      const rows = await db.select().from(tasks).where(eq(tasks.id, id));
+      const row = rows[0];
+      if (!row) return Err(`task "${id}" not found after transition`);
+      return Ok(toTask(row));
+    } catch (e) {
+      return Err(`failed to transition task "${id}": ${String(e)}`);
+    }
+  },
+
   updateTask: async (id: string, patch: Partial<Task>): Promise<Result<Task, string>> => {
     try {
       const vals: Record<string, unknown> = {};

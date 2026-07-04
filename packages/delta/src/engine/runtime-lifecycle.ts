@@ -91,6 +91,7 @@ export const resumeTask = async ({
   logger,
   diagnostics,
   commitContextLimit,
+  maxInvalidDecisionRetries,
 }: {
   taskId: string;
   agent: Agent;
@@ -108,14 +109,12 @@ export const resumeTask = async ({
   diagnostics: Diagnostics;
   /** Max recent commits to inject into reasoner context. */
   commitContextLimit?: number;
+  /** Max consecutive invalid model decisions fed back for correction before failing. */
+  maxInvalidDecisionRetries?: number;
 }): Promise<Result<SendResult, string>> => {
   const taskResult = await store.getTask(taskId);
   if (taskResult.isErr) return Err(`cannot resume: task "${taskId}" not found`);
   const task = taskResult.value;
-
-  if (task.status !== "paused" && task.status !== "pending" && task.status !== "pendingCommit") {
-    return Err(`cannot resume task "${taskId}" — current status is "${task.status}" (expected "paused", "pending", or "pendingCommit")`);
-  }
 
   const ckptResult = await store.getLatestCheckpoint(taskId);
   if (ckptResult.isErr) return Err(`cannot resume: checkpoint read failed: ${ckptResult.error}`);
@@ -125,8 +124,14 @@ export const resumeTask = async ({
       ? { ...snapshotFromJson(ckptResult.value.state), status: "running" as const }
       : { ...snapshotFromTask(task), status: "running" as const };
 
-  const updateResult = await store.updateTask(taskId, { status: "running", updatedAt: new Date() });
-  if (updateResult.isErr) return Err(`failed to mark task as running: ${updateResult.error}`);
+  // Compare-and-swap is the resume gate: exactly one caller can move the task
+  // to "running". A concurrent resume() — or a task in any other state — loses
+  // the swap and gets Err, so two resumes can never both drive the same task.
+  // The branches below key off the PRE-transition status read above.
+  const transitionResult = await store.transitionTaskStatus(taskId, ["paused", "pending", "pendingCommit"], "running");
+  if (transitionResult.isErr) {
+    return Err(`cannot resume task "${taskId}": ${transitionResult.error} (a concurrent resume may already be driving it)`);
+  }
 
   // A pendingCommit task resumes directly into the commit step — the workflow
   // already completed, we just need the agent to acknowledge. Must be checked
@@ -171,7 +176,7 @@ export const resumeTask = async ({
     return Ok(result);
   }
 
-  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, providerRetry, timezone, logger, diagnostics, commitContextLimit });
+  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, providerRetry, timezone, logger, diagnostics, commitContextLimit, maxInvalidDecisionRetries });
   return Ok(result);
 };
 

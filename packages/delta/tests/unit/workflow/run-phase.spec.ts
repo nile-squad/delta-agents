@@ -335,7 +335,10 @@ describe("runPhase — checkpoints (invariant 10: checkpoint = recoverable state
     }
   });
 
-  it("does not write a checkpoint when phase.checkpoint is false", async () => {
+  it("writes a checkpoint even when phase.checkpoint is false (checkpointing is always-on)", async () => {
+    // Without an always-on checkpoint, a later blocked phase would resume from
+    // BEFORE this phase and re-execute its side effects. The flag is retained
+    // for declaration compatibility only.
     const store = createInMemoryStore();
     const reg = new Map([["step", makeAction("step")]]);
 
@@ -349,7 +352,11 @@ describe("runPhase — checkpoints (invariant 10: checkpoint = recoverable state
     });
 
     const ckpt = await store.getLatestCheckpoint("tsk_phase_test");
-    if (ckpt.isOk) expect(ckpt.value).toBeNull();
+    expect(ckpt.isOk).toBe(true);
+    if (ckpt.isOk) {
+      expect(ckpt.value).not.toBeNull();
+      expect(ckpt.value?.phase).toBe("no-ckpt");
+    }
   });
 
   it("does not write a checkpoint when the phase fails", async () => {

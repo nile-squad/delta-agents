@@ -206,6 +206,12 @@ export type DeltaEngineConfig = {
    */
   commitMaxRetries?: number;
   /**
+   * Max consecutive invalid model decisions (unknown action / schema-invalid
+   * input) fed back to the model for correction before the task fails.
+   * Default 3. 0 = fail immediately (old behavior).
+   */
+  maxInvalidDecisionRetries?: number;
+  /**
    * All tools this engine exposes — builtin (framework-provided, opt-in) and
    * custom (developer-authored) — declared in one place. Omit to expose none.
    * A builtin left undeclared loads none of its optional peer dependencies.
@@ -313,11 +319,13 @@ export type DeltaEngine = {
   approve: (approvalId: string) => Promise<Result<ApprovalRequest, string>>;
   /**
    * Reject a pending human approval request.
-   * The (taskId, action) pair stays permanently blocked: the engine never
-   * re-opens a rejected approval (spec §Human Oversight, prohibition 11), so a
-   * later resume re-checks the status and blocks again rather than executing.
+   * The (taskId, action) pair stays permanently closed: the engine never
+   * re-opens a rejected approval (spec §Human Oversight, prohibition 11).
+   * `reason` is the reviewer's stated ground — persisted on the record and fed
+   * back to the model on resume so it can route around the rejection (a free
+   * loop chooses a different approach; a workflow fails honestly).
    */
-  reject: (approvalId: string) => Promise<Result<ApprovalRequest, string>>;
+  reject: (approvalId: string, reason?: string) => Promise<Result<ApprovalRequest, string>>;
   /** Suspend a task and save its current state as a checkpoint. */
   pause: (taskId: string) => Promise<Result<void, string>>;
   /**

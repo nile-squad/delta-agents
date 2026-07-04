@@ -480,7 +480,7 @@ describe("reject — deny a pending approval (prohibition 11)", () => {
     if (result.isOk) expect(result.value.status).toBe("rejected");
   });
 
-  it("a rejected approval stays permanently blocked — resume does not re-authorize", async () => {
+  it("a rejected approval is never re-authorized — resume routes around it", async () => {
     const store = createInMemoryStore();
     const executed: string[] = [];
     const delta = await createDeltaEngine({
@@ -505,7 +505,9 @@ describe("reject — deny a pending approval (prohibition 11)", () => {
     const approvalId = blocked.value.reason?.match(/appr_\S+/)?.[0];
     if (approvalId === undefined) return;
 
-    // Reject, then attempt to resume — the gateway must re-block, not execute.
+    // Reject, then attempt to resume — the rejection is fed back to the model
+    // (never re-executed); with no alternative in the script, the task finishes
+    // without the action ever running.
     const rejected = await delta.reject(approvalId);
     expect(rejected.isOk && rejected.value.status).toBe("rejected");
 
@@ -526,10 +528,10 @@ describe("reject — deny a pending approval (prohibition 11)", () => {
     const resumed = await delta2.resume(blocked.value.taskId);
     expect(resumed.isOk).toBe(true);
     if (resumed.isOk) {
-      expect(resumed.value.status).toBe("blocked");
-      expect(resumed.value.reason).toMatch(/approval-required/);
+      expect(resumed.value.status).toBe("completed");
     }
-    // The action never ran — rejection is terminal.
+    // The action never ran — rejection is terminal for the ACTION even though
+    // the task itself gets to route around it (prohibition 11).
     expect(executed).toEqual([]);
   });
 });

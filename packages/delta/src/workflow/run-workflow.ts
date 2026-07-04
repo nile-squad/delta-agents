@@ -213,6 +213,7 @@ export const runWorkflow = async ({
   // fresh send.
   const resumePhase = state.currentPhase;
   const resumeActionIndex = state.currentActionIndex;
+  const resumeViaJump = state.currentActionViaJump;
 
   for (const phase of workflow.phases) {
     if (alreadyDone.has(phase.name)) continue;
@@ -232,6 +233,9 @@ export const runWorkflow = async ({
       agentSkills,
       ...(diagnostics !== undefined ? { diagnostics } : {}),
       ...(startIndex !== undefined ? { startIndex } : {}),
+      // The persisted jump flag only applies to the phase being re-entered —
+      // it restores decision-tree termination for a resumed jump target.
+      ...(startIndex !== undefined && resumeViaJump === true ? { startViaJump: true } : {}),
       ...(workflow.storyline !== undefined ? { storyline: workflow.storyline } : {}),
     });
 

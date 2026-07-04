@@ -31,7 +31,7 @@ import { snapshotFromTask, snapshotToJson } from "../state-space/task-state";
 import { runWorkflow } from "../workflow";
 import { makeContextCommunicate } from "../comms";
 import { makeContextRemember } from "../memory";
-import { getApprovalStatusForAction, requestApproval, raiseEscalation } from "../oversight";
+import { getApprovalStatusForAction, requestApproval, recordAutoApproval, approvalRequired, describeRejection, raiseEscalation } from "../oversight";
 import { resolveApproval } from "../oversight";
 import { projectHorizon } from "../governance";
 import type { HorizonStep } from "../governance";
@@ -68,6 +68,7 @@ export const runSendLoop = async ({
   logger,
   diagnostics,
   commitContextLimit,
+  maxInvalidDecisionRetries,
   attachments,
 }: {
   task: Task;
@@ -87,6 +88,8 @@ export const runSendLoop = async ({
   diagnostics: Diagnostics;
   /** Max recent commits to inject into reasoner context. */
   commitContextLimit?: number;
+  /** Max consecutive invalid model decisions fed back for correction before failing. */
+  maxInvalidDecisionRetries?: number;
   /** Attachments supplied at send() time; seeds the initial snapshot. Absent on resume (already persisted in the checkpointed snapshot). */
   attachments?: Attachment[];
 }): Promise<SendResult> => {
@@ -96,7 +99,7 @@ export const runSendLoop = async ({
     snapshot: startingSnapshot ?? { ...snapshotFromTask(task), ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}) },
     maxSteps,
   });
-  return runScheduler({ root, reasoner, registry, store, maxSteps, providerRetry, timezone, logger, diagnostics, commitContextLimit });
+  return runScheduler({ root, reasoner, registry, store, maxSteps, providerRetry, timezone, logger, diagnostics, commitContextLimit, maxInvalidDecisionRetries });
 };
 
 // ── Workflow task driver (C-a) ──────────────────────────────────────────────
@@ -256,6 +259,7 @@ export const runWorkflowTask = async ({
   // auto-requests sign-off (mirrors the reasoner loop's per-action gate).
   const approvalStatuses = new Map<string, ApprovalStatus>();
   const awaitingApproval: string[] = [];
+  const rejectedDescriptions: string[] = [];
   for (const name of collectWorkflowActionNames(workflow)) {
     const actionOpt = option(actionRegistry.get(name));
     if (actionOpt.isNone) continue; // runGateway surfaces the missing-action error.
@@ -264,18 +268,53 @@ export const runWorkflowTask = async ({
     const statusResult = await getApprovalStatusForAction({ taskId: task.id, action: name, store });
     let status: ApprovalStatus = statusResult.isOk ? statusResult.value : "none";
 
-    if (action.requiresApproval === true && status === "none") {
-      await requestApproval({
-        taskId: task.id,
-        action: name,
-        reason: `action "${name}" requires human approval before workflow "${workflowName}" runs`,
-        store,
-      });
-      status = "pending";
+    // A rejected action fails the whole workflow below — the deterministic path
+    // has no way to route around it, and blocking would misleadingly imply the
+    // approval could still be granted (prohibition 11: a rejection is final).
+    if (approvalRequired(action.requiresApproval) && status === "rejected") {
+      rejectedDescriptions.push(await describeRejection({ taskId: task.id, action: name, store }));
+      approvalStatuses.set(name, status);
+      continue;
+    }
+
+    // `{ untilTrust }` waiver, same as the reasoner loop's per-action gate: with
+    // no request on record and the task's trust at/above the declared threshold,
+    // the gate is auto-approved (audited).
+    if (approvalRequired(action.requiresApproval) && status === "none") {
+      const untilTrustOpt = option(
+        typeof action.requiresApproval === "object" ? action.requiresApproval.untilTrust : undefined,
+      );
+      if (untilTrustOpt.isSome && snapshot.trust.score >= untilTrustOpt.value) {
+        await recordAutoApproval({
+          taskId: task.id,
+          action: name,
+          reason: `auto-approved: trust ${snapshot.trust.score.toFixed(2)} >= ${untilTrustOpt.value} (declared waiver)`,
+          store,
+        });
+        status = "approved";
+      } else {
+        await requestApproval({
+          taskId: task.id,
+          action: name,
+          reason: `action "${name}" requires human approval before workflow "${workflowName}" runs`,
+          store,
+        });
+        status = "pending";
+      }
     }
 
     approvalStatuses.set(name, status);
-    if (action.requiresApproval === true && status !== "approved") awaitingApproval.push(name);
+    if (approvalRequired(action.requiresApproval) && status !== "approved") awaitingApproval.push(name);
+  }
+
+  if (rejectedDescriptions.length > 0) {
+    await store.updateTask(task.id, { status: "failed", updatedAt: new Date() });
+    return {
+      taskId: task.id,
+      status: "failed",
+      snapshot,
+      reason: `workflow "${workflowName}" cannot run: ${rejectedDescriptions.join("; ")}`,
+    };
   }
 
   if (awaitingApproval.length > 0) {

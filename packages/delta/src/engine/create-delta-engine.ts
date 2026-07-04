@@ -67,6 +67,7 @@ export const createDeltaEngine = async ({
   diagnostics: configDiagnostics,
   commitContextLimit: configCommitContextLimit,
   commitMaxRetries: configCommitMaxRetries,
+  maxInvalidDecisionRetries = 3,
   tools: configTools,
   mailbox: configMailbox,
 }: DeltaEngineConfig = {}): Promise<DeltaEngine> => {
@@ -402,7 +403,7 @@ export const createDeltaEngine = async ({
         commitMaxRetries: configCommitMaxRetries,
         attachments,
       })
-      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, providerRetry, timezone: configTimezone, logger, diagnostics, commitContextLimit: configCommitContextLimit, attachments });
+      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, providerRetry, timezone: configTimezone, logger, diagnostics, commitContextLimit: configCommitContextLimit, maxInvalidDecisionRetries, attachments });
 
     return Ok(result);
   };
@@ -411,8 +412,8 @@ export const createDeltaEngine = async ({
     return resolveApproval({ approvalId, decision: "approved", store });
   };
 
-  const reject: DeltaEngine["reject"] = async (approvalId) => {
-    return resolveApproval({ approvalId, decision: "rejected", store });
+  const reject: DeltaEngine["reject"] = async (approvalId, reason) => {
+    return resolveApproval({ approvalId, decision: "rejected", reason, store });
   };
 
   const pause: DeltaEngine["pause"] = async (taskId_) => {
@@ -449,6 +450,7 @@ export const createDeltaEngine = async ({
       logger,
       diagnostics,
       commitContextLimit: configCommitContextLimit,
+      maxInvalidDecisionRetries,
     });
   };
 

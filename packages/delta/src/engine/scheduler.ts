@@ -38,7 +38,7 @@ import { snapshotFromTask, snapshotToJson } from "../state-space/task-state";
 import { isOverBudget, addCosts, remainingCost } from "../shared/cost";
 import { discoverActions } from "../state-space/discover-actions";
 import { runGateway } from "../execution/execution-gateway";
-import { applyPostStepGovernance, getApprovalStatusForAction, requestApproval, raiseEscalation } from "../oversight";
+import { applyPostStepGovernance, getApprovalStatusForAction, requestApproval, recordAutoApproval, approvalRequired, describeRejection, raiseEscalation } from "../oversight";
 import { retryWithJitter, defaultRetryOptions } from "../infra";
 import type { RetryOptions } from "../infra";
 import { dispatchCommunication, makeContextCommunicate } from "../comms";
@@ -125,6 +125,12 @@ export const makeRunner = ({
 
 // ── Single step ──────────────────────────────────────────────────────────────
 
+/** Return a snapshot with lastDecisionError actually dropped (no dangling key). */
+const stripDecisionError = (s: TaskStateSnapshot): TaskStateSnapshot => {
+  const { lastDecisionError: _cleared, ...rest } = s;
+  return rest;
+};
+
 /**
  * Advance one task by exactly one reasoner → gateway step. Pure of scheduling
  * concerns: it never touches the task tree, never promotes a sibling, and never
@@ -134,7 +140,7 @@ export const makeRunner = ({
 const stepTask = async ({
   task,
   agent,
-  snapshot,
+  snapshot: inputSnapshot,
   step,
   reasoner,
   registry,
@@ -144,6 +150,7 @@ const stepTask = async ({
   loopDetector,
   diagnostics,
   commitContextLimit,
+  maxInvalidDecisionRetries = 3,
 }: {
   task: Task;
   agent: Agent;
@@ -162,7 +169,31 @@ const stepTask = async ({
   diagnostics: Diagnostics;
   /** Max recent commits to inject into reasoner context. */
   commitContextLimit?: number;
+  /** Max consecutive invalid model decisions fed back for correction before failing. */
+  maxInvalidDecisionRetries?: number;
 }): Promise<StepOutcome> => {
+  // Bounded invalid-decision feedback: a prior rejection (unknown action /
+  // schema-invalid input) is surfaced to the model once via lastError, then
+  // stripped — ANY valid decision this turn resets the counter. Only the two
+  // invalid branches below re-attach it (incremented).
+  const priorErrorOpt = option(inputSnapshot.lastDecisionError);
+  const snapshot: TaskStateSnapshot = priorErrorOpt.isSome
+    ? stripDecisionError(inputSnapshot)
+    : inputSnapshot;
+
+  /** Feed an invalid decision back to the model, or fail once retries are exhausted. */
+  const invalidDecision = (reason: string): StepOutcome => {
+    const consecutiveCount = (priorErrorOpt.isSome ? priorErrorOpt.value.consecutiveCount : 0) + 1;
+    if (consecutiveCount > maxInvalidDecisionRetries) {
+      return {
+        kind: "failed",
+        snapshot,
+        reason: `invalid decision retries exhausted after ${consecutiveCount} consecutive attempt(s): ${reason}`,
+      };
+    }
+    return { kind: "stepped", snapshot: { ...snapshot, lastDecisionError: { reason, consecutiveCount } } };
+  };
+
   // 1. Discover legal actions for the agent in the current state.
   const agentActionsResult = registry.getActionsForAgent(agent.name);
   if (agentActionsResult.isErr) {
@@ -315,6 +346,20 @@ const stepTask = async ({
     ...(snapshot.toolHistory !== undefined && snapshot.toolHistory.length > 0 ? { toolHistory: snapshot.toolHistory } : {}),
     ...(snapshot.attachments !== undefined && snapshot.attachments.length > 0 ? { attachments: snapshot.attachments } : {}),
     ...(snapshot.lastToolInfoResult !== undefined ? { toolInfoResult: snapshot.lastToolInfoResult } : {}),
+    // Prior invalid decision (unknown action / schema-invalid input), surfaced
+    // so the model can correct itself instead of repeating the rejection.
+    ...(priorErrorOpt.isSome
+      ? { lastError: { reason: priorErrorOpt.value.reason, attempt: priorErrorOpt.value.consecutiveCount, maxAttempts: maxInvalidDecisionRetries } }
+      : {}),
+    // Live governance readings so the model can self-correct (slow down, prefer
+    // cheaper paths, wrap up) before hitting a gate. Time-varying by nature —
+    // the adapter renders it in the user message, never the cacheable prefix.
+    governanceState: {
+      riskScore: snapshot.risk.currentRisk,
+      trustScore: snapshot.trust.score,
+      spent: snapshot.spent,
+      budget: snapshot.budget,
+    },
   };
   const reasonResult = await retryWithJitter({
     fn: () => reasoner.reason(reasonInput),
@@ -441,30 +486,59 @@ const stepTask = async ({
 
   const { actionName, input, reasoningCost } = decision.request;
 
-  // 3. Look up the action definition.
+  // 3. Look up the action definition. An unknown name is a malformed model
+  // output, not a task-level failure — feed it back for correction (bounded).
   const actionResult = registry.getAction(actionName);
   if (actionResult.isErr) {
-    return { kind: "failed", snapshot, reason: `reasoner requested unknown action "${actionName}"` };
+    return invalidDecision(`reasoner requested unknown action "${actionName}"`);
   }
   const action = actionResult.value;
 
   // 4. Resolve approval status; auto-request and block when required-but-absent.
+  // The `{ untilTrust }` waiver applies ONLY when no request exists yet: once
+  // the task's trust reaches the declared threshold the gate is auto-approved
+  // (audited via recordAutoApproval).
   const approvalStatusResult = await getApprovalStatusForAction({ taskId: task.id, action: actionName, store });
-  const approvalStatus = approvalStatusResult.isOk ? approvalStatusResult.value : "none";
+  let approvalStatus = approvalStatusResult.isOk ? approvalStatusResult.value : "none";
 
-  if (action.requiresApproval === true && approvalStatus === "none") {
-    const reqResult = await requestApproval({
-      taskId: task.id,
-      action: actionName,
-      reason: `action "${actionName}" requires human approval before execution`,
-      store,
-    });
-    const approvalIdStr = reqResult.isOk ? reqResult.value.id : "(unavailable)";
-    return {
-      kind: "blocked",
-      snapshot,
-      reason: `approval-required: action "${actionName}" needs human sign-off — approval id: ${approvalIdStr}`,
-    };
+  // A rejection is final (prohibition 11) — but final for the ACTION, not the
+  // task. Feed the reviewer's reason back (bounded, same counter as invalid
+  // decisions) so the model routes around the closed gate instead of the task
+  // dead-blocking on every resume. The gateway's own rejected-block still
+  // stands should this branch ever be bypassed (defense in depth).
+  if (approvalRequired(action.requiresApproval) && approvalStatus === "rejected") {
+    const rejection = await describeRejection({ taskId: task.id, action: actionName, store });
+    return invalidDecision(
+      `${rejection} — this action will not be approved; choose a different approach or finish with a report of what you could not do`,
+    );
+  }
+
+  if (approvalRequired(action.requiresApproval) && approvalStatus === "none") {
+    const untilTrustOpt = option(
+      typeof action.requiresApproval === "object" ? action.requiresApproval.untilTrust : undefined,
+    );
+    if (untilTrustOpt.isSome && snapshot.trust.score >= untilTrustOpt.value) {
+      await recordAutoApproval({
+        taskId: task.id,
+        action: actionName,
+        reason: `auto-approved: trust ${snapshot.trust.score.toFixed(2)} >= ${untilTrustOpt.value} (declared waiver)`,
+        store,
+      });
+      approvalStatus = "approved";
+    } else {
+      const reqResult = await requestApproval({
+        taskId: task.id,
+        action: actionName,
+        reason: `action "${actionName}" requires human approval before execution`,
+        store,
+      });
+      const approvalIdStr = reqResult.isOk ? reqResult.value.id : "(unavailable)";
+      return {
+        kind: "blocked",
+        snapshot,
+        reason: `approval-required: action "${actionName}" needs human sign-off — approval id: ${approvalIdStr}`,
+      };
+    }
   }
 
   // 5. Run through the execution gateway. The action fn / hooks get governed
@@ -484,10 +558,15 @@ const stepTask = async ({
   const gwResult = await runGateway({ action, rawInput: input, state: snapshot, approvalStatus, store, reasoningCost, stepIndex: step, communicate, remember, availableSkills: actionAvailableSkills });
 
   if (gwResult.isErr) {
-    const isApprovalBlock = gwResult.error.startsWith("approval-required:");
-    return isApprovalBlock
-      ? { kind: "blocked", snapshot, reason: gwResult.error }
-      : { kind: "failed", snapshot, reason: gwResult.error };
+    if (gwResult.error.startsWith("approval-required:")) {
+      return { kind: "blocked", snapshot, reason: gwResult.error };
+    }
+    // Schema-invalid input is a malformed model output — feed back (bounded),
+    // same as an unknown action. Every other gateway block keeps failing.
+    if (gwResult.error.startsWith("schema-invalid:")) {
+      return invalidDecision(gwResult.error);
+    }
+    return { kind: "failed", snapshot, reason: gwResult.error };
   }
 
   const { fnResult, updatedSnapshot, surpriseMagnitude } = gwResult.value;
@@ -540,6 +619,7 @@ export const runScheduler = async ({
   diagnostics,
   loopDetector: passedLoopDetector,
   commitContextLimit = 10,
+  maxInvalidDecisionRetries,
 }: {
   root: Runner;
   reasoner: ReasonerPort;
@@ -560,6 +640,8 @@ export const runScheduler = async ({
   loopDetector?: LoopDetector;
   /** Max recent commits to inject into reasoner context (default 10). */
   commitContextLimit?: number;
+  /** Max consecutive invalid model decisions fed back before failing (defaulted in stepTask). */
+  maxInvalidDecisionRetries?: number;
 }): Promise<SendResult> => {
   const rootId = root.task.rootId;
   const runners: Runner[] = [root];
@@ -833,6 +915,7 @@ export const runScheduler = async ({
         loopDetector,
         diagnostics,
         commitContextLimit,
+        maxInvalidDecisionRetries,
       });
       runner.step++;
       runner.snapshot = outcome.snapshot;

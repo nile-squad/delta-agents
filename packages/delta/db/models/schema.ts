@@ -65,12 +65,13 @@ export const checkpoints = sqliteTable("checkpoints", {
 // ── Approval Requests ──────────────────────────────────────────────────────────
 
 export const approvalRequests = sqliteTable("approval_requests", {
-  id:        text("id").primaryKey(),
-  taskId:    text("task_id").notNull(),
-  action:    text("action").notNull(),
-  reason:    text("reason").notNull(),
-  status:    text("status").notNull(),
-  createdAt: integer("created_at").notNull(), // ms epoch
+  id:              text("id").primaryKey(),
+  taskId:          text("task_id").notNull(),
+  action:          text("action").notNull(),
+  reason:          text("reason").notNull(),
+  status:          text("status").notNull(),
+  rejectionReason: text("rejection_reason"), // reviewer's stated reason, set on rejection
+  createdAt:       integer("created_at").notNull(), // ms epoch
 });
 
 // ── Escalations ────────────────────────────────────────────────────────────────

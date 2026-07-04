@@ -143,6 +143,12 @@ export type ApprovalRequest = {
   action: string;
   reason: string;
   status: "pending" | "approved" | "rejected";
+  /**
+   * The human reviewer's stated reason, set when status becomes "rejected".
+   * Fed back to the model so it can route around the rejection (choose a
+   * different approach) instead of blindly retrying a permanently closed gate.
+   */
+  rejectionReason?: string;
   createdAt: Date;
 };
 

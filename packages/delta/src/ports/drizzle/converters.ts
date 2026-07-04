@@ -79,6 +79,7 @@ export const toApprovalRequest = (r: typeof approvalRequests.$inferSelect): Appr
   action:    r.action,
   reason:    r.reason,
   status:    r.status as ApprovalRequest["status"],
+  ...(r.rejectionReason !== null && r.rejectionReason !== undefined ? { rejectionReason: r.rejectionReason } : {}),
   createdAt: new Date(r.createdAt),
 });
 

@@ -25,6 +25,7 @@ import type { GatewayInput, GatewaySuccess } from "./types";
 import type { ActionContext } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 import { checkLegality } from "../state-space/check-legality";
+import { approvalRequired } from "../oversight/approvals";
 import { withCompletedAction, withSpent } from "../state-space/task-state";
 import { updateTrust } from "../governance/trust";
 import type { TrustUpdateOutcome } from "../governance/types";
@@ -72,8 +73,11 @@ export const runGateway = async ({
 
   // ── 3. Approval gate ───────────────────────────────────────────────────
   // requiresApproval is a hard constraint — the engine cannot proceed without
-  // a resolved human decision (prohibitions 1, 2).
-  if (action.requiresApproval === true && approvalStatus !== "approved") {
+  // a resolved approval (prohibitions 1, 2). The `{ untilTrust }` waiver shape
+  // requires approval too: a waived action reaches this gate only after the
+  // caller recorded an auto-approval, so the status here is already "approved".
+  // A rejected approval blocks regardless of trust (prohibition 11).
+  if (approvalRequired(action.requiresApproval) && approvalStatus !== "approved") {
     const detail =
       approvalStatus === "pending"
         ? "approval is pending human resolution"

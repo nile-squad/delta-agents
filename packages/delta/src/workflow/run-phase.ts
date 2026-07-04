@@ -17,8 +17,12 @@
  * Phase lifecycle hooks (before/after/onError) run around the full phase,
  * not around individual actions. Action-level hooks live inside runGateway.
  *
- * Checkpoint is written to the store after a successful phase when
- * phase.checkpoint === true (invariant 10: every checkpoint is recoverable).
+ * A checkpoint is ALWAYS written after a successful phase (invariant 10: every
+ * checkpoint is recoverable). Without it, a workflow that blocks in a later
+ * phase would resume from a stale checkpoint and re-execute this phase's side
+ * effects. A mid-phase escalation likewise writes a positional checkpoint
+ * (currentActionIndex) so resume re-enters the phase after the action that
+ * already succeeded, never re-running it.
  */
 
 import { option } from "slang-ts";
@@ -26,10 +30,12 @@ import type { ActionContext } from "../authoring/types";
 import type { Checkpoint } from "../shared/types";
 import type { PhaseResult, RunPhaseInput } from "./types";
 import { buildAvailableSkills, resolveSkillRefs } from "../skills";
+import type { Result } from "slang-ts";
+import type { ActionRef } from "../authoring/types";
 import { runGateway } from "../execution/execution-gateway";
 import { runHook } from "../execution/run-hooks";
 import { applyPostStepGovernance } from "../oversight";
-import { snapshotToJson } from "../state-space/task-state";
+import { snapshotToJson, withEscalation } from "../state-space/task-state";
 import { resolveNextStep } from "./resolve-next";
 import { executionId, checkpointId } from "../shared/id";
 
@@ -45,6 +51,7 @@ export const runPhase = async ({
   communicate,
   remember,
   startIndex,
+  startViaJump,
   agentSkills,
   storyline,
   diagnostics,
@@ -99,7 +106,9 @@ export const runPhase = async ({
   // When the jump target (a plain string action) completes, the phase terminates
   // rather than continuing sequentially into the rest of the list.
   // If the target is itself a Branch, it may further route (and set this flag again).
-  let afterJump = false;
+  // A resume that re-enters at a persisted jump target (startViaJump) restores
+  // the flag so the decision-tree semantics survive the pause/resume boundary.
+  let afterJump = startIndex !== undefined ? (startViaJump ?? false) : false;
 
   while (currentIndex < actions.length && stepCount < MAX_STEPS_PER_PHASE) {
     stepCount++;
@@ -195,6 +204,26 @@ export const runPhase = async ({
       currentState = gov.snapshot;
       if (gov.kind === "escalated") {
         await runHook(phase.hooks?.onError, phaseCtx);
+        // Persist a positional checkpoint before blocking, mirroring the
+        // supervision-escalate path in run-workflow: resume re-enters this phase
+        // AFTER the action that just succeeded, never re-running it. The
+        // persisted snapshot clears the escalated flag — a human-initiated
+        // resume is the oversight resolution, and the free reasoner loop's
+        // resume checkpoint likewise predates the escalation flag.
+        const resume = resolveResumePosition({ actions, currentIndex, fnResult, ctx: phaseCtx, isJumpTarget, ref });
+        await store.saveCheckpoint({
+          id: checkpointId(),
+          taskId: currentState.taskId,
+          phase: phase.name,
+          state: snapshotToJson({
+            ...withEscalation({ snapshot: currentState, escalated: false }),
+            status: "paused",
+            currentPhase: phase.name,
+            currentActionIndex: resume.index,
+            ...(resume.viaJump ? { currentActionViaJump: true } : {}),
+          }),
+          createdAt: new Date(),
+        });
         return { status: "blocked", snapshot: currentState, reason: gov.reason };
       }
     } else {
@@ -262,7 +291,42 @@ export const runPhase = async ({
   return await completePhase(phase, phaseCtx, currentState, store);
 };
 
-/** Write checkpoint (if configured) and run the after hook, then return success. */
+/**
+ * Where a resume should re-enter the phase after a mid-phase escalation. The
+ * escalated action already SUCCEEDED (post-step governance only runs on Ok), so
+ * the resume position is the step that would have run next:
+ *   - a plain-string jump target terminates the phase after its action, so the
+ *     phase is effectively complete — resume past the end (the >= length guard
+ *     in runPhase then completes it without re-running anything);
+ *   - end-success likewise resumes past the end;
+ *   - a continue resumes at its nextIndex, carrying the viaJump flag;
+ *   - end-failure on an Ok result means an undeclared branch target (developer
+ *     error) — re-enter at the same index so the declared-transition failure
+ *     surfaces on resume instead of being silently swallowed.
+ */
+const resolveResumePosition = ({
+  actions,
+  currentIndex,
+  fnResult,
+  ctx,
+  isJumpTarget,
+  ref,
+}: {
+  actions: ActionRef[];
+  currentIndex: number;
+  fnResult: Result<unknown, string>;
+  ctx: ActionContext;
+  isJumpTarget: boolean;
+  ref: ActionRef;
+}): { index: number; viaJump: boolean } => {
+  if (isJumpTarget && typeof ref === "string") return { index: actions.length, viaJump: false };
+  const next = resolveNextStep({ actions, currentIndex, result: fnResult, ctx });
+  if (next.kind === "continue") return { index: next.nextIndex, viaJump: next.viaJump };
+  if (next.kind === "end-failure") return { index: currentIndex, viaJump: isJumpTarget };
+  return { index: actions.length, viaJump: false };
+};
+
+/** Write the phase checkpoint and run the after hook, then return success. */
 const completePhase = async (
   phase: RunPhaseInput["phase"],
   phaseCtx: ActionContext,
@@ -280,16 +344,18 @@ const completePhase = async (
       : [...(snapshot.completedPhases ?? []), phase.name],
   };
 
-  if (phase.checkpoint) {
-    const ckpt: Checkpoint = {
-      id: checkpointId(),
-      taskId: advanced.taskId,
-      phase: phase.name,
-      state: snapshotToJson(advanced),
-      createdAt: new Date(),
-    };
-    await store.saveCheckpoint(ckpt);
-  }
+  // Always checkpoint — regardless of the declared `checkpoint` flag. A phase
+  // that completed without one would leave the store's latest checkpoint stale;
+  // a later blocked phase would then resume from BEFORE this phase and
+  // re-execute its side effects (invariant 10: every recovery point is real).
+  const ckpt: Checkpoint = {
+    id: checkpointId(),
+    taskId: advanced.taskId,
+    phase: phase.name,
+    state: snapshotToJson(advanced),
+    createdAt: new Date(),
+  };
+  await store.saveCheckpoint(ckpt);
 
   await runHook(phase.hooks?.after, phaseCtx);
   return { status: "completed", snapshot: advanced };

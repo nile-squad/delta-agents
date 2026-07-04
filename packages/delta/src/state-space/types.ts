@@ -56,8 +56,8 @@ export type TaskStateSnapshot = {
   // Names of phases in the current workflow that have already completed. A
   // resume skips these instead of re-running them, so a checkpointed workflow
   // does not re-execute side-effectful phases on recovery (mid-workflow resume).
-  // Only phases that wrote a checkpoint are recorded, so the skip set is exactly
-  // what the store can prove finished.
+  // Every completed phase writes a checkpoint recording itself here, so the
+  // skip set is exactly what the store can prove finished.
   completedPhases?: string[];
 
   // When a phase escalated part way through (some actions done, one failed), this
@@ -65,6 +65,12 @@ export type TaskStateSnapshot = {
   // already-completed actions in that phase are not re-executed (mid-phase
   // resume). Set only on the checkpoint written at a mid-phase escalation.
   currentActionIndex?: number;
+
+  // True when `currentActionIndex` points at a branch jump target: the resumed
+  // phase must terminate after that action completes (decision-tree semantics,
+  // invariant 21) instead of continuing sequentially. Persisted alongside
+  // currentActionIndex on the mid-phase escalation checkpoint.
+  currentActionViaJump?: boolean;
 
   // The send-time inputs for a workflow task, carried on the snapshot so a
   // resumed workflow re-runs faithfully. The deterministic (reasoner-less)
@@ -95,6 +101,15 @@ export type TaskStateSnapshot = {
    * request that overwrites it, or naturally expires once the model acts on it.
    */
   lastToolInfoResult?: string;
+
+  /**
+   * The most recent invalid model decision (unknown action / schema-invalid
+   * input), fed back to the model on the next `reason()` call so it can
+   * self-correct instead of failing the task. `consecutiveCount` bounds the
+   * feedback loop (engine `maxInvalidDecisionRetries`); any valid decision
+   * clears this field, resetting the counter.
+   */
+  lastDecisionError?: { reason: string; consecutiveCount: number };
 };
 
 // Result of a legality check. Includes a reason when illegal so the caller
