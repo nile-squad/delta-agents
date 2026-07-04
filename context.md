@@ -1,5 +1,37 @@
 # Project Context: delta-agents
 
+## Project Vision
+
+Delta Agents is an AI agents framework and runtime that allows shipping agents that don't drift away from organization policies and operating procedures, or hallucinate by introducing a deterministic math backend governance engine and kind of like a firewall or safety layer across agents operations. Also lifts common plumbing that teams would need to always build from scratch to achieve production ready agents, cutting time to ship safe agents from months to minutes. Comes with multi agent orchestration, multi channel communication support, builtin and custom tool support, audits and logs, workflows and so on.
+
+This vision drives how the project is presented: README, docs, marketing. The framework is not a boring control plane. It's a governance firewall that makes shipping safe agents fast.
+
+## Documentation Principle: Value First, Mechanics Second
+
+Public-facing documentation (README, consumer docs) leads with the value the user gets from a behavior, quality-of-life feature, or core experience, not how it is achieved internally. Every feature section must answer "what does this mean for the user?" Technical details and internals are secondary and presented as supporting context only. Internal mechanics belong in `docs/internal/`, not in consumer-facing docs.
+
+Ten writing patterns enforced for all consumer-facing docs:
+
+1. **Name the outcome, not the mechanism.** "Prevents mess before it happens" not "enforces state-space legality constraints." Translate every technical term into a human-scale benefit.
+2. **The engine is an actor, not a layer.** Active verbs: "the engine validates, authorizes, and audits" not "validation is applied." The engine watches, guides, corrects, prevents. Write it as a guardian character.
+3. **Ground with concrete examples.** One specific, relatable scenario per abstract concept. "Agent can't process an order before confirming it" makes prerequisite validation real.
+4. **Contrast structure for oversight.** "When the agent is doing well... On drift however..." — normal, exceptional, resolution. Tells the user when to pay attention.
+5. **Confident promises, not feature lists.** "The engine can auto-correct" not "supports auto-correction." Don't hedge.
+6. **Broad claims, not exhaustive enumeration.** "Multi dimensional level" over listing every budget axis. Confident capability claim; details in reference docs.
+7. **Describe capabilities, not address the reader.** Minimize "you"/"your." "Read receipts confirm delivery" not "read receipts tell you the message landed." The README describes what the framework provides, not a conversation with the reader.
+8. **Matter-of-fact listing over contrived examples.** "Delta supports messaging channels such as Slack, Teams, Discord, and Telegram" not "start in Slack, continue in Telegram." Straightforward listing feels confident; forced examples feel contrived.
+9. **Use the spec's rationale to inform value.** Each feature exists for a reason in the spec or context.md. That reason IS the value proposition. Extract value language from why the feature was built, don't invent it.
+10. **Describe what agents do, not what the developer does.** Agents are the actors. Their built-in operations (delegation, commits, time awareness, roster, mailboxes) are the value. "Agents delegate to other agents" not "Delegate to specialists." Evaluators should see agents come with these capabilities out of the box.
+
+Additional principles (added 2026-07-03):
+
+11. **Every feature mentioned must explain the value or pain it solves.** Never list a feature without context. "Retries" is meaningless; "retries in case of network failures or agent unresponsiveness" explains the pain. If a feature is worth mentioning, it is worth explaining why it matters.
+12. **Do not undersell.** Describe what delta actually does. Do not minimize capabilities or use hedging language. Confident, accurate description of real capabilities.
+13. **Use precise, non-marketing language.** "Agents delegate to other agents" not "agents delegate to specialists." Precise language builds trust; marketing language erodes it.
+14. **Principles apply to the entire document.** These rules apply to every section: opening, feature highlights, code examples, closing. Not just the feature sections. Consistency throughout.
+
+See `docs/internal/documentation-guidelines.md` section 1.1 and 1.2 for the full rule, examples, and enforcement.
+
 ## Context Rules
 
 ### What belongs here
@@ -60,6 +92,17 @@ All H-series subsystems are wired into the live path. Remaining work is catalogu
 - **Governance state in prompt:** `ReasonerInput.governanceState` (risk/trust/spent/budget from the live snapshot) rendered per turn in the user message so the model can self-correct before hitting gates.
 - **Concurrent-resume guard:** `StoragePort.transitionTaskStatus` (required, all adapters) is a compare-and-swap; `resumeTask` uses it as the gate so two concurrent resumes can never both drive a task.
 - **Team Roster + Agent Mailbox:** `engine.roster({team?})` — derived read-model of per-agent load (major/subtasks/queued + overloaded flag), computed from live task/message state (never stored). Surfaced to agents in reasoning context (load-aware teammate block, replaces the bare name list) and to developers via `roster()`. Mailbox: `engine.inbox/outbox/recall` over an evolved `Message` (`deliveredAt`/`readAt`/`recalledAt`, `consumed` kept in lockstep for back-compat). Turn-only delivery stamps `readAt` (dual-sided receipt, visible in sender's outbox); recall allowed only while unread; `mailbox.inboxCap` evicts oldest **read** first (never unread). New store methods: `getActiveTasksByAgent`, `getMessagesBySender`, `markMessageRead`, `recallMessage`, `evictReadMessages` (in-memory + Drizzle, all optional with graceful degrade).
+
+### Docs Complete (2026-07-03)
+
+All 21 documentation pages at `packages/docs/content/docs/` are now written following the documentation guidelines strictly (value-first, engine-as-actor, confident promises, precise language, every feature explains the pain it solves). Sections:
+
+- **Getting Started** (4 pages): introduction, installation, quick-start, core-concepts
+- **Basics** (6 pages): agents, actions, workflows, tools, cost-and-budget, human-oversight
+- **Advanced** (5 pages): multi-agent, channels, memory, attachments, observability
+- **Reference** (5 pages): api-reference, types, configuration, adapters, faq
+
+All pages build and prerender successfully (`pnpm --filter delta-agents-docs build`). The old rspress docs at `packages/web/docs/` are superseded. Docs content verified against actual API (types from `src/engine/types.ts`, `src/index.ts`).
 
 ### What's deferred (catalogued)
 - Per-action reasoner-filled inputs (single shared `input` bag today)
