@@ -26,25 +26,25 @@
   font-weight: 900;
   line-height: 0.85;
   background: linear-gradient(
-    135deg,
-    #facc15 0%,
-    #fb923c 15%,
-    #f97316 30%,
-    #ef4444 45%,
-    #e25557 58%,
-    #a855f7 78%,
-    #22c55e 100%
+    160deg,
+    #f59e0b 0%,
+    #f97316 18%,
+    #ea580c 36%,
+    #dc2626 52%,
+    #be123c 68%,
+    #7c3aed 86%,
+    #15803d 100%
   );
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   text-shadow:
-    0 0 30px rgba(250, 204, 21, 0.55),
-    0 0 60px rgba(249, 115, 22, 0.45),
-    0 0 90px rgba(239, 68, 68, 0.4),
-    0 0 120px rgba(168, 85, 247, 0.35),
-    0 0 160px rgba(34, 197, 94, 0.25);
-  filter: drop-shadow(0 0 50px rgba(249, 115, 22, 0.45));
+    0 0 1px rgba(69, 10, 10, 0.35),
+    0 0 18px rgba(234, 88, 12, 0.2),
+    0 0 40px rgba(220, 38, 38, 0.14),
+    0 0 70px rgba(124, 58, 237, 0.09),
+    0 0 100px rgba(21, 128, 61, 0.06);
+  filter: drop-shadow(0 0 18px rgba(234, 88, 12, 0.18));
   user-select: none;
 }
 
@@ -52,33 +52,30 @@
 .delta-glow::after {
   content: "";
   position: absolute;
+  inset: -35%;
   border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.55;
+  filter: blur(120px);
+  opacity: 0.18;
   z-index: -1;
   pointer-events: none;
 }
 
 .delta-glow::before {
-  inset: -10%;
   background: radial-gradient(
     circle at 40% 40%,
-    rgba(168, 85, 247, 0.6) 0%,
-    rgba(139, 92, 246, 0.25) 45%,
+    rgba(124, 58, 237, 0.55) 0%,
     transparent 70%
   );
-  animation: delta-blob 8s ease-in-out infinite alternate;
+  animation: delta-blob 10s ease-in-out infinite alternate;
 }
 
 .delta-glow::after {
-  inset: -10%;
   background: radial-gradient(
     circle at 60% 60%,
-    rgba(34, 197, 94, 0.45) 0%,
-    rgba(34, 197, 94, 0.15) 45%,
+    rgba(21, 128, 61, 0.45) 0%,
     transparent 70%
   );
-  animation: delta-blob 10s ease-in-out infinite alternate-reverse;
+  animation: delta-blob 12s ease-in-out infinite alternate-reverse;
 }
 
 @keyframes delta-blob {
