@@ -21,6 +21,8 @@ import {
 import type { ReactNode } from "react";
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { GovernanceLoop } from "@/components/governance-loop";
+import { HowToUse } from "@/components/how-to-use";
 import { ShikiCode } from "@/components/shiki-code";
 import { baseOptions } from "@/lib/layout.shared";
 import type { Route } from "./+types/home";
@@ -35,24 +37,6 @@ export function meta(_args: Route.MetaArgs) {
     },
   ];
 }
-
-const STEPS: ReadonlyArray<{ title: string; description: string }> = [
-  {
-    title: "Define",
-    description:
-      "Define agents, actions, workflows, and safety constraints. Schema validation, budget limits, risk scores, and approval gates are declared up front.",
-  },
-  {
-    title: "Deploy",
-    description:
-      "One configuration line deploys the agent. The framework handles runtime supervision and orchestration without additional infrastructure.",
-  },
-  {
-    title: "Govern",
-    description:
-      "The engine validates, authorizes, and audits every operation. The model proposes actions. The engine decides whether to execute.",
-  },
-];
 
 const CAPABILITIES: ReadonlyArray<{
   icon: ReactNode;
@@ -211,29 +195,32 @@ export default function Home() {
 
       {/* How it works */}
       <section className="border-b border-fd-border">
-        <div className="mx-auto max-w-5xl px-6 py-20 sm:py-28">
-          <h2 className="text-xs font-semibold text-[#5F57E3] tracking-widest uppercase mb-10">
+        <div className="mx-auto max-w-7xl px-6 py-20 sm:py-28">
+          <h2 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
             How it works
           </h2>
-          <div className="grid gap-12 sm:grid-cols-3">
-            {STEPS.map((step, i) => (
-              <div key={step.title} className="relative">
-                <div className="flex items-center gap-4 mb-4">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-fd-border bg-fd-background text-sm font-bold text-[#5F57E3]">
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  {i < STEPS.length - 1 && (
-                    <div className="hidden sm:block h-px flex-1 bg-fd-border" />
-                  )}
-                </div>
-                <h3 className="text-lg font-semibold text-fd-foreground">
-                  {step.title}
-                </h3>
-                <p className="mt-2 text-sm text-fd-muted-foreground leading-relaxed">
-                  {step.description}
-                </p>
-              </div>
-            ))}
+          <p className="mt-4 max-w-2xl text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed">
+            You define the agent, the engine supervises it, and the model only
+            ever proposes. Every action is validated, authorized, or escalated
+            back to you.
+          </p>
+          <div className="mt-14 sm:mt-16">
+            <GovernanceLoop />
+          </div>
+        </div>
+      </section>
+
+      {/* How to use the Delta framework */}
+      <section className="border-b border-fd-border">
+        <div className="mx-auto max-w-7xl px-6 py-20 sm:py-28">
+          <h2 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
+            How to use the Delta framework
+          </h2>
+          <p className="mt-4 max-w-2xl text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed">
+            From zero to a governed agent in four steps.
+          </p>
+          <div className="mt-14 sm:mt-20">
+            <HowToUse />
           </div>
         </div>
       </section>
