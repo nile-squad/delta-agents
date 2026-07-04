@@ -7,11 +7,11 @@ export function baseOptions(): BaseLayoutProps {
       title: (
         <span className="flex items-center gap-2 font-semibold">
           <img
-            src="/delta-logo.png"
+            src="/delta-logo.svg"
             alt="Delta Agents logo"
             width="24"
             height="24"
-            className="size-6"
+            className="size-6 rounded-md"
           />
           {appName}
         </span>

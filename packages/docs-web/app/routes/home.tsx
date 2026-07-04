@@ -12,8 +12,14 @@ import {
   MessagesSquare,
   Zap,
 } from "lucide-react";
+import {
+  type MotionStyle,
+  motion,
+  useScroll,
+  useTransform,
+} from "motion/react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ShikiCode } from "@/components/shiki-code";
 import { baseOptions } from "@/lib/layout.shared";
@@ -133,6 +139,13 @@ const result = await delta.send({
 
 export default function Home() {
   const [copied, setCopied] = useState(false);
+  const heroRef = useRef<HTMLElement>(null);
+  // Glow fades as the hero scrolls out of view and returns on scroll up.
+  const { scrollYProgress } = useScroll({
+    target: heroRef,
+    offset: ["start start", "end start"],
+  });
+  const glow = useTransform(scrollYProgress, [0, 1], [1, 0.15]);
 
   const copyCode = async () => {
     await navigator.clipboard.writeText(QUICK_START_CODE);
@@ -143,45 +156,54 @@ export default function Home() {
   return (
     <HomeLayout {...baseOptions()}>
       {/* Hero */}
-      <section className="border-b border-fd-border">
-        <div className="mx-auto max-w-5xl px-6 pb-20 pt-28 sm:pb-24 sm:pt-32">
-          <div className="grid items-center gap-12 lg:grid-cols-2">
+      <section ref={heroRef}>
+        <div className="mx-auto max-w-5xl px-6 pb-28 pt-36 sm:pb-36 sm:pt-44">
+          <div className="grid items-center gap-16 lg:grid-cols-2 lg:gap-24">
             <div className="max-w-2xl">
-              <p className="text-sm font-medium text-[#5F57E3] tracking-wide uppercase">
-                Framework and Runtime
-              </p>
-              <h1 className="mt-4 text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
+              <h1 className="text-[clamp(2.25rem,1.4rem+3.4vw,3.75rem)] font-bold tracking-tight leading-[1.1]">
                 The AI agent framework
                 <br />
-                <span className="text-[#5F57E3]">
-                  with built-in governance.
+                <span className="text-[#5F57E3]">with built-in </span>
+                <span className="bg-gradient-to-b from-[#fbbf24] via-[#f97316] to-[#ea580c] bg-clip-text text-transparent">
+                  governance.
                 </span>
               </h1>
-              <p className="mt-6 text-lg sm:text-xl text-fd-muted-foreground max-w-xl leading-relaxed">
-                The model proposes actions. The engine validates, authorizes,
-                and audits. Every decision is deterministic, provable, and
-                auditable. No prompt hacks. No drift.
+              <p className="mt-6 text-[clamp(1.0625rem,0.95rem+0.55vw,1.25rem)] text-fd-muted-foreground max-w-xl leading-normal">
+                Delta's math based engine supervises agents, and guides them
+                towards correction or involve you when it can't, no drift,
+                strict on policy and rules, no prompt hacks!
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-4">
                 <Link
-                  className="inline-flex h-11 items-center rounded-lg bg-[#5F57E3] px-6 text-sm font-semibold text-white transition-colors hover:bg-[#5F57E3]/90"
+                  className="inline-flex h-11 items-center rounded-lg bg-[#5F57E3] px-6 font-mono text-sm font-semibold text-white transition-colors hover:bg-[#5F57E3]/90"
                   to="/docs"
                 >
                   Get Started
                 </Link>
                 <Link
-                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-fd-border px-6 text-sm font-medium text-fd-foreground transition-colors hover:bg-fd-accent"
+                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-fd-border px-6 font-mono text-sm font-medium text-fd-foreground transition-colors hover:bg-fd-accent"
                   to="/docs/reference"
                 >
                   API Reference
                   <ArrowRight className="size-4" />
                 </Link>
               </div>
+              <div className="mt-7 flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-xs text-fd-muted-foreground/70">
+                <span>Open source</span>
+                <span className="text-fd-muted-foreground/40">·</span>
+                <span>Free</span>
+                <span className="text-fd-muted-foreground/40">·</span>
+                <span>Works with Node, Bun &amp; Deno</span>
+              </div>
             </div>
             <div className="relative hidden min-w-0 items-center justify-center lg:flex">
-              <span className="delta-glow" aria-hidden="true">
+              <motion.span
+                className="delta-glow"
+                style={{ "--glow": glow } as MotionStyle}
+                aria-hidden="true"
+              >
                 δ
-              </span>
+              </motion.span>
             </div>
           </div>
         </div>
@@ -256,7 +278,7 @@ export default function Home() {
           <p className="text-xs font-semibold text-fd-muted-foreground tracking-widest uppercase mb-4">
             Technical Foundation
           </p>
-          <h2 className="text-2xl sm:text-3xl font-semibold text-fd-foreground max-w-3xl tracking-tight">
+          <h2 className="text-[clamp(1.5rem,1.25rem+1.1vw,1.875rem)] font-semibold text-fd-foreground max-w-3xl tracking-tight">
             Governance is not heuristic. It is control theory applied to agent
             behavior.
           </h2>

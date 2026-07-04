@@ -1,3 +1,4 @@
+import { RootProvider } from "fumadocs-ui/provider/react-router";
 import {
   isRouteErrorResponse,
   Links,
@@ -6,8 +7,14 @@ import {
   Scripts,
   ScrollRestoration,
 } from "react-router";
-import { RootProvider } from "fumadocs-ui/provider/react-router";
 import type { Route } from "./+types/root";
+// Supports weights 200-800
+import "@fontsource-variable/manrope/wght.css";
+// Supports weights 100-700
+import "@fontsource-variable/ibm-plex-sans/wght.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import "@fontsource/ibm-plex-mono/600.css";
 import "./app.css";
 import SearchDialog from "@/components/search";
 import NotFound from "./routes/not-found";

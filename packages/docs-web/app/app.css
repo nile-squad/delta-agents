@@ -3,8 +3,23 @@
 @import "fumadocs-ui/css/preset.css";
 
 :root {
+  /* Tailwind's font-mono utility resolves var(--font-mono) */
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
   --color-fd-primary: oklch(0.457 0.24 277.023);
   --color-fd-primary-foreground: oklch(1 0 0);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: "IBM Plex Sans Variable", ui-sans-serif, system-ui, sans-serif;
+}
+
+button {
+  font-family: "IBM Plex Mono", ui-monospace, system-ui, monospace;
 }
 
 .dark {
@@ -22,30 +37,73 @@
 
 .delta-glow {
   position: relative;
+  /* glow intensity 0-1, driven from scroll position in home.tsx */
+  --glow: 1;
+  /* ambient bloom multiplier; damped in light theme where the
+     blurred halo reads as haze on a white background */
+  --bloom: 1;
+  /* inline-block so the background box hugs the glyph instead of
+     stretching over the font's full ascent/descent space */
+  display: inline-block;
+  font-family: "Manrope Variable", sans-serif;
   font-size: clamp(10rem, 30vw, 30rem);
-  font-weight: 900;
+  font-weight: 800;
   line-height: 0.85;
-  background: radial-gradient(
-    ellipse 70% 55% at 50% 30%,
-    #fffbeb 0%,
-    #fef08a 8%,
-    #facc15 20%,
-    #fb923c 35%,
-    #f97316 52%,
-    #ef4444 72%,
-    #b91c1c 90%,
-    #7f1d1d 100%
-  );
+  background:
+/* forged striations: faint vertical grain over the heat */
+    repeating-linear-gradient(
+      98deg,
+      rgba(255, 244, 214, 0.06) 0px,
+      rgba(255, 244, 214, 0) 3px,
+      rgba(20, 5, 2, 0.14) 6px,
+      rgba(20, 5, 2, 0) 10px
+    ),
+    /* whisper of violet at the base of the glyph */
+    radial-gradient(
+      ellipse 74% 22% at 50% 90%,
+      rgba(139, 92, 246, 0.25) 0%,
+      rgba(139, 92, 246, 0) 70%
+    ),
+    /* faint rose sheen on the upper-left edge */
+    radial-gradient(
+      ellipse 26% 30% at 16% 22%,
+      rgba(244, 63, 94, 0.12) 0%,
+      rgba(244, 63, 94, 0) 70%
+    ),
+    /* faint green iridescence on the right edge */
+    radial-gradient(
+      ellipse 24% 34% at 86% 42%,
+      rgba(74, 222, 128, 0.1) 0%,
+      rgba(74, 222, 128, 0) 70%
+    ),
+    /* scorched crust creeping up from the bottom edge */
+    linear-gradient(
+      to top,
+      rgba(12, 4, 3, 0.85) 0%,
+      rgba(40, 10, 8, 0.5) 9%,
+      rgba(69, 10, 10, 0.22) 20%,
+      rgba(69, 10, 10, 0) 38%
+    ),
+    /* core heat: white-hot at the top cooling to dark iron */
+    radial-gradient(
+      ellipse 70% 68% at 50% 10%,
+      #fffdf4 0%,
+      #fef3c7 5%,
+      #fde047 12%,
+      #fbbf24 22%,
+      #f97316 38%,
+      #ea580c 52%,
+      #dc2626 66%,
+      #991b1b 80%,
+      #5a1010 91%,
+      #2a0705 100%
+    );
   -webkit-background-clip: text;
   background-clip: text;
+  /* no text-shadow: with a transparent fill it paints over the
+     clipped gradient and washes it out; glow lives in drop-shadows */
   color: transparent;
-  text-shadow:
-    0 0 1px rgba(69, 10, 10, 0.4),
-    0 0 3px rgba(69, 10, 10, 0.2),
-    0 0 14px rgba(251, 146, 60, 0.35),
-    0 0 32px rgba(239, 68, 68, 0.22),
-    0 0 60px rgba(220, 38, 38, 0.1);
-  filter: drop-shadow(0 0 16px rgba(249, 115, 22, 0.25));
+  animation: delta-heat 4.5s ease-in-out infinite;
   user-select: none;
 }
 
@@ -53,61 +111,109 @@
 .delta-glow::after {
   content: "";
   position: absolute;
-  inset: -25%;
+  inset: -5%;
   border-radius: 50%;
-  filter: blur(100px);
-  opacity: 0.3;
+  filter: blur(56px);
+  opacity: calc(0.28 * var(--glow) * var(--bloom));
   z-index: -1;
   pointer-events: none;
 }
 
-.delta-glow::before {
-  background: radial-gradient(
-    circle at 40% 40%,
-    rgba(168, 85, 247, 0.7) 0%,
-    rgba(124, 58, 237, 0.2) 50%,
-    transparent 70%
-  );
-  animation:
-    delta-blob 10s ease-in-out infinite alternate,
-    delta-pulse 3s ease-in-out infinite alternate;
+html:not(.dark) .delta-glow {
+  --bloom: 0.45;
 }
 
+/* inner bloom: rose and amber around the hottest region */
+.delta-glow::before {
+  background:
+    radial-gradient(
+      circle at 28% 30%,
+      rgba(244, 63, 94, 0.45) 0%,
+      rgba(244, 63, 94, 0) 55%
+    ),
+    radial-gradient(
+      circle at 72% 36%,
+      rgba(245, 158, 11, 0.4) 0%,
+      rgba(245, 158, 11, 0) 55%
+    ),
+    radial-gradient(
+      circle at 50% 40%,
+      rgba(251, 146, 60, 0.35) 0%,
+      rgba(234, 88, 12, 0.12) 40%,
+      transparent 60%
+    );
+  animation:
+    delta-blob 10s ease-in-out infinite alternate,
+    delta-pulse 4s ease-in-out infinite alternate;
+}
+
+/* outer wash: green, violet at the base, and deep-red radiant heat */
 .delta-glow::after {
-  background: radial-gradient(
-    circle at 60% 60%,
-    rgba(34, 197, 94, 0.55) 0%,
-    rgba(21, 128, 61, 0.15) 50%,
-    transparent 70%
-  );
+  background:
+    radial-gradient(
+      circle at 70% 66%,
+      rgba(34, 197, 94, 0.35) 0%,
+      rgba(34, 197, 94, 0) 55%
+    ),
+    radial-gradient(
+      circle at 48% 84%,
+      rgba(139, 92, 246, 0.4) 0%,
+      rgba(139, 92, 246, 0) 55%
+    ),
+    radial-gradient(
+      circle at 45% 55%,
+      rgba(220, 38, 38, 0.3) 0%,
+      rgba(127, 29, 29, 0.12) 42%,
+      transparent 62%
+    );
   animation:
     delta-blob 10s ease-in-out infinite alternate-reverse,
-    delta-pulse 3s ease-in-out infinite alternate 1.5s;
+    delta-pulse 4s ease-in-out infinite alternate 2s;
+}
+
+@keyframes delta-heat {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 12px rgb(251 146 60 / calc(0.4 * var(--glow))))
+      drop-shadow(0 0 36px rgb(220 38 38 / calc(0.28 * var(--glow))))
+      brightness(1);
+  }
+  50% {
+    filter: drop-shadow(0 0 18px rgb(251 146 60 / calc(0.52 * var(--glow))))
+      drop-shadow(0 0 52px rgb(220 38 38 / calc(0.38 * var(--glow))))
+      brightness(1.05);
+  }
 }
 
 @keyframes delta-blob {
   0% {
-    transform: translate(-5%, -5%) scale(1);
+    transform: translate(-4%, -4%) scale(1);
   }
   100% {
-    transform: translate(5%, 5%) scale(1.15);
+    transform: translate(4%, 4%) scale(1.12);
   }
 }
 
 @keyframes delta-pulse {
   0%,
   100% {
-    opacity: 0.25;
+    opacity: calc(0.2 * var(--glow) * var(--bloom));
   }
   50% {
-    opacity: 0.5;
+    opacity: calc(0.4 * var(--glow) * var(--bloom));
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .delta-glow,
   .delta-glow::before,
   .delta-glow::after {
     animation: none;
+  }
+
+  .delta-glow {
+    filter: drop-shadow(0 0 12px rgb(251 146 60 / calc(0.4 * var(--glow))))
+      drop-shadow(0 0 36px rgb(220 38 38 / calc(0.28 * var(--glow))));
   }
 }
 
