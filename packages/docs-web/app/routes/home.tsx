@@ -145,34 +145,43 @@ export default function Home() {
       {/* Hero */}
       <section className="border-b border-fd-border">
         <div className="mx-auto max-w-5xl px-6 pb-20 pt-28 sm:pb-24 sm:pt-32">
-          <div className="max-w-2xl">
-            <p className="text-sm font-medium text-[#5F57E3] tracking-wide uppercase">
-              Framework and Runtime
-            </p>
-            <h1 className="mt-4 text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
-              The AI agent framework
-              <br />
-              <span className="text-[#5F57E3]">with built-in governance.</span>
-            </h1>
-            <p className="mt-6 text-lg sm:text-xl text-fd-muted-foreground max-w-xl leading-relaxed">
-              The model proposes actions. The engine validates, authorizes, and
-              audits. Every decision is deterministic, provable, and auditable.
-              No prompt hacks. No drift.
-            </p>
-            <div className="mt-8 flex flex-wrap items-center gap-4">
-              <Link
-                className="inline-flex h-11 items-center rounded-lg bg-[#5F57E3] px-6 text-sm font-semibold text-white transition-colors hover:bg-[#5F57E3]/90"
-                to="/docs"
-              >
-                Get Started
-              </Link>
-              <Link
-                className="inline-flex h-11 items-center gap-2 rounded-lg border border-fd-border px-6 text-sm font-medium text-fd-foreground transition-colors hover:bg-fd-accent"
-                to="/docs/reference"
-              >
-                API Reference
-                <ArrowRight className="size-4" />
-              </Link>
+          <div className="grid items-center gap-12 lg:grid-cols-2">
+            <div className="max-w-2xl">
+              <p className="text-sm font-medium text-[#5F57E3] tracking-wide uppercase">
+                Framework and Runtime
+              </p>
+              <h1 className="mt-4 text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
+                The AI agent framework
+                <br />
+                <span className="text-[#5F57E3]">
+                  with built-in governance.
+                </span>
+              </h1>
+              <p className="mt-6 text-lg sm:text-xl text-fd-muted-foreground max-w-xl leading-relaxed">
+                The model proposes actions. The engine validates, authorizes,
+                and audits. Every decision is deterministic, provable, and
+                auditable. No prompt hacks. No drift.
+              </p>
+              <div className="mt-8 flex flex-wrap items-center gap-4">
+                <Link
+                  className="inline-flex h-11 items-center rounded-lg bg-[#5F57E3] px-6 text-sm font-semibold text-white transition-colors hover:bg-[#5F57E3]/90"
+                  to="/docs"
+                >
+                  Get Started
+                </Link>
+                <Link
+                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-fd-border px-6 text-sm font-medium text-fd-foreground transition-colors hover:bg-fd-accent"
+                  to="/docs/reference"
+                >
+                  API Reference
+                  <ArrowRight className="size-4" />
+                </Link>
+              </div>
+            </div>
+            <div className="hidden lg:flex justify-center items-center">
+              <span className="delta-glow" aria-hidden="true">
+                δ
+              </span>
             </div>
           </div>
         </div>
