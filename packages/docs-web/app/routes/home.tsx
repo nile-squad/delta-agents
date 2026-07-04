@@ -178,7 +178,7 @@ export default function Home() {
                 </Link>
               </div>
             </div>
-            <div className="hidden lg:flex justify-center items-center">
+            <div className="relative hidden min-w-0 items-center justify-center lg:flex">
               <span className="delta-glow" aria-hidden="true">
                 δ
               </span>
