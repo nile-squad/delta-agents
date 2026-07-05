@@ -1,60 +1,59 @@
-# delta-agents-example
+# delta-agents example
 
-A reference implementation showing how to build with [delta-agents](https://github.com/nile-squad/delta-agents), a deterministic governance/control-plane engine for AI agents.
+A reference implementation for [delta-agents](https://github.com/nile-squad/delta-agents) — the AI agents framework with built in safety, governance and provenance.
+
+The model proposes actions; the engine validates, authorizes, supervises, and audits before anything executes. This example shows what that looks like in practice.
 
 ## Scenario
 
-An order support agent that can:
+An order support agent that can look up orders and issue refunds. The refund action moves money, so it's declared `requiresApproval: true` — the model can propose it, but the engine won't run it until a human signs off.
 
-- **`lookup-order`** — read-only, low risk. Looks up a mock order by id.
-- **`issue-refund`** — moves money, `requiresApproval: true`. The agent can *propose* a refund, but delta-agents' execution gateway refuses to run it until a human calls `delta.approve(...)`.
+The example runs end to end with no API key and no database by default. Swap to a real model in one line.
 
-`src/index.ts` sends a goal ("look up the order and refund the customer"), lets the run block on the refund's approval gate, approves it, resumes the task, and prints the full governance audit trail (task status, trust score, risk, and every execution) via `delta.inspect(...)`.
+## What it demonstrates
 
-The example runs end to end with **no API key and no database** — it uses `createMockReasoner` (scripted to request the same actions a real model would) and the engine's default in-memory store.
+- **Governed actions** — schema-validated, risk-scored, audit-logged
+- **Free-loop execution** — the model decides which action to take and when
+- **Deterministic workflow** — a multi-phase SOP that runs the same way every time, model-agnostic
+- **Human oversight** — a high-risk action blocks until approved, then resumes exactly where it left off
 
 ## Project structure
 
 ```
 src/
-  index.ts                     # Entry point: creates the engine, deploys the agent,
-                                # sends the goal, approves the refund, resumes, inspects.
+  index.ts                     # Entry: creates the engine, runs two patterns (free-loop + workflow)
   agents/
-    support-agent.ts           # delta-agents wiring: the lookup-order and issue-refund
-                                # actions, and the support-agent definition.
+    support-agent.ts           # delta-agents wiring: actions, agent, workflow definitions
   services/
-    orders-service.ts          # Plain in-memory "orders backend" the actions call into —
-                                # ordinary domain logic, no delta-agents in here.
+    orders-service.ts          # Plain in-memory "orders backend" — ordinary domain logic, no delta
 ```
 
 ## Running
 
-With Bun (fast path, no build step):
-
 ```bash
 pnpm install
-pnpm dev
+pnpm dev          # Bun — fast, no build step
 ```
 
-With plain Node:
+Or with Node:
 
 ```bash
-pnpm install
 pnpm build
 pnpm start
 ```
 
 ## Wiring a real model
 
-By default the example uses `createMockReasoner` so it runs deterministically with zero setup. To use a real model instead, swap the `reasoner` option in `src/index.ts` for `models`:
+By default the example uses a mock reasoner so it runs deterministically with zero setup. To use a real model, swap the `reasoner` option for `models`:
 
 ```ts
 const delta = await createDeltaEngine({
   models: [{ name: "default", model: "gpt-4o-mini", apiKey: process.env.OPENAI_API_KEY, default: true }],
+  systemPrompt: "You are Acme Corp's order support agent. Always be helpful and concise.",
 });
 ```
 
-Everything else — the actions, the agent, and the `send` / `approve` / `resume` / `inspect` calls — stays exactly the same either way. Governance never changes with the reasoning backend.
+Everything else — actions, agent, send/approve/resume/inspect — stays the same. Governance never changes with the reasoning backend. That's the whole point.
 
 ## Persistent storage
 
@@ -63,6 +62,6 @@ This example uses the engine's default in-memory store (state resets each run). 
 ```ts
 import { createDrizzleStore } from "delta-agents";
 
-const store = await createDrizzleStore("file:./example.db"); // libsql-backed, on disk
-const delta = await createDeltaEngine({ store, reasoner });
+const store = await createDrizzleStore("file:./example.db");
+const delta = await createDeltaEngine({ store, models, systemPrompt });
 ```

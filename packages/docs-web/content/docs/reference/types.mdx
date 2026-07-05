@@ -36,9 +36,14 @@ type ActionContext = {
   phase?: string;
   storyline?: string;
   phaseStoryline?: string;
+  goal?: string;
+  workflowName?: string;
   availableSkills?: Array<{ name: string; description: string; content?: string }>;
+  attachments?: Attachment[];
   communicate?: (channelType: string, body: string) => Promise<ResultType>;
   remember?: (content: string, kind?: string) => Promise<ResultType>;
+  recall?: (query: string) => Promise<ResultType>;
+  budget?: { spent: Cost; limit?: Cost };
 };
 ```
 
@@ -47,9 +52,12 @@ type ActionContext = {
 ```ts
 type Hooks = {
   before?: (ctx: ActionContext) => Promise<ResultType>;
-  after?: (ctx: ActionContext) => Promise<ResultType>;
-  onError?: (ctx: ActionContext) => Promise<ResultType>;
+  after?: (ctx: ActionContext & { result: unknown }) => Promise<ResultType>;
+  onError?: (ctx: ActionContext & { error: string }) => Promise<ResultType>;
 };
+
+type AfterHookFn = (ctx: ActionContext & { result: unknown }) => Promise<ResultType>;
+type ErrorHookFn = (ctx: ActionContext & { error: string }) => Promise<ResultType>;
 ```
 
 ### Workflow
@@ -90,7 +98,7 @@ type Branch = {
   action: string;
   onSuccess?: string;
   onFailure?: string;
-  when?: (ctx: ActionContext) => boolean;
+  when?: (ctx: ActionContext & { lastOutcome?: { action: string; ok: boolean; error?: string } }) => boolean;
 };
 ```
 
@@ -138,11 +146,26 @@ type Tool = {
 type ToolContext = {
   agentName: string;
   taskId: string;
+  goal?: string;
   phaseName?: string;
   toolHistory: ToolHistoryEntry[];
   attachments?: Attachment[];
 };
 ```
+
+### Event types
+
+```ts
+type DeltaEventEnvelope = {
+  timestamp: number;
+  agentName: string;
+};
+
+type DeltaEventDelivered<E extends keyof DeltaEventPayloads> = 
+  DeltaEventPayloads[E] & DeltaEventEnvelope;
+```
+
+Every event delivered to `delta.events.on()` carries a `timestamp` (milliseconds since epoch, stamped when the event is emitted) and `agentName` (the agent executing the task). Handlers receive the full event payload merged with the envelope.
 
 ### Skill
 

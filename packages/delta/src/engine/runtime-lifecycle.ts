@@ -16,16 +16,12 @@ import type { Result } from "slang-ts";
 import type { Checkpoint } from "../shared/types";
 import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort } from "../ports/reasoner-port";
-import type { Registry } from "../authoring/registry";
 import type { Agent } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
-import type { RetryOptions } from "../infra";
 import type { SendResult, InspectResult } from "./types";
 import { snapshotFromTask, snapshotFromJson, snapshotToJson } from "../state-space/task-state";
 import { checkpointId } from "../shared/id";
-import type { Logger } from "../shared/logger-types";
-import type { Diagnostics } from "../shared/diagnostics";
-import type { DeltaEventsInternal } from "../shared/create-events";
+import type { RuntimeContext } from "./runtime-context";
 import { runCommitStep } from "./commit-step";
 import { runSendLoop, runWorkflowTask } from "./runtime";
 
@@ -84,38 +80,15 @@ export const resumeTask = async ({
   taskId,
   agent,
   reasoner,
-  registry,
-  store,
-  maxSteps,
-  providerRetry,
-  timezone,
-  logger,
-  diagnostics,
-  events,
-  commitContextLimit,
-  maxInvalidDecisionRetries,
+  runtime,
 }: {
   taskId: string;
   agent: Agent;
   reasoner: ReasonerPort;
-  registry: Registry;
-  store: StoragePort;
-  maxSteps?: number;
-  providerRetry?: RetryOptions;
-  /** Timezone for humanized time in reasoner user messages; falls back to system tz in the scheduler. */
-  timezone?: string;
-  /** Per-engine logger threaded from the engine factory. */
-  logger: Logger;
-  /** Per-engine diagnostics handle. Threaded into the scheduler so opt-in
-   * modules can emit structured events. */
-  diagnostics: Diagnostics;
-  /** Per-engine events emitter. Threaded so HITL and task lifecycle events fire unconditionally. */
-  events: DeltaEventsInternal;
-  /** Max recent commits to inject into reasoner context. */
-  commitContextLimit?: number;
-  /** Max consecutive invalid model decisions fed back for correction before failing. */
-  maxInvalidDecisionRetries?: number;
+  /** Engine-lifetime dependency bundle (store, registry, retry policy, limits, flags, …). */
+  runtime: RuntimeContext;
 }): Promise<Result<SendResult, string>> => {
+  const { store, events } = runtime;
   const taskResult = await store.getTask(taskId);
   if (taskResult.isErr) return Err(`cannot resume: task "${taskId}" not found`);
   const task = taskResult.value;
@@ -146,13 +119,9 @@ export const resumeTask = async ({
       task,
       agent,
       reasoner,
-      store,
       workflowName: task.workflow ?? "",
       snapshot: startingSnapshot,
-      providerRetry,
-      timezone,
-      logger,
-      diagnostics,
+      runtime,
     });
     if (commitResult.status === "completed") {
       events.emit("task-completed", { taskId: task.id, agentName: agent.name, goal: task.goal });
@@ -176,20 +145,14 @@ export const resumeTask = async ({
       workflowName: task.workflow,
       input: startingSnapshot.workflowInput,
       actionInputs: startingSnapshot.workflowActionInputs,
-      registry,
-      store,
       startingSnapshot,
       reasoner,
-      providerRetry,
-      timezone,
-      logger,
-      diagnostics,
-      events,
+      runtime,
     });
     return Ok(result);
   }
 
-  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, providerRetry, timezone, logger, diagnostics, events, commitContextLimit, maxInvalidDecisionRetries });
+  const result = await runSendLoop({ task, agent, reasoner, startingSnapshot, runtime });
   return Ok(result);
 };
 

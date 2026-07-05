@@ -25,11 +25,9 @@ import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort } from "../ports/reasoner-port";
 import type { Agent } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
-import type { RetryOptions } from "../infra";
 import { retryWithJitter } from "../infra";
 import { commitId } from "../shared/id";
-import type { Logger } from "../shared/logger-types";
-import type { Diagnostics } from "../shared/diagnostics";
+import type { RuntimeContext } from "./runtime-context";
 import type { SendResult } from "./types";
 import { formatDistanceToNow } from "date-fns";
 
@@ -130,29 +128,23 @@ export const runCommitStep = async ({
   task,
   agent,
   reasoner,
-  store,
   workflowName,
   snapshot,
   maxRetries = COMMIT_MAX_RETRIES_DEFAULT,
-  providerRetry,
-  timezone,
-  logger,
-  diagnostics,
+  runtime,
 }: {
   task: Task;
   agent: Agent;
   reasoner: ReasonerPort;
-  store: StoragePort;
   /** Workflow name for the commit record. Null for free-loop commits (Phase 6). */
   workflowName: string;
   /** The final snapshot from the completed workflow. */
   snapshot: TaskStateSnapshot;
   maxRetries?: number;
-  providerRetry?: RetryOptions;
-  timezone?: string;
-  logger: Logger;
-  diagnostics: Diagnostics;
+  /** Engine-lifetime dependency bundle (store, retry policy, timezone, logger, diagnostics). */
+  runtime: RuntimeContext;
 }): Promise<SendResult> => {
+  const { store, providerRetry, timezone, logger, diagnostics } = runtime;
   // Mark the task as pending commit so the hard block (Phase 3) can prevent
   // new tasks for this agent until the commit is finalized.
   await store.updateTask(task.id, { status: "pendingCommit", updatedAt: new Date() });

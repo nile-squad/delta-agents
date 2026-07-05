@@ -168,13 +168,13 @@ await delta.cleanup(options?: CleanupOptions): Promise<Result<void, string>>
 
 #### `delta.events`
 
-Subscribe to engine events with typed payloads. Each event name maps to a specific payload shape so subscribers receive correctly typed data without casting.
+Subscribe to engine events with typed payloads. Each event name maps to a specific payload shape so subscribers receive correctly typed data without casting. Every event carries a `timestamp` (ms since epoch) and `agentName` in the envelope, so consumers no longer need to join against `delta.inspect()` for time and agent context.
 
 ```ts
 // Subscribe. Returns an unsubscribe function
 const unsub = delta.events.on("approval-requested", (data) => {
-  // data is typed as { taskId: string; action: string; approvalId: string; reason: string }
-  console.log(data.taskId);
+  // data is typed as { taskId: string; action: string; approvalId: string; reason: string; timestamp: number; agentName: string }
+  console.log(`${data.agentName} at ${new Date(data.timestamp)}: ${data.action} needs approval`);
 });
 
 // Unsubscribe when no longer needed

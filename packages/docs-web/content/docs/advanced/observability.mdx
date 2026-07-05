@@ -123,11 +123,11 @@ All three read-models return zero-valued stats for unknown agents or workflows, 
 
 ## Events
 
-The engine emits typed events for significant occurrences: task lifecycle changes, human oversight signals, and execution milestones. Subscribe to react in real time instead of polling `inspect()`.
+The engine emits typed events for significant occurrences: task lifecycle changes, human oversight signals, and execution milestones. Subscribe to react in real time instead of polling `inspect()`. Every event carries a `timestamp` (ms since epoch) and `agentName` in the envelope.
 
 ```ts
 const unsubscribe = delta.events.on("approval-requested", (data) => {
-  console.log(`Task ${data.taskId} needs sign-off for ${data.action}: ${data.reason}`);
+  console.log(`${data.agentName} at ${new Date(data.timestamp)}: Task ${data.taskId} needs sign-off for ${data.action}: ${data.reason}`);
   // Forward to Slack, update a dashboard, trigger a webhook
 });
 
@@ -141,14 +141,14 @@ Available event types:
 
 | Event | Payload | When it fires |
 |-------|---------|---------------|
-| `approval-requested` | `taskId, action, approvalId, reason` | An action needs human sign-off |
-| `approval-resolved` | `taskId, action, approvalId, decision` | Approve or reject resolves it |
-| `escalation-raised` | `taskId, trigger, reason` | A reasoner failure or budget violation escalates |
-| `task-completed` | `taskId, agentName, goal` | A task finishes successfully |
-| `task-blocked` | `taskId, agentName, reason` | A task is waiting on human oversight |
-| `task-failed` | `taskId, agentName, reason` | A task terminates with failure |
+| `approval-requested` | `taskId, action, approvalId, reason, timestamp, agentName` | An action needs human sign-off |
+| `approval-resolved` | `taskId, action, approvalId, decision, timestamp, agentName` | Approve or reject resolves it |
+| `escalation-raised` | `taskId, trigger, reason, timestamp, agentName` | A reasoner failure or budget violation escalates |
+| `task-completed` | `taskId, agentName, goal, timestamp` | A task finishes successfully |
+| `task-blocked` | `taskId, agentName, reason, timestamp` | A task is waiting on human oversight |
+| `task-failed` | `taskId, agentName, reason, timestamp` | A task terminates with failure |
 
-Engine-internal events (gated by `diagnostics.engine`): `step-start`, `step-end`, `action-start`, `action-end`, `commit-step-attempt`, `commit-step-done`, `commit-step-auto-commit`.
+Engine-internal events (gated by `diagnostics.engine`): `step-start`, `step-end`, `action-start`, `action-end`, `commit-step-attempt`, `commit-step-done`, `commit-step-auto-commit`. All include `timestamp` and `agentName`.
 
 ## Cleanup
 

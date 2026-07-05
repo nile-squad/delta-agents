@@ -19,13 +19,10 @@
 
 import { option } from "slang-ts";
 import type { Task, Attachment } from "../shared/types";
-import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort } from "../ports/reasoner-port";
-import type { Registry } from "../authoring/registry";
 import type { Agent, Action, Workflow } from "../authoring/types";
 import type { TaskStateSnapshot } from "../state-space/types";
 import type { ApprovalStatus } from "../execution/types";
-import type { RetryOptions } from "../infra";
 import type { SendResult } from "./types";
 import { snapshotFromTask, snapshotToJson } from "../state-space/task-state";
 import { runWorkflow } from "../workflow";
@@ -38,9 +35,7 @@ import type { HorizonStep } from "../governance";
 import { isOverBudget } from "../shared/cost";
 import { checkpointId } from "../shared/id";
 import { makeRunner, runScheduler } from "./scheduler";
-import type { Logger } from "../shared/logger-types";
-import type { Diagnostics } from "../shared/diagnostics";
-import type { DeltaEventsInternal } from "../shared/create-events";
+import type { RuntimeContext } from "./runtime-context";
 import { runCommitStep } from "./commit-step";
 
 const MAX_STEPS_DEFAULT = 100;
@@ -60,53 +55,28 @@ export const runSendLoop = async ({
   task,
   agent,
   reasoner,
-  registry,
-  store,
-  maxSteps = MAX_STEPS_DEFAULT,
   startingSnapshot,
-  providerRetry,
-  timezone,
-  logger,
-  diagnostics,
-  events,
-  commitContextLimit,
-  maxInvalidDecisionRetries,
   attachments,
-  guidanceEnabled = true,
+  runtime,
 }: {
   task: Task;
   agent: Agent;
   reasoner: ReasonerPort;
-  registry: Registry;
-  store: StoragePort;
-  maxSteps?: number;
   startingSnapshot?: TaskStateSnapshot;
-  providerRetry?: RetryOptions;
-  /** Timezone for humanized time in reasoner user messages; falls back to system tz in the scheduler. */
-  timezone?: string;
-  /** Per-engine logger threaded from the engine factory. */
-  logger: Logger;
-  /** Per-engine diagnostics handle. Threaded into the scheduler so opt-in
-   * modules can emit structured events; a no-op when diagnostics is disabled. */
-  diagnostics: Diagnostics;
-  /** Per-engine events emitter. Threaded so HITL and task lifecycle events fire unconditionally. */
-  events: DeltaEventsInternal;
-  /** Max recent commits to inject into reasoner context. */
-  commitContextLimit?: number;
-  /** Max consecutive invalid model decisions fed back for correction before failing. */
-  maxInvalidDecisionRetries?: number;
   /** Attachments supplied at send() time; seeds the initial snapshot. Absent on resume (already persisted in the checkpointed snapshot). */
   attachments?: Attachment[];
-  /** Whether to compute guidance lines from warning bands. */
-  guidanceEnabled?: boolean;
+  /** Engine-lifetime dependency bundle (store, registry, retry policy, limits, flags, …). */
+  runtime: RuntimeContext;
 }): Promise<SendResult> => {
+  const { events } = runtime;
+  const maxSteps = runtime.limits.maxStepsPerTask ?? MAX_STEPS_DEFAULT;
   const root = makeRunner({
     task,
     agent,
     snapshot: startingSnapshot ?? { ...snapshotFromTask(task), ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}) },
     maxSteps,
   });
-  const schedulerResult = await runScheduler({ root, reasoner, registry, store, maxSteps, providerRetry, timezone, logger, diagnostics, events, commitContextLimit, maxInvalidDecisionRetries, guidanceEnabled });
+  const schedulerResult = await runScheduler({ root, reasoner, runtime });
   if (schedulerResult.status === "completed") {
     events.emit("task-completed", { taskId: task.id, agentName: agent.name, goal: task.goal });
   } else if (schedulerResult.status === "blocked") {
@@ -175,18 +145,11 @@ export const runWorkflowTask = async ({
   workflowName,
   input,
   actionInputs,
-  registry,
-  store,
   startingSnapshot,
   reasoner,
-  providerRetry,
-  timezone,
-  logger,
   commitMaxRetries,
-  diagnostics,
-  events,
   attachments,
-  guidanceEnabled = true,
+  runtime,
 }: {
   task: Task;
   agent: Agent;
@@ -194,8 +157,6 @@ export const runWorkflowTask = async ({
   input?: Record<string, unknown>;
   /** Per-action input overrides; when present for an action, replaces the shared `input` bag. */
   actionInputs?: Record<string, Record<string, string | number | boolean | null>>;
-  registry: Registry;
-  store: StoragePort;
   /** Resume state reconstructed from a checkpoint. When present, completed phases
    *  are skipped and the persisted send-time input is reused (resumeTask path). */
   startingSnapshot?: TaskStateSnapshot;
@@ -203,25 +164,15 @@ export const runWorkflowTask = async ({
    * acknowledge completion. Threaded from the engine factory so the same model
    * that ran the workflow gets the commit call. */
   reasoner: ReasonerPort;
-  /** Resilience policy for the commit step's reasoner call. Same defaults the
-   * scheduler uses for the free-loop reasoner. */
-  providerRetry?: RetryOptions;
-  /** Timezone for humanized time in commit-step reasoner messages. */
-  timezone?: string;
-  /** Per-engine logger threaded into the commit step for failure logging. */
-  logger: Logger;
   /** Max reasoner attempts in the commit step before auto-committing with no notes. */
   commitMaxRetries?: number;
-  /** Per-engine diagnostics handle. Threaded into the workflow + phase + gateway
-   * paths so opt-in modules can emit structured events. */
-  diagnostics: Diagnostics;
-  /** Per-engine events emitter. Threaded so HITL events fire unconditionally. */
-  events: DeltaEventsInternal;
   /** Attachments supplied at send() time; seeds the initial snapshot. Absent on resume (already persisted in the checkpointed snapshot). */
   attachments?: Attachment[];
-  /** Whether to compute guidance lines from warning bands. */
-  guidanceEnabled?: boolean;
+  /** Engine-lifetime dependency bundle (store, registry, retry policy, diagnostics, flags, …). */
+  runtime: RuntimeContext;
 }): Promise<SendResult> => {
+  const { registry, store, diagnostics, events } = runtime;
+  const { guidanceEnabled } = runtime.flags;
   // On a fresh send, start from the task record. On resume, start from the
   // checkpoint snapshot so completedPhases and the original input survive.
   const base = startingSnapshot ?? snapshotFromTask(task);
@@ -409,14 +360,10 @@ export const runWorkflowTask = async ({
       task,
       agent,
       reasoner,
-      store,
       workflowName,
       snapshot: result.snapshot,
       maxRetries: commitMaxRetries,
-      providerRetry,
-      timezone,
-      logger,
-      diagnostics,
+      runtime,
     });
     if (commitResult.status === "completed") {
       events.emit("task-completed", { taskId: task.id, agentName: agent.name, goal: task.goal });

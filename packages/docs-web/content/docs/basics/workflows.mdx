@@ -86,16 +86,23 @@ Branching is declared, not inferred. The engine never invents transitions. Workf
 
 ### Guard conditions
 
-An optional guard evaluated against task state determines the next action.
+An optional guard evaluated against task state determines the next action. The guard receives the action context plus the previous action's outcome in the phase.
 
 ```ts
 {
   action: "process-order",
   onSuccess: "fulfill-order",
   onFailure: "notify-failure",
-  when: (ctx) => ctx.task.risk.currentRisk < 3,
+  when: (ctx) => {
+    // Route based on the previous action's result
+    if (ctx.lastOutcome?.ok === false) return false;
+    // Or based on task state
+    return ctx.budget?.spent.tokens < ctx.budget?.limit?.tokens;
+  },
 }
 ```
+
+The `ctx.lastOutcome` field carries the previous action's name, whether it succeeded (`ok: boolean`), and the error message if it failed. It is undefined before the first action in the phase.
 
 ## Checkpoints
 

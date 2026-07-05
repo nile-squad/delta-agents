@@ -76,15 +76,16 @@ With unsatisfied prerequisites, the action does not exist in the current state-s
 Hooks allow observation and preparation around execution without bypassing governance. Three hook points are available:
 
 - **`before`**: runs before the action executes. Use for logging, setup, or validation that the action itself should not own.
-- **`after`**: runs after a successful action outcome.
-- **`onError`**: runs when the action returns an `Err` outcome.
+- **`after`**: runs after a successful action outcome. Receives `ctx` and the action's `result` value.
+- **`onError`**: runs when the action returns an `Err` outcome. Receives `ctx` and the failure `error` message.
 
 ```ts
 const processOrder = delta.action({
   name: "process-order",
   hooks: {
     before: async (ctx) => audit.log("process-order:start", ctx),
-    onError: async (ctx) => alerts.page("process-order:failed", ctx),
+    after: async (ctx) => metrics.record("process-order:success", ctx.result),
+    onError: async (ctx) => alerts.page("process-order:failed", ctx.error),
   },
   // ...
 });
@@ -110,11 +111,24 @@ type ActionContext = {
   phase?: string;
   storyline?: string;
   phaseStoryline?: string;
+  goal?: string;
+  workflowName?: string;
   availableSkills?: Array<{ name: string; description: string; content?: string }>;
+  attachments?: Attachment[];
   communicate?: (channelType: string, body: string) => Promise<ResultType>;
   remember?: (content: string, kind?: string) => Promise<ResultType>;
+  recall?: (query: string) => Promise<ResultType>;
+  budget?: { spent: Cost; limit?: Cost };
 };
 ```
+
+Key context fields:
+
+- **`goal`**: the task's goal, available to actions that need to understand the broader intent.
+- **`workflowName`**: the assigned workflow name (absent in free reasoner tasks).
+- **`attachments`**: any files, images, or audio passed with the task.
+- **`recall`**: read agent memories; resolves the same relevance-ranked context the reasoner uses for grounding.
+- **`budget`**: read-only cost snapshot (tokens and duration spent, optional limit) so long-running actions can self-limit.
 
 The engine assembles the context: the developer never constructs it.
 

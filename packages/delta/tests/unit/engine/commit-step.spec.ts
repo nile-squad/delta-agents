@@ -21,15 +21,34 @@ import { createInMemoryStore } from "../../../src/ports/in-memory-store";
 import { createMockReasoner } from "../../../src/ports/mock-reasoner";
 import { createEngineLogger } from "../../../src/shared/logger";
 import { createDiagnostics } from "../../../src/shared/diagnostics";
+import { createEvents } from "../../../src/shared/create-events";
+import { createRegistry } from "../../../src/authoring/registry";
+import { defaultRetryOptions } from "../../../src/infra";
+import type { RetryOptions } from "../../../src/infra";
 import { snapshotFromTask } from "../../../src/state-space";
 import type { Task, Commit } from "../../../src/shared/types";
 import type { Agent } from "../../../src/authoring/types";
+import type { StoragePort } from "../../../src/ports/storage-port";
 import type { ReasonerPort } from "../../../src/ports/reasoner-port";
+import type { RuntimeContext } from "../../../src/engine/runtime-context";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 const silentLogger = createEngineLogger({ drain: { type: "custom", write: () => {} } });
 const noopDiagnostics = createDiagnostics({}, silentLogger);
+
+/** Build the engine-lifetime bundle runCommitStep now takes; only store and the
+ * optional retry policy vary across these tests, the rest are inert defaults. */
+const makeRuntime = (store: StoragePort, providerRetry: RetryOptions = defaultRetryOptions): RuntimeContext => ({
+  store,
+  registry: createRegistry(),
+  logger: silentLogger,
+  diagnostics: noopDiagnostics,
+  events: createEvents(),
+  providerRetry,
+  limits: { maxStepsPerTask: 100, commitContextLimit: 10, maxInvalidDecisionRetries: 3 },
+  flags: { guidanceEnabled: true },
+});
 
 const makeTask = (overrides: Partial<Task> = {}): Task => ({
   id: "tsk_commit_001",
@@ -112,8 +131,8 @@ describe("runCommitStep — agent commits via finish_task", () => {
     const snapshot = snapshotFromTask(task);
 
     const result = await runCommitStep({
-      task, agent, reasoner, store, workflowName: "onboarding", snapshot,
-      logger: silentLogger, diagnostics: noopDiagnostics,
+      task, agent, reasoner, workflowName: "onboarding", snapshot,
+      runtime: makeRuntime(store),
     });
 
     expect(result.status).toBe("completed");
@@ -138,8 +157,8 @@ describe("runCommitStep — agent commits via finish_task", () => {
 
     const reasoner = createMockReasoner({ responses: [{ done: true }] });
     const result = await runCommitStep({
-      task, agent, reasoner, store, workflowName: "onboarding", snapshot: snapshotFromTask(task),
-      logger: silentLogger, diagnostics: noopDiagnostics,
+      task, agent, reasoner, workflowName: "onboarding", snapshot: snapshotFromTask(task),
+      runtime: makeRuntime(store),
     });
 
     expect(result.status).toBe("completed");
@@ -154,8 +173,8 @@ describe("runCommitStep — agent commits via finish_task", () => {
 
     const reasoner = createMockReasoner({ responses: [{ done: true, reason: "done" }] });
     await runCommitStep({
-      task, agent, reasoner, store, workflowName: "onboarding", snapshot: snapshotFromTask(task),
-      logger: silentLogger, diagnostics: noopDiagnostics,
+      task, agent, reasoner, workflowName: "onboarding", snapshot: snapshotFromTask(task),
+      runtime: makeRuntime(store),
     });
 
     const commits = await store.getCommitsByAgent(agent.name);
@@ -176,8 +195,8 @@ describe("runCommitStep — agent does not commit", () => {
     });
 
     const result = await runCommitStep({
-      task, agent, reasoner, store, workflowName: "onboarding", snapshot: snapshotFromTask(task),
-      maxRetries: 2, logger: silentLogger, diagnostics: noopDiagnostics,
+      task, agent, reasoner, workflowName: "onboarding", snapshot: snapshotFromTask(task),
+      maxRetries: 2, runtime: makeRuntime(store),
     });
 
     expect(result.status).toBe("completed");
@@ -203,9 +222,9 @@ describe("runCommitStep — agent does not commit", () => {
     };
 
     const result = await runCommitStep({
-      task, agent, reasoner: flaky, store, workflowName: "onboarding", snapshot: snapshotFromTask(task),
-      maxRetries: 2, providerRetry: { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0, jitterFactor: 0 },
-      logger: silentLogger, diagnostics: noopDiagnostics,
+      task, agent, reasoner: flaky, workflowName: "onboarding", snapshot: snapshotFromTask(task),
+      maxRetries: 2,
+      runtime: makeRuntime(store, { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0, jitterFactor: 0 }),
     });
 
     expect(result.status).toBe("completed");
@@ -233,8 +252,8 @@ describe("runCommitStep — status transitions", () => {
     };
 
     await runCommitStep({
-      task, agent, reasoner: observing, store, workflowName: "onboarding", snapshot: snapshotFromTask(task),
-      logger: silentLogger, diagnostics: noopDiagnostics,
+      task, agent, reasoner: observing, workflowName: "onboarding", snapshot: snapshotFromTask(task),
+      runtime: makeRuntime(store),
     });
 
     expect(statusDuringStep).toBe("pendingCommit");

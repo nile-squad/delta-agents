@@ -1,7 +1,7 @@
 {
   "name": "delta-agents",
   "version": "1.0.0",
-  "description": "Deterministic autonomous control plane for AI agents",
+  "description": "The AI agents framework with built in safety, governance and provenance.",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",

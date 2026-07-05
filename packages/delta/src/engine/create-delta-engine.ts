@@ -23,6 +23,7 @@
 import { Ok, Err, option } from "slang-ts";
 import { defaultRetryOptions } from "../infra";
 import type { DeltaEngineConfig, DeltaEngine, ModelDef } from "./types";
+import type { RuntimeContext } from "./runtime-context";
 import type { ReasonerPort } from "../ports/reasoner-port";
 import { createInMemoryStore } from "../ports/in-memory-store";
 import { createCachedStore } from "../ports/cached-store";
@@ -94,6 +95,31 @@ export const createDeltaEngine = async ({
   // Resolve the reasoner-retry policy once. Partial config merges over the infra
   // defaults so a caller can tune just the field they care about (e.g. attempts).
   const providerRetry = { ...defaultRetryOptions, ...configProviderRetry };
+
+  // ── Engine-lifetime dependency bundle ──────────────────────────────────────
+  // Built once, here, and threaded as a single immutable `runtime` through the
+  // whole internal call chain (runSendLoop → runScheduler → stepTask, plus
+  // runWorkflowTask / resumeTask / runCommitStep). Every field is fixed for the
+  // life of the engine; bundling them means adding a new engine-lifetime
+  // dependency touches only the RuntimeContext type, not 4+ call signatures.
+  // Per-call values (task, agent, reasoner, attachments, …) stay separate args.
+  const runtime: RuntimeContext = {
+    store,
+    registry,
+    logger,
+    diagnostics,
+    events,
+    providerRetry,
+    timezone: configTimezone,
+    limits: {
+      maxStepsPerTask,
+      // Default (10) applied here so stepTask always sees a concrete limit —
+      // preserves the prior runScheduler default now that the hop is bundled.
+      commitContextLimit: configCommitContextLimit ?? 10,
+      maxInvalidDecisionRetries,
+    },
+    flags: { guidanceEnabled: configGuidance },
+  };
 
   // ── Model config validation ──────────────────────────────────────────────
   // Validate models at construction time so mistakes surface immediately, not
@@ -399,19 +425,12 @@ export const createDeltaEngine = async ({
         workflowName,
         input,
         actionInputs,
-        registry,
-        store,
-        diagnostics,
-        events,
         reasoner: resolveReasoner(agentDef),
-        providerRetry,
-        timezone: configTimezone,
-        logger,
         commitMaxRetries: configCommitMaxRetries,
         attachments,
-        guidanceEnabled: configGuidance,
+        runtime,
       })
-      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, providerRetry, timezone: configTimezone, logger, diagnostics, events, commitContextLimit: configCommitContextLimit, maxInvalidDecisionRetries, attachments, guidanceEnabled: configGuidance });
+      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), attachments, runtime });
 
     return Ok(result);
   };
@@ -469,16 +488,7 @@ export const createDeltaEngine = async ({
       taskId: taskId_,
       agent: agentResult.value,
       reasoner: resolveReasoner(agentResult.value),
-      registry,
-      store,
-      maxSteps: maxStepsPerTask,
-      providerRetry,
-      timezone: configTimezone,
-      logger,
-      diagnostics,
-      events,
-      commitContextLimit: configCommitContextLimit,
-      maxInvalidDecisionRetries,
+      runtime,
     });
   };
 

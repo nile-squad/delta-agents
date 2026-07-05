@@ -70,6 +70,15 @@ type Tool = {
   cost?: Cost;
   budget?: Cost;
 };
+
+type ToolContext = {
+  agentName: string;
+  taskId: string;
+  goal?: string;
+  phaseName?: string;
+  toolHistory: ToolHistoryEntry[];
+  attachments?: Attachment[];
+};
 ```
 
 ## Progressive disclosure

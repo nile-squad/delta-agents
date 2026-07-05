@@ -27,9 +27,7 @@
 import { option } from "slang-ts";
 import type { Option } from "slang-ts";
 import type { Task, Checkpoint, Cost, TaskTree } from "../shared/types";
-import type { StoragePort } from "../ports/storage-port";
 import type { ReasonerPort, DelegationRequest } from "../ports/reasoner-port";
-import type { Registry } from "../authoring/registry";
 import type { Agent, Action } from "../authoring/types";
 import { buildAvailableSkills, resolveSkillRefs } from "../skills";
 import type { TaskStateSnapshot } from "../state-space/types";
@@ -39,8 +37,7 @@ import { isOverBudget, addCosts, remainingCost } from "../shared/cost";
 import { discoverActions } from "../state-space/discover-actions";
 import { runGateway } from "../execution/execution-gateway";
 import { applyPostStepGovernance, getApprovalStatusForAction, requestApproval, recordAutoApproval, approvalRequired, describeRejection, raiseEscalation } from "../oversight";
-import { retryWithJitter, defaultRetryOptions } from "../infra";
-import type { RetryOptions } from "../infra";
+import { retryWithJitter } from "../infra";
 import { dispatchCommunication, makeContextCommunicate } from "../comms";
 import { retrieveContext, makeContextRemember, makeContextRecall } from "../memory";
 import { computeActionValue } from "../governance";
@@ -53,9 +50,7 @@ import { formatDistanceToNow } from "date-fns";
 import { toJSONSchema } from "zod";
 import { createLoopDetector } from "./loop-detector";
 import type { LoopDetector } from "./loop-detector";
-import type { Logger } from "../shared/logger-types";
-import type { Diagnostics } from "../shared/diagnostics";
-import type { DeltaEventsInternal } from "../shared/create-events";
+import type { RuntimeContext } from "./runtime-context";
 import { formatCommitContext } from "./commit-step";
 import { handleToolExecution, handleToolInfo, handleSearchCommits, handleFreeLoopCommit } from "./tool-dispatch";
 
@@ -144,41 +139,22 @@ const stepTask = async ({
   snapshot: inputSnapshot,
   step,
   reasoner,
-  registry,
-  store,
-  providerRetry,
-  timezone,
   loopDetector,
-  diagnostics,
-  events,
-  commitContextLimit,
-  maxInvalidDecisionRetries = 3,
-  guidanceEnabled = true,
+  runtime,
 }: {
   task: Task;
   agent: Agent;
   snapshot: TaskStateSnapshot;
   step: number;
   reasoner: ReasonerPort;
-  registry: Registry;
-  store: StoragePort;
-  providerRetry: RetryOptions;
-  /** Timezone for humanized time in reasoner user messages. Falls back to the system tz. */
-  timezone?: string;
   /** Per-run loop detector; gates tool calls by cooldown / max-calls / budget. */
   loopDetector: LoopDetector;
-  /** Per-engine diagnostics handle. Threaded so the engine module can emit
-   * step-start / step-end events when diagnostics.engine is enabled. */
-  diagnostics: Diagnostics;
-  /** Per-engine events emitter. Threaded so HITL events fire unconditionally at the source callsites. */
-  events: DeltaEventsInternal;
-  /** Max recent commits to inject into reasoner context. */
-  commitContextLimit?: number;
-  /** Max consecutive invalid model decisions fed back for correction before failing. */
-  maxInvalidDecisionRetries?: number;
-  /** Whether to compute guidance lines from warning bands. */
-  guidanceEnabled?: boolean;
+  /** Engine-lifetime dependency bundle (store, registry, retry policy, limits, flags, …). */
+  runtime: RuntimeContext;
 }): Promise<StepOutcome> => {
+  const { registry, store, providerRetry, timezone, events } = runtime;
+  const { commitContextLimit, maxInvalidDecisionRetries } = runtime.limits;
+  const { guidanceEnabled } = runtime.flags;
   // Bounded invalid-decision feedback: a prior rejection (unknown action /
   // schema-invalid input) is surfaced to the model once via lastError, then
   // stripped — ANY valid decision this turn resets the counter. Only the two
@@ -666,46 +642,20 @@ const taskStatusFor = (status: SendResult["status"]): Task["status"] =>
 export const runScheduler = async ({
   root,
   reasoner,
-  registry,
-  store,
-  maxSteps,
-  providerRetry = defaultRetryOptions,
-  timezone,
-  logger,
-  diagnostics,
-  events,
   loopDetector: passedLoopDetector,
-  commitContextLimit = 10,
-  maxInvalidDecisionRetries,
-  guidanceEnabled = true,
+  runtime,
 }: {
   root: Runner;
   reasoner: ReasonerPort;
-  registry: Registry;
-  store: StoragePort;
-  maxSteps: number;
-  providerRetry?: RetryOptions;
-  /** Timezone for humanized time in reasoner user messages; falls back to system tz in stepTask. */
-  timezone?: string;
-  /** Per-engine logger threaded from the engine factory. */
-  logger: Logger;
-  /** Per-engine diagnostics handle. Threaded into the main loop so opt-in
-   * modules (engine, actions, ...) can emit structured events. */
-  diagnostics: Diagnostics;
-  /** Per-engine events emitter. Threaded into the scheduler so HITL and
-   * task lifecycle events fire unconditionally at the source callsites. */
-  events: DeltaEventsInternal;
   /** Per-run loop detector. When omitted, the scheduler builds a fresh one —
    * loop detection is about within-run loops, so a fresh detector per
    * runScheduler call is the natural default. */
   loopDetector?: LoopDetector;
-  /** Max recent commits to inject into reasoner context (default 10). */
-  commitContextLimit?: number;
-  /** Max consecutive invalid model decisions fed back before failing (defaulted in stepTask). */
-  maxInvalidDecisionRetries?: number;
-  /** Whether to compute guidance lines from warning bands. */
-  guidanceEnabled?: boolean;
+  /** Engine-lifetime dependency bundle (store, registry, logger, diagnostics, limits, …). */
+  runtime: RuntimeContext;
 }): Promise<SendResult> => {
+  const { store, registry, logger, diagnostics } = runtime;
+  const maxSteps = runtime.limits.maxStepsPerTask;
   const rootId = root.task.rootId;
   const runners: Runner[] = [root];
   let treeInitialized = false;
@@ -971,16 +921,8 @@ export const runScheduler = async ({
         snapshot: runner.snapshot,
         step: runner.step,
         reasoner,
-        registry,
-        store,
-        providerRetry,
-        timezone,
         loopDetector,
-        diagnostics,
-        events,
-        commitContextLimit,
-        maxInvalidDecisionRetries,
-        guidanceEnabled,
+        runtime,
       });
       runner.step++;
       runner.snapshot = outcome.snapshot;
