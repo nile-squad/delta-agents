@@ -4,6 +4,8 @@
     "actions",
     "agents",
     "workflows",
+    "skills",
+    "data-sources",
     "tools",
     "cost-and-budget",
     "human-oversight"

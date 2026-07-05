@@ -23,15 +23,16 @@ Actions may declare:
 
 ## Agents
 
-An agent is a named role with a set of allowed actions, optional workflows, skills, and channels. The agent defines what the model can do. The engine defines what the model will be allowed to do at any given state.
+An agent is a named role with a set of allowed actions, optional workflows, skills, channels, and data sources. The agent defines what the model can do. The engine defines what the model will be allowed to do at any given state.
 
 An agent carries:
 
 - **Role and role prompt**: the agent's identity and behavioral instructions.
 - **Actions**: the operations the agent is permitted to perform.
 - **Workflows**: structured multi-phase procedures the agent follows.
-- **Skills**: knowledge resources the agent reads at runtime.
+- **Skills**: [knowledge files](/docs/basics/skills) the agent loads per turn alongside its instructions.
 - **Channels**: messaging platforms the agent communicates through.
+- **Data sources**: [governed CRUD stores](/docs/basics/data-sources) the agent reads from and writes to.
 - **Team**: a group name for multi-agent coordination. Agents on the same team share a roster and mailbox awareness.
 
 ## Workflows

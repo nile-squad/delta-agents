@@ -108,6 +108,7 @@ type Agent = {
   workflows?: Workflow[];
   skills?: Skill[];
   channels?: Channel[];
+  dataSources?: DataSource[];
   team?: string;
 };
 ```
@@ -149,8 +150,7 @@ type ToolContext = {
 type Skill = {
   name: string;
   description: string;
-  path: string;
-  active: boolean;
+  folder: string;
 };
 ```
 
@@ -163,6 +163,30 @@ type Channel = {
   sendMessage: (message: string, ctx: ChannelContext) => Promise<ResultType>;
   retrieveMessages?: (ctx: ChannelContext) => Promise<ResultType>;
   replyMessage?: (id: string, message: string, ctx: ChannelContext) => Promise<ResultType>;
+};
+```
+
+### DataSource
+
+```ts
+type DataSourceOwnership = "internal" | "external";
+
+type DataSourceAuthentication = {
+  type: string;
+};
+
+type DataSource = {
+  name: string;
+  description: string;
+  ownership: DataSourceOwnership;
+  contentType: string;
+  authentication?: DataSourceAuthentication;
+  actions: {
+    retrieve?: Action;
+    create?: Action;
+    update?: Action;
+    delete?: Action;
+  };
 };
 ```
 

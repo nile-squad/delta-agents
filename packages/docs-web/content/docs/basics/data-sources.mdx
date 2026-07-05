@@ -1,0 +1,71 @@
+---
+title: Data Sources
+description: Governed CRUD operations on named data stores
+---
+
+
+Data sources bring external data stores into the governed action system. A data source is a named bundle of CRUD operations over one store. Every operation is a full action: schema validation, budget enforcement, risk gating, approval gates, and audit all apply identically. A data read or write is governed the same way as any other action the agent performs.
+
+## Data source structure
+
+```ts
+type DataSource = {
+  name: string;
+  description: string;
+  ownership: "internal" | "external";
+  contentType: string;
+  authentication?: { type: string };
+  actions: {
+    retrieve?: Action;
+    create?: Action;
+    update?: Action;
+    delete?: Action;
+  };
+};
+```
+
+- **`name`**: unique identifier. Agents reference this when listing their data sources.
+- **`description`**: what store the data source connects to and what data it holds.
+- **`ownership`**: who owns the data. `internal` means the system running the agent owns the store (its own database). `external` means a third party owns it (a partner API, a customer system). Recorded as audit metadata so an operator can see per task whether the agent touched data outside its own trust boundary.
+- **`contentType`**: free-form descriptor of the records the source holds (e.g. "customer-orders", "product-inventory").
+- **`authentication`**: non-secret descriptor of how the source authenticates (e.g. `{ type: "oauth2" }`, `{ type: "api-key" }`). The engine never stores or transmits credentials; each operation function owns its own secrets through its closure.
+- **`actions`**: at least one of retrieve, create, update, or delete. Each is a full `Action` with schema, risk, and cost.
+
+## Defining a data source
+
+```ts
+const customerDb = delta.dataSource({
+  name: "customer-db",
+  description: "Customer records and account data",
+  ownership: "internal",
+  contentType: "customer-records",
+  actions: {
+    retrieve: lookupCustomer,
+    update: updateCustomer,
+  },
+});
+```
+
+The engine validates the data source at registration time. Operation names are checked against the agent's action space for conflicts, and at least one operation must be defined.
+
+## Assigning data sources to agents
+
+An agent lists its data sources explicitly. The engine flattens each data source's defined operations into the agent's reachable action set.
+
+```ts
+const supportAgent = delta.agent({
+  name: "support-agent",
+  role: "Customer Support Specialist",
+  rolePrompt: "Help customers resolve their issues.",
+  actions: [notifyCustomer],
+  dataSources: [customerDb, orderSystem],
+});
+```
+
+A data operation is discovered and governed exactly like any other action. The agent proposes a data operation; the engine validates it through the same gateway: schema, prerequisites, budget, risk, approval gates.
+
+## Ownership and risk
+
+An external data source starts from a less-trusted risk prior. The engine treats a write to an external store with more caution until the action builds a track record of successful executions. Each operation declares its own `risk` on the `Action` as a starting estimate. The engine tightens or loosens that estimate based on how actual behavior compares to what was declared.
+
+The ownership field is descriptive: it does not automatically multiply risk. It ensures the operator can audit whether an agent touched data outside its own trust boundary.

@@ -20,6 +20,7 @@ type Agent = {
   workflows?: Workflow[];
   skills?: Skill[];
   channels?: Channel[];
+  dataSources?: DataSource[];
   team?: string;
 };
 ```
@@ -31,8 +32,9 @@ type Agent = {
 - **`model`**: named model configuration from the engine's `models` list. Omit to use the default model.
 - **`actions`**: the operations this agent is permitted to perform.
 - **`workflows`**: structured multi-phase procedures the agent follows.
-- **`skills`**: knowledge resources the engine reads at runtime and injects into the agent's context.
+- **`skills`**: [knowledge resources](/docs/basics/skills) the engine reads at runtime and injects into the agent's context.
 - **`channels`**: messaging platforms the agent communicates through.
+- **`dataSources`**: [data stores](/docs/basics/data-sources) the agent reads from and writes to. Each data source's operations become governed actions accessible to the agent.
 - **`team`**: group name for multi-agent coordination. Agents on the same team share a roster and mailbox awareness.
 
 ## Defining an agent

@@ -1,0 +1,120 @@
+---
+title: Skills
+description: Markdown knowledge files the engine loads per turn alongside agent instructions
+---
+
+
+Skills keep knowledge separate from code. Actions and workflows stay general; skills carry the specific information an agent needs for a domain: product documentation, compliance rules, onboarding guides, API references. A skill is a markdown file on disk. The engine loads it on the turn that needs it and makes the content available alongside the agent's instructions. Changing what an agent knows means editing a markdown file, not redeploying code.
+
+## Skill structure
+
+```ts
+type Skill = {
+  name: string;
+  description: string;
+  folder: string;
+};
+```
+
+- **`name`**: unique identifier for the skill. Referenced in agent and tool definitions.
+- **`description`**: what the skill contains. Visible to the reasoner so the agent can decide when to use it.
+- **`folder`**: filesystem path to the skill directory. Must contain a `SKILL.md` file.
+
+## Creating a skill
+
+Create a directory on disk with a `SKILL.md` file. The file content is what the agent reads.
+
+```text
+skills/product-knowledge/SKILL.md
+```
+
+```md
+# Product Knowledge
+
+The product catalog is organized into three categories:
+- Electronics: warranties are 2 years, returns accepted within 30 days.
+- Clothing: returns accepted within 60 days, items must be unworn.
+- Digital goods: no returns, replacement within 24 hours for defects.
+
+## Refund policy by category
+
+| Category      | Window | Condition            |
+|---------------|--------|----------------------|
+| Electronics   | 30 days| Original packaging   |
+| Clothing      | 60 days| Unworn with tags     |
+| Digital goods | N/A    | No returns           |
+```
+
+Define the skill in code:
+
+```ts
+const productKnowledge = {
+  name: "product-knowledge",
+  description: "Product catalog details and return policies by category",
+  folder: "./skills/product-knowledge",
+};
+```
+
+## Assigning skills to agents
+
+Agents list their skills explicitly. Multiple agents can share the same skill.
+
+```ts
+const supportAgent = delta.agent({
+  name: "support-agent",
+  role: "Customer Support Specialist",
+  rolePrompt: "Help customers resolve their issues.",
+  actions: [lookupOrder, processRefund],
+  skills: [productKnowledge, complianceRules],
+});
+```
+
+## Skills on tools
+
+Tools can declare skills when the tool needs domain knowledge that varies independently from any single agent. A tool that looks up orders might carry the order system's API guide as a skill, so the agent does not need to know the API details. Tool skills follow the same `SKILL.md` convention.
+
+```ts
+const lookupOrder = {
+  name: "lookup-order",
+  description: "Look up an order by ID",
+  schema: z.object({ orderId: z.string() }),
+  skills: [orderSystemGuide],
+  fn: async ({ data, ctx }) => { /* ... */ },
+};
+```
+
+## Per-phase skills
+
+Workflow phases can override the agent-level skills with a phase-specific set. Each phase loads only the skills relevant to its work, keeping the agent's context focused on what matters for that stage.
+
+```ts
+const phase = {
+  name: "refund",
+  actions: ["process-refund"],
+  checkpoint: true,
+  skills: [refundPolicy],
+};
+```
+
+## Skill availability in actions
+
+Inside an action function, the context carries the resolved skills as `availableSkills`. Each entry contains the name, description, and loaded content from the `SKILL.md` file.
+
+```ts
+const myAction: Action = {
+  name: "check-policy",
+  description: "Check applicable policy",
+  schema: z.object({}),
+  fn: async (data, ctx) => {
+    const skill = ctx.availableSkills?.find(s => s.name === "refund-policy");
+    // skill.content contains the SKILL.md text
+    return Ok({ checked: true });
+  },
+};
+```
+
+When no skills are active, `availableSkills` is absent.
+
+## Skill lifecycle
+
+Skills load lazily at first use. The engine reads the `SKILL.md` file on the turn that needs it, not at agent or engine startup. A skill with an invalid path or missing `SKILL.md` causes a runtime error at the point of use, not at declaration.
