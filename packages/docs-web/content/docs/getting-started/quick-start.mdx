@@ -90,9 +90,25 @@ Behind the scenes, the engine:
 
 The model never has access to operations it was not assigned. It cannot call `lookup-customer` with missing or invalid parameters. It cannot exceed the token budget. All enforced structurally, not by prompt engineering.
 
+## Reacting to human-in-the-loop events
+
+Subscribe to approvals, escalations, and task outcomes in real time. Events fire at the moment the engine creates them, so notifications, dashboards, and webhooks react immediately without polling.
+
+```ts
+const unsub = delta.events.on("approval-requested", (data) => {
+  console.log(`Task ${data.taskId} needs sign-off for ${data.action}`);
+  // Forward to Slack, update dashboard, trigger webhook
+});
+
+const unsub2 = delta.events.on("task-completed", (data) => {
+  console.log(`${data.agentName} completed: ${data.goal}`);
+});
+```
+
 ## Next steps
 
 - [Core concepts](/docs/getting-started/core-concepts): the mental model behind agents, actions, workflows, and governance.
+- [Human oversight](/docs/basics/human-oversight): approvals, escalations, pause and resume.
 - [Agents](/docs/basics/agents): defining agents with roles, skills, and teams.
 - [Actions](/docs/basics/actions): actions, prerequisites, hooks, and risk scoring.
 - [Workflows](/docs/basics/workflows): multi-phase deterministic SOPs.

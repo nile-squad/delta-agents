@@ -80,7 +80,7 @@ export default function Showcase() {
           <FadeIn delay={0.2} className="mt-8">
             <a
               className="inline-flex h-11 items-center gap-2 rounded-lg bg-[#5F57E3] px-6 font-mono text-sm font-semibold text-white transition-colors hover:bg-[#5F57E3]/90"
-              href={`${githubUrl}/compare/main...main?quick_pull=1&template=showcase.md`}
+              href={`${githubUrl}/pull/new/main`}
               rel="noreferrer"
               target="_blank"
             >

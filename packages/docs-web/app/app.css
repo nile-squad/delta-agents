@@ -3,6 +3,10 @@
 @import "fumadocs-ui/css/preset.css";
 
 :root {
+  /* Fluid base: hovers just above 16px on mobile, scales to 18px desktop,
+     giving body text / code blocks / rem-based elements extra breathing room */
+  font-size: clamp(1rem, 0.95rem + 0.3vw, 1.125rem);
+
   /* Tailwind's font-mono utility resolves var(--font-mono) */
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
   --color-fd-primary: oklch(0.457 0.24 277.023);

@@ -27,12 +27,7 @@ export function SiteFooter() {
           >
             Docs
           </Link>
-          <Link
-            className="transition-colors hover:text-fd-foreground"
-            to="/docs/reference"
-          >
-            API Reference
-          </Link>
+          
           <Link
             className="transition-colors hover:text-fd-foreground"
             to="/showcase"

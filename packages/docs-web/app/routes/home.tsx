@@ -81,9 +81,9 @@ const CAPABILITIES: ReadonlyArray<{
   },
   {
     icon: <Eye className="size-5" />,
-    title: "Every action is traceable and auditable",
+    title: "Human oversight with real-time events",
     description:
-      "Every token, action, and decision is traceable and queryable. Trust and risk scores update continuously from observed behavior. Commit history tracks what was done, by whom, and when.",
+      "High-risk actions pause for approval; the engine emits typed events the moment an escalation, approval request, or task outcome occurs. Dashboards and webhooks react instantly without polling.",
     accent: "#5F57E3",
   },
   {

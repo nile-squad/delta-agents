@@ -164,6 +164,28 @@ Manually prune old tasks and messages past retention windows.
 await delta.cleanup(options?: CleanupOptions): Promise<Result<void, string>>
 ```
 
+### Events
+
+#### `delta.events`
+
+Subscribe to engine events with typed payloads. Each event name maps to a specific payload shape so subscribers receive correctly typed data without casting.
+
+```ts
+// Subscribe — returns an unsubscribe function
+const unsub = delta.events.on("approval-requested", (data) => {
+  // data is typed as { taskId: string; action: string; approvalId: string; reason: string }
+  console.log(data.taskId);
+});
+
+// Unsubscribe when no longer needed
+unsub();
+
+// Remove a specific handler
+delta.events.off("approval-requested", handler);
+```
+
+Available event types: `approval-requested`, `approval-resolved`, `escalation-raised`, `task-completed`, `task-blocked`, `task-failed`, `step-start`, `step-end`, `action-start`, `action-end`, `commit-step-attempt`, `commit-step-done`, `commit-step-auto-commit`.
+
 #### `delta.tools.invoke(args)`
 
 Direct developer-facing invocation for any registered tool (builtin or custom). Does not record tool history or apply loop or budget governance.
