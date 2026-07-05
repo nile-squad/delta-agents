@@ -514,7 +514,42 @@ Key: `slang-ts` (bundled into dist), `zod`, `@libsql/client` + `drizzle-orm`, `o
 - .env: never read/edit
 - Installs/stack changes: never without permission
 
-## docs-web Responsive Alignment Pattern (2026-07-05)
+## Consumer Events System (2026-07-05)
+
+A typed consumer-facing events system built on `DeltaEventPayloads` (type map) + `createEvents` factory. Provides `.on(event, handler)` subscription with typed payloads and `.emit()` for internal dispatch. The public surface is `DeltaEvents` (`.on`/`.off` only) on `DeltaEngine.events`; internals use `DeltaEventsInternal` (adds `.emit`).
+
+### Decisions
+
+- **Typed payload map**: Every event name maps to a fixed shape. `.on<E>()` is generic, subscribers receive correctly typed data. Additive — new keys never break existing subscribers.
+- **HITL events are unconditional**: `approval-requested`, `approval-resolved`, `escalation-raised`, `task-completed`, `task-blocked`, `task-failed` always fire regardless of diagnostics config. A silently dropped human-oversight notification is a safety failure.
+- **Engine events are gated by the emitting module's toggle**: `step-start`, `step-end`, `commit-step-*` respect `diagnostics.engine`; `action-start`, `action-end` respect `diagnostics.actions` (emitted by the execution gateway). Can be disabled to reduce production noise.
+- **Events bridge through diagnostics**: `createDiagnostics` accepts an optional `emitEvent` callback. When enabled, diagnostics `.event()` both logs AND dispatches to events. One-directional: diagnostics owns the toggle, events owns the subscription.
+- **No global state**: `DeltaEventsInternal` threaded via function params (like `diagnostics`). No singleton or module-level state.
+- **Threading path**: `create-delta-engine.ts` → `runtime.ts` → `runtime-lifecycle.ts` → `scheduler.ts` → `stepTask`. All HITL and task lifecycle events emitted at the source callsite where the relevant store operation happens.
+
+### Files created
+
+- `src/shared/create-events.ts`: types, factory, `DeltaEvents`/`DeltaEventsInternal` interfaces
+- `src/index.ts`: exports `DeltaEventPayloads`, `DeltaEventName`, `DeltaEvents`
+
+### Files modified
+
+- `src/engine/types.ts`: `DeltaEngine.events: DeltaEvents`
+- `src/engine/create-delta-engine.ts`: creates events, wires bridge in `createDiagnostics`, emits `approval-resolved` in `approve()`/`reject()`, passes `events` to `runSendLoop`/`runWorkflowTask`/`resumeTask`
+- `src/engine/runtime.ts`: `runWorkflowTask` receives `events`, emits `approval-requested` in workflow pre-flight, `escalation-raised` on MPC block, task lifecycle events after workflow result
+- `src/engine/runtime-lifecycle.ts`: `resumeTask` receives `events`, forwards to `runSendLoop`/`runWorkflowTask`, emits task lifecycle events on pendingCommit resume
+- `src/engine/scheduler.ts`: `stepTask` receives `events`, emits `approval-requested` (trust-waiver + manual) and `escalation-raised` (reasoner-failure + budget-violation)
+- `src/shared/diagnostics.ts`: `createDiagnostics` accepts optional `emitEvent` callback for bridge
+- `docs/internal/delta-agents.spec.md`: added Events System section (catalog + design decisions + emission sites)
+
+### Event catalog
+
+Engine lifecycle (gated — `engine` toggle): step-start, step-end, commit-step-attempt, commit-step-done, commit-step-auto-commit
+Engine lifecycle (gated — `actions` toggle): action-start, action-end
+Human oversight (unconditional): approval-requested, approval-resolved, escalation-raised
+Task lifecycle (unconditional): task-completed, task-blocked, task-failed
+
+### docs-web Responsive Alignment Pattern (2026-07-05)
 
 ### The rule
 On mobile (`< sm`), section titles and their subheadings/descriptions center-align. On `sm+` desktop, everything left-aligns. The breakpoint is `sm:` (640px) in Tailwind v4.

@@ -21,6 +21,7 @@ import type { LoggerConfig } from "../shared/logger-types";
 import type { CacheConfig } from "../shared/cache";
 import type { CleanupOptions } from "./cleanup";
 import type { DiagnosticsConfig } from "../shared/diagnostics";
+import type { DeltaEvents } from "../shared/create-events";
 import type { RosterEntry } from "./roster";
 import type { AgentRanking, AgentStats, WorkflowStats } from "./stats";
 // Type-only import: referencing DocumentExtractOptions as a type must NOT create
@@ -406,6 +407,10 @@ export type DeltaEngine = {
    * Cache eviction runs by default; pass `evictCache: false` to disable.
    */
   cleanup: (options?: CleanupOptions) => Promise<Result<void, string>>;
+
+  // ── Events (subscribe to engine lifecycle) ─────────────────────────────────
+  /** Subscribe and unsubscribe to engine lifecycle events (step-start, action-end, etc.). */
+  events: DeltaEvents;
 
   // ── Tools ──────────────────────────────────────────────────────────────────
   /**

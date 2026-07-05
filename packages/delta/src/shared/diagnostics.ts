@@ -101,14 +101,18 @@ const isModuleEnabled = (config: DiagnosticsConfig, module: DiagnosticModule): b
  * scoped to the module name; every call carries the module binding in the
  * resulting log entry. The timing methods use `performance.now()` for
  * monotonic, high-resolution measurement.
+ *
+ * When `emitEvent` is provided, every `event()` call also dispatches to the
+ * consumer-facing events system (the `delta.events` pub/sub API) so external
+ * subscribers receive the same structured data the logger sees.
  */
-const buildEnabledEmitter = (child: Logger): DiagnosticEmitter => ({
+const buildEnabledEmitter = (child: Logger, emitEvent?: (name: string, context: Record<string, string | number | boolean | null>) => void): DiagnosticEmitter => ({
   event: (name, context) => {
-    // LogContext is the public typed contract; diagnostics carries arbitrary
-    // structured context. The runtime accepts any payload — the cast is a
-    // type-level escape hatch, not a runtime escape.
     if (context === undefined) child.debug(name);
     else child.debug(name, context as LogContext);
+    // Forward even context-less events so a subscriber never silently misses
+    // an occurrence the logger saw — the payload is just empty in that case.
+    if (emitEvent) emitEvent(name, context ?? {});
   },
   trace: (name, context) => {
     if (context === undefined) child.trace(name);
@@ -137,8 +141,14 @@ const buildEnabledEmitter = (child: Logger): DiagnosticEmitter => ({
  * the module is disabled) or a per-module enabled emitter that forwards
  * events to the child logger bound to the module name. Emitters are cached
  * per-module — repeated `for(module)` calls return the same instance.
+ *
+ * When `emitEvent` is provided, enabled modules also dispatch their events
+ * to the consumer-facing events system (`delta.events`). This is the bridge
+ * between internal diagnostics and the public pub/sub API — diagnostics owns
+ * the module toggle (what fires) and the events system owns the subscription
+ * (who listens).
  */
-export const createDiagnostics = (config: DiagnosticsConfig, logger: Logger): Diagnostics => {
+export const createDiagnostics = (config: DiagnosticsConfig, logger: Logger, emitEvent?: (name: string, context: Record<string, string | number | boolean | null>) => void): Diagnostics => {
   const emitters = new Map<DiagnosticModule, DiagnosticEmitter>();
 
   return {
@@ -147,14 +157,10 @@ export const createDiagnostics = (config: DiagnosticsConfig, logger: Logger): Di
       const cached = emitters.get(module);
       if (cached !== undefined) return cached;
       if (!isModuleEnabled(config, module)) {
-        // Disabled path: bind once, reuse forever. No per-call allocation.
         emitters.set(module, NO_OP_EMITTER);
         return NO_OP_EMITTER;
       }
-      // Enabled path: build a per-module child logger + emitter. The child
-      // is the only place the module name enters the log entry; every call
-      // is debug/trace level and never blocks the caller.
-      const emitter = buildEnabledEmitter(logger.child(module));
+      const emitter = buildEnabledEmitter(logger.child(module), emitEvent);
       emitters.set(module, emitter);
       return emitter;
     },

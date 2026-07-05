@@ -40,6 +40,7 @@ import { checkpointId } from "../shared/id";
 import { makeRunner, runScheduler } from "./scheduler";
 import type { Logger } from "../shared/logger-types";
 import type { Diagnostics } from "../shared/diagnostics";
+import type { DeltaEventsInternal } from "../shared/create-events";
 import { runCommitStep } from "./commit-step";
 
 const MAX_STEPS_DEFAULT = 100;
@@ -67,6 +68,7 @@ export const runSendLoop = async ({
   timezone,
   logger,
   diagnostics,
+  events,
   commitContextLimit,
   maxInvalidDecisionRetries,
   attachments,
@@ -87,6 +89,8 @@ export const runSendLoop = async ({
   /** Per-engine diagnostics handle. Threaded into the scheduler so opt-in
    * modules can emit structured events; a no-op when diagnostics is disabled. */
   diagnostics: Diagnostics;
+  /** Per-engine events emitter. Threaded so HITL and task lifecycle events fire unconditionally. */
+  events: DeltaEventsInternal;
   /** Max recent commits to inject into reasoner context. */
   commitContextLimit?: number;
   /** Max consecutive invalid model decisions fed back for correction before failing. */
@@ -102,7 +106,15 @@ export const runSendLoop = async ({
     snapshot: startingSnapshot ?? { ...snapshotFromTask(task), ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}) },
     maxSteps,
   });
-  return runScheduler({ root, reasoner, registry, store, maxSteps, providerRetry, timezone, logger, diagnostics, commitContextLimit, maxInvalidDecisionRetries, guidanceEnabled });
+  const schedulerResult = await runScheduler({ root, reasoner, registry, store, maxSteps, providerRetry, timezone, logger, diagnostics, events, commitContextLimit, maxInvalidDecisionRetries, guidanceEnabled });
+  if (schedulerResult.status === "completed") {
+    events.emit("task-completed", { taskId: task.id, agentName: agent.name, goal: task.goal });
+  } else if (schedulerResult.status === "blocked") {
+    events.emit("task-blocked", { taskId: task.id, agentName: agent.name, reason: schedulerResult.reason ?? "unknown" });
+  } else if (schedulerResult.status === "failed") {
+    events.emit("task-failed", { taskId: task.id, agentName: agent.name, reason: schedulerResult.reason ?? "unknown" });
+  }
+  return schedulerResult;
 };
 
 // ── Workflow task driver (C-a) ──────────────────────────────────────────────
@@ -172,6 +184,7 @@ export const runWorkflowTask = async ({
   logger,
   commitMaxRetries,
   diagnostics,
+  events,
   attachments,
   guidanceEnabled = true,
 }: {
@@ -202,6 +215,8 @@ export const runWorkflowTask = async ({
   /** Per-engine diagnostics handle. Threaded into the workflow + phase + gateway
    * paths so opt-in modules can emit structured events. */
   diagnostics: Diagnostics;
+  /** Per-engine events emitter. Threaded so HITL events fire unconditionally. */
+  events: DeltaEventsInternal;
   /** Attachments supplied at send() time; seeds the initial snapshot. Absent on resume (already persisted in the checkpointed snapshot). */
   attachments?: Attachment[];
   /** Whether to compute guidance lines from warning bands. */
@@ -291,20 +306,26 @@ export const runWorkflowTask = async ({
         typeof action.requiresApproval === "object" ? action.requiresApproval.untilTrust : undefined,
       );
       if (untilTrustOpt.isSome && snapshot.trust.score >= untilTrustOpt.value) {
-        await recordAutoApproval({
+        const autoResult = await recordAutoApproval({
           taskId: task.id,
           action: name,
           reason: `auto-approved: trust ${snapshot.trust.score.toFixed(2)} >= ${untilTrustOpt.value} (declared waiver)`,
           store,
         });
+        if (autoResult.isOk) {
+          events.emit("approval-requested", { taskId: task.id, action: name, approvalId: autoResult.value.id, reason: autoResult.value.reason });
+        }
         status = "approved";
       } else {
-        await requestApproval({
+        const reqResult = await requestApproval({
           taskId: task.id,
           action: name,
           reason: `action "${name}" requires human approval before workflow "${workflowName}" runs`,
           store,
         });
+        if (reqResult.isOk) {
+          events.emit("approval-requested", { taskId: task.id, action: name, approvalId: reqResult.value.id, reason: reqResult.value.reason });
+        }
         status = "pending";
       }
     }
@@ -347,6 +368,11 @@ export const runWorkflowTask = async ({
       reason: `projected workflow cost (${horizon.totalProjectedCost.tokens} tokens / ${horizon.totalProjectedCost.durationMs}ms over ${horizon.stepsTaken} step(s)) exceeds budget before execution (MPC)`,
       store,
     });
+    events.emit("escalation-raised", {
+      taskId: task.id,
+      trigger: "budget-violation",
+      reason: `projected workflow cost (${horizon.totalProjectedCost.tokens} tokens / ${horizon.totalProjectedCost.durationMs}ms over ${horizon.stepsTaken} step(s)) exceeds budget before execution (MPC)`,
+    });
     await store.updateTask(task.id, { status: "paused", updatedAt: new Date() });
     return {
       taskId: task.id,
@@ -374,7 +400,7 @@ export const runWorkflowTask = async ({
   if (result.status === "completed") {
     // Run the post-workflow commit step — the agent must acknowledge
     // completion with optional notes. This is mandatory for workflows.
-    return runCommitStep({
+    const commitResult = await runCommitStep({
       task,
       agent,
       reasoner,
@@ -387,15 +413,25 @@ export const runWorkflowTask = async ({
       logger,
       diagnostics,
     });
+    if (commitResult.status === "completed") {
+      events.emit("task-completed", { taskId: task.id, agentName: agent.name, goal: task.goal });
+    } else if (commitResult.status === "blocked") {
+      events.emit("task-blocked", { taskId: task.id, agentName: agent.name, reason: commitResult.reason ?? "unknown" });
+    } else {
+      events.emit("task-failed", { taskId: task.id, agentName: agent.name, reason: commitResult.reason ?? "unknown" });
+    }
+    return commitResult;
   }
 
   // A blocked workflow already paused the task (escalation or supervision-escalate
   // updates the record before returning); do not overwrite that status.
   if (result.status === "blocked") {
+    events.emit("task-blocked", { taskId: task.id, agentName: agent.name, reason: result.reason ?? "unknown" });
     return { taskId: task.id, status: "blocked", snapshot: result.snapshot, reason: result.reason };
   }
 
   await store.updateTask(task.id, { status: "failed", updatedAt: new Date() });
+  events.emit("task-failed", { taskId: task.id, agentName: agent.name, reason: result.failedReason ?? "unknown" });
   return { taskId: task.id, status: "failed", snapshot: result.snapshot, reason: result.failedReason };
 };
 

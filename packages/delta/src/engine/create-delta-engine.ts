@@ -44,6 +44,7 @@ import { createEngineLogger } from "../shared/logger";
 import type { Logger } from "../shared/logger-types";
 import { createDiagnostics } from "../shared/diagnostics";
 import type { Diagnostics } from "../shared/diagnostics";
+import { createEvents } from "../shared/create-events";
 import { runSendLoop, runWorkflowTask, pauseTask, resumeTask, inspectTask, resolveApproval } from "./runtime";
 import { runCleanup, opportunisticCleanup } from "./cleanup";
 import { makeToolsFacade } from "./tools-facade";
@@ -80,7 +81,10 @@ export const createDeltaEngine = async ({
   // Per-engine diagnostics: one handle per engine, threaded into the modules
   // that opt in. Each module calls `diagnostics.for("<module>")` to get its
   // scoped emitter; disabled modules get the shared no-op (zero overhead).
-  const diagnostics: Diagnostics = createDiagnostics(configDiagnostics ?? {}, logger);
+  const events = createEvents();
+  const diagnostics: Diagnostics = createDiagnostics(configDiagnostics ?? {}, logger, (name, context) => {
+    events.emit(name as never, context as never);
+  });
   // Wrap the store in a read-through cache. The cache is always present so
   // opportunistic cleanup can call `evictExpired()` from a known handle —
   // the engine never has to discover whether a wrapper exists.
@@ -398,6 +402,7 @@ export const createDeltaEngine = async ({
         registry,
         store,
         diagnostics,
+        events,
         reasoner: resolveReasoner(agentDef),
         providerRetry,
         timezone: configTimezone,
@@ -406,17 +411,25 @@ export const createDeltaEngine = async ({
         attachments,
         guidanceEnabled: configGuidance,
       })
-      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, providerRetry, timezone: configTimezone, logger, diagnostics, commitContextLimit: configCommitContextLimit, maxInvalidDecisionRetries, attachments, guidanceEnabled: configGuidance });
+      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, providerRetry, timezone: configTimezone, logger, diagnostics, events, commitContextLimit: configCommitContextLimit, maxInvalidDecisionRetries, attachments, guidanceEnabled: configGuidance });
 
     return Ok(result);
   };
 
   const approve: DeltaEngine["approve"] = async (approvalId) => {
-    return resolveApproval({ approvalId, decision: "approved", store });
+    const result = await resolveApproval({ approvalId, decision: "approved", store });
+    if (result.isOk) {
+      events.emit("approval-resolved", { taskId: result.value.taskId, action: result.value.action, approvalId, decision: "approved" });
+    }
+    return result;
   };
 
   const reject: DeltaEngine["reject"] = async (approvalId, reason) => {
-    return resolveApproval({ approvalId, decision: "rejected", reason, store });
+    const result = await resolveApproval({ approvalId, decision: "rejected", reason, store });
+    if (result.isOk) {
+      events.emit("approval-resolved", { taskId: result.value.taskId, action: result.value.action, approvalId, decision: "rejected" });
+    }
+    return result;
   };
 
   const pause: DeltaEngine["pause"] = async (taskId_) => {
@@ -452,6 +465,7 @@ export const createDeltaEngine = async ({
       timezone: configTimezone,
       logger,
       diagnostics,
+      events,
       commitContextLimit: configCommitContextLimit,
       maxInvalidDecisionRetries,
     });
@@ -543,5 +557,5 @@ export const createDeltaEngine = async ({
     return computeWorkflowStats({ store, workflow: args.workflow });
   };
 
-  return { action, workflow, dataSource, agent, deploy, send, approve, reject, pause, resume, inspect, lastTask, cleanup, roster, topAgents, agentStats, workflowStats, inbox, outbox, recall, tools };
+  return { action, workflow, dataSource, agent, deploy, send, approve, reject, pause, resume, inspect, lastTask, cleanup, roster, topAgents, agentStats, workflowStats, inbox, outbox, recall, events, tools };
 };

@@ -25,6 +25,7 @@ import { snapshotFromTask, snapshotFromJson, snapshotToJson } from "../state-spa
 import { checkpointId } from "../shared/id";
 import type { Logger } from "../shared/logger-types";
 import type { Diagnostics } from "../shared/diagnostics";
+import type { DeltaEventsInternal } from "../shared/create-events";
 import { runCommitStep } from "./commit-step";
 import { runSendLoop, runWorkflowTask } from "./runtime";
 
@@ -90,6 +91,7 @@ export const resumeTask = async ({
   timezone,
   logger,
   diagnostics,
+  events,
   commitContextLimit,
   maxInvalidDecisionRetries,
 }: {
@@ -107,6 +109,8 @@ export const resumeTask = async ({
   /** Per-engine diagnostics handle. Threaded into the scheduler so opt-in
    * modules can emit structured events. */
   diagnostics: Diagnostics;
+  /** Per-engine events emitter. Threaded so HITL and task lifecycle events fire unconditionally. */
+  events: DeltaEventsInternal;
   /** Max recent commits to inject into reasoner context. */
   commitContextLimit?: number;
   /** Max consecutive invalid model decisions fed back for correction before failing. */
@@ -138,7 +142,7 @@ export const resumeTask = async ({
   // BEFORE the workflow branch because a pendingCommit task has its workflow
   // set, but re-running the workflow would double-execute completed phases.
   if (task.status === "pendingCommit") {
-    return Ok(await runCommitStep({
+    const commitResult = await runCommitStep({
       task,
       agent,
       reasoner,
@@ -149,7 +153,15 @@ export const resumeTask = async ({
       timezone,
       logger,
       diagnostics,
-    }));
+    });
+    if (commitResult.status === "completed") {
+      events.emit("task-completed", { taskId: task.id, agentName: agent.name, goal: task.goal });
+    } else if (commitResult.status === "blocked") {
+      events.emit("task-blocked", { taskId: task.id, agentName: agent.name, reason: commitResult.reason ?? "unknown" });
+    } else {
+      events.emit("task-failed", { taskId: task.id, agentName: agent.name, reason: commitResult.reason ?? "unknown" });
+    }
+    return Ok(commitResult);
   }
 
   // C-a coexistence holds on resume too: a workflow task re-enters the
@@ -172,11 +184,12 @@ export const resumeTask = async ({
       timezone,
       logger,
       diagnostics,
+      events,
     });
     return Ok(result);
   }
 
-  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, providerRetry, timezone, logger, diagnostics, commitContextLimit, maxInvalidDecisionRetries });
+  const result = await runSendLoop({ task, agent, reasoner, registry, store, maxSteps, startingSnapshot, providerRetry, timezone, logger, diagnostics, events, commitContextLimit, maxInvalidDecisionRetries });
   return Ok(result);
 };
 

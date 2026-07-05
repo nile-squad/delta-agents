@@ -55,6 +55,7 @@ import { createLoopDetector } from "./loop-detector";
 import type { LoopDetector } from "./loop-detector";
 import type { Logger } from "../shared/logger-types";
 import type { Diagnostics } from "../shared/diagnostics";
+import type { DeltaEventsInternal } from "../shared/create-events";
 import { formatCommitContext } from "./commit-step";
 import { handleToolExecution, handleToolInfo, handleSearchCommits, handleFreeLoopCommit } from "./tool-dispatch";
 
@@ -149,6 +150,7 @@ const stepTask = async ({
   timezone,
   loopDetector,
   diagnostics,
+  events,
   commitContextLimit,
   maxInvalidDecisionRetries = 3,
   guidanceEnabled = true,
@@ -168,6 +170,8 @@ const stepTask = async ({
   /** Per-engine diagnostics handle. Threaded so the engine module can emit
    * step-start / step-end events when diagnostics.engine is enabled. */
   diagnostics: Diagnostics;
+  /** Per-engine events emitter. Threaded so HITL events fire unconditionally at the source callsites. */
+  events: DeltaEventsInternal;
   /** Max recent commits to inject into reasoner context. */
   commitContextLimit?: number;
   /** Max consecutive invalid model decisions fed back for correction before failing. */
@@ -385,6 +389,11 @@ const stepTask = async ({
       reason: `reasoner failed after ${providerRetry.maxAttempts} attempt(s): ${reasonResult.error}`,
       store,
     });
+    events.emit("escalation-raised", {
+      taskId: task.id,
+      trigger: "reasoner-failure",
+      reason: `reasoner failed after ${providerRetry.maxAttempts} attempt(s): ${reasonResult.error}`,
+    });
     return {
       kind: "blocked",
       snapshot,
@@ -519,6 +528,11 @@ const stepTask = async ({
         reason: `projected cost of action "${actionName}" (${projected.tokens} tokens / ${projected.durationMs}ms including spend to date) exceeds budget before execution (MPC)`,
         store,
       });
+      events.emit("escalation-raised", {
+        taskId: task.id,
+        trigger: "budget-violation",
+        reason: `projected cost of action "${actionName}" (${projected.tokens} tokens / ${projected.durationMs}ms including spend to date) exceeds budget before execution (MPC)`,
+      });
       return {
         kind: "blocked",
         snapshot,
@@ -551,12 +565,15 @@ const stepTask = async ({
       typeof action.requiresApproval === "object" ? action.requiresApproval.untilTrust : undefined,
     );
     if (untilTrustOpt.isSome && snapshot.trust.score >= untilTrustOpt.value) {
-      await recordAutoApproval({
+      const autoResult = await recordAutoApproval({
         taskId: task.id,
         action: actionName,
         reason: `auto-approved: trust ${snapshot.trust.score.toFixed(2)} >= ${untilTrustOpt.value} (declared waiver)`,
         store,
       });
+      if (autoResult.isOk) {
+        events.emit("approval-requested", { taskId: task.id, action: actionName, approvalId: autoResult.value.id, reason: autoResult.value.reason });
+      }
       approvalStatus = "approved";
     } else {
       const reqResult = await requestApproval({
@@ -566,6 +583,9 @@ const stepTask = async ({
         store,
       });
       const approvalIdStr = reqResult.isOk ? reqResult.value.id : "(unavailable)";
+      if (reqResult.isOk) {
+        events.emit("approval-requested", { taskId: task.id, action: actionName, approvalId: reqResult.value.id, reason: reqResult.value.reason });
+      }
       return {
         kind: "blocked",
         snapshot,
@@ -650,6 +670,7 @@ export const runScheduler = async ({
   timezone,
   logger,
   diagnostics,
+  events,
   loopDetector: passedLoopDetector,
   commitContextLimit = 10,
   maxInvalidDecisionRetries,
@@ -668,6 +689,9 @@ export const runScheduler = async ({
   /** Per-engine diagnostics handle. Threaded into the main loop so opt-in
    * modules (engine, actions, ...) can emit structured events. */
   diagnostics: Diagnostics;
+  /** Per-engine events emitter. Threaded into the scheduler so HITL and
+   * task lifecycle events fire unconditionally at the source callsites. */
+  events: DeltaEventsInternal;
   /** Per-run loop detector. When omitted, the scheduler builds a fresh one —
    * loop detection is about within-run loops, so a fresh detector per
    * runScheduler call is the natural default. */
@@ -950,6 +974,7 @@ export const runScheduler = async ({
         timezone,
         loopDetector,
         diagnostics,
+        events,
         commitContextLimit,
         maxInvalidDecisionRetries,
         guidanceEnabled,
