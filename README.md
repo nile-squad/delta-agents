@@ -1,6 +1,6 @@
 # delta-agents
 
-**The AI agent framework with built in safety, governance and provenance.**
+**The AI agents framework with built in safety, governance and provenance.**
 
 Delta Agents is a framework and runtime for building production AI agents.
 
