@@ -165,7 +165,7 @@ export const runCommitStep = async ({
   const diag = diagnostics.for("engine");
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    diag.event("commit-step-attempt", { taskId: task.id, attempt, workflowName });
+    diag.event("commit-step-attempt", { taskId: task.id, agentName: agent.name, attempt, workflowName });
 
     const commitContext = buildCommitPrompt(workflowName, attempt);
 
@@ -208,7 +208,7 @@ export const runCommitStep = async ({
 
     if (decision.kind === "done") {
       // Agent committed — save the commit record with optional notes.
-      diag.event("commit-step-done", { taskId: task.id, workflowName, hasNotes: decision.reason !== undefined });
+      diag.event("commit-step-done", { taskId: task.id, agentName: agent.name, workflowName, hasNotes: decision.reason !== undefined });
 
       return finalizeCommit({
         task,
@@ -236,7 +236,7 @@ export const runCommitStep = async ({
     { taskId: task.id },
   );
 
-  diag.event("commit-step-auto-commit", { taskId: task.id, workflowName });
+  diag.event("commit-step-auto-commit", { taskId: task.id, agentName: agent.name, workflowName });
 
   return finalizeCommit({
     task,

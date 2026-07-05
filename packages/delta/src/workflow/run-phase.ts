@@ -50,6 +50,11 @@ export const runPhase = async ({
   store,
   communicate,
   remember,
+  goal,
+  attachments,
+  recall,
+  budget,
+  workflowName,
   startIndex,
   startViaJump,
   agentSkills,
@@ -73,9 +78,14 @@ export const runPhase = async ({
     executionId: executionId(),
     agentName: state.agentName,
     phase: phase.name,
+    ...(goal !== undefined ? { goal } : {}),
+    ...(workflowName !== undefined ? { workflowName } : {}),
+    ...(attachments !== undefined ? { attachments } : {}),
     ...(phaseSkills.length > 0 ? { availableSkills: phaseSkills } : {}),
     ...(communicate !== undefined ? { communicate } : {}),
     ...(remember !== undefined ? { remember } : {}),
+    ...(recall !== undefined ? { recall } : {}),
+    ...(budget !== undefined ? { budget } : {}),
     ...(storyline !== undefined ? { storyline } : {}),
     ...(phase.storyline !== undefined ? { phaseStoryline: phase.storyline } : {}),
   };
@@ -93,6 +103,10 @@ export const runPhase = async ({
   let currentState: typeof state = { ...state, currentPhase: phase.name };
   let currentIndex = startIndex ?? 0;
   let stepCount = 0;
+  // Outcome of the previous action that actually ran in this phase, exposed to a
+  // Branch guard so it can route on what just happened. Undefined before the
+  // first action runs (and across a resume, since prior outcomes are not replayed).
+  let lastOutcome: { action: string; ok: boolean; error?: string } | undefined;
   const { actions } = phase;
 
   // Guard: if startIndex is at or past the action list, the phase is already
@@ -118,8 +132,9 @@ export const runPhase = async ({
     afterJump = false;
 
     // Guard check for Branch nodes — evaluated before the action runs.
-    // A false guard skips this branch; no governance decision is made.
-    if (typeof ref !== "string" && ref.when !== undefined && !ref.when(phaseCtx)) {
+    // A false guard skips this branch; no governance decision is made. The guard
+    // sees the previous action's outcome (lastOutcome) so it can route on it.
+    if (typeof ref !== "string" && ref.when !== undefined && !ref.when({ ...phaseCtx, ...(lastOutcome !== undefined ? { lastOutcome } : {}) })) {
       currentIndex++;
       continue;
     }
@@ -127,13 +142,14 @@ export const runPhase = async ({
     const actionName = typeof ref === "string" ? ref : ref.action;
     const actionOpt = option(actionRegistry.get(actionName));
     if (actionOpt.isNone) {
-      await runHook(phase.hooks?.onError, phaseCtx);
+      const reason = `action "${actionName}" not found in action registry`;
+      await runHook(phase.hooks?.onError, { ...phaseCtx, error: reason });
       return {
         status: "failed",
         snapshot: currentState,
         failedAction: actionName,
         failedIndex: currentIndex,
-        failedReason: `action "${actionName}" not found in action registry`,
+        failedReason: reason,
       };
     }
     const action = actionOpt.value;
@@ -142,13 +158,14 @@ export const runPhase = async ({
     if (action.skills !== undefined) {
       const actionSkillsResult = resolveSkillRefs(action.skills, agentSkills ?? []);
       if (actionSkillsResult.isErr) {
-        await runHook(phase.hooks?.onError, phaseCtx);
+        const reason = `skill resolution failed for action "${actionName}": ${actionSkillsResult.error}`;
+        await runHook(phase.hooks?.onError, { ...phaseCtx, error: reason });
         return {
           status: "failed",
           snapshot: currentState,
           failedAction: actionName,
           failedIndex: currentIndex,
-          failedReason: `skill resolution failed for action "${actionName}": ${actionSkillsResult.error}`,
+          failedReason: reason,
         };
       }
       actionSkills = await buildAvailableSkills(actionSkillsResult.value);
@@ -161,6 +178,11 @@ export const runPhase = async ({
       store,
       communicate,
       remember,
+      ...(goal !== undefined ? { goal } : {}),
+      ...(workflowName !== undefined ? { workflowName } : {}),
+      ...(attachments !== undefined ? { attachments } : {}),
+      ...(recall !== undefined ? { recall } : {}),
+      ...(budget !== undefined ? { budget } : {}),
       ...(actionSkills.length > 0 ? { availableSkills: actionSkills } : {}),
       ...(storyline !== undefined ? { storyline } : {}),
       ...(phase.storyline !== undefined ? { phaseStoryline: phase.storyline } : {}),
@@ -169,7 +191,7 @@ export const runPhase = async ({
 
     if (gwResult.isErr) {
       // Gateway blocked before fn ran (schema invalid, not legal, no approval, hook failed).
-      await runHook(phase.hooks?.onError, phaseCtx);
+      await runHook(phase.hooks?.onError, { ...phaseCtx, error: gwResult.error });
       return {
         status: "failed",
         snapshot: currentState,
@@ -181,6 +203,13 @@ export const runPhase = async ({
 
     const { fnResult, updatedSnapshot, surpriseMagnitude } = gwResult.value;
     currentState = updatedSnapshot;
+    // Record this action's outcome so a later Branch guard in the same phase can
+    // route on it. Carries the fn's error message when it failed.
+    lastOutcome = {
+      action: actionName,
+      ok: fnResult.isOk,
+      ...(fnResult.isErr ? { error: fnResult.error } : {}),
+    };
 
     // Post-step governance differs by outcome, by design:
     //
@@ -205,7 +234,7 @@ export const runPhase = async ({
       });
       currentState = gov.snapshot;
       if (gov.kind === "escalated") {
-        await runHook(phase.hooks?.onError, phaseCtx);
+        await runHook(phase.hooks?.onError, { ...phaseCtx, error: gov.reason });
         // Persist a positional checkpoint before blocking, mirroring the
         // supervision-escalate path in run-workflow: resume re-enters this phase
         // AFTER the action that just succeeded, never re-running it. The
@@ -243,7 +272,7 @@ export const runPhase = async ({
       if (fnResult.isOk) {
         return await completePhase(phase, phaseCtx, currentState, store);
       }
-      await runHook(phase.hooks?.onError, phaseCtx);
+      await runHook(phase.hooks?.onError, { ...phaseCtx, error: fnResult.error });
       return {
         status: "failed",
         snapshot: currentState,
@@ -265,7 +294,7 @@ export const runPhase = async ({
     }
 
     if (next.kind === "end-failure") {
-      await runHook(phase.hooks?.onError, phaseCtx);
+      await runHook(phase.hooks?.onError, { ...phaseCtx, error: next.reason });
       return {
         status: "failed",
         snapshot: currentState,
@@ -281,11 +310,12 @@ export const runPhase = async ({
 
   // Loop exited: either all actions ran naturally or step limit hit.
   if (stepCount >= MAX_STEPS_PER_PHASE) {
-    await runHook(phase.hooks?.onError, phaseCtx);
+    const reason = `phase "${phase.name}" exceeded ${MAX_STEPS_PER_PHASE}-step limit — possible cycle in declared transitions`;
+    await runHook(phase.hooks?.onError, { ...phaseCtx, error: reason });
     return {
       status: "failed",
       snapshot: currentState,
-      failedReason: `phase "${phase.name}" exceeded ${MAX_STEPS_PER_PHASE}-step limit — possible cycle in declared transitions`,
+      failedReason: reason,
     };
   }
 
@@ -359,6 +389,8 @@ const completePhase = async (
   };
   await store.saveCheckpoint(ckpt);
 
-  await runHook(phase.hooks?.after, phaseCtx);
+  // The phase's outcome value is its completed snapshot — the after hook observes
+  // it without being able to change it (prohibition 17).
+  await runHook(phase.hooks?.after, { ...phaseCtx, result: advanced });
   return { status: "completed", snapshot: advanced };
 };

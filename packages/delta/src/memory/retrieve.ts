@@ -75,3 +75,24 @@ export const makeContextRemember = ({
     const saved = await store.saveMemory(memory);
     return saved.isOk ? Ok(undefined) : Err(saved.error);
   };
+
+/**
+ * Build the `ctx.recall(query)` helper bound to an agent — the read counterpart
+ * of `ctx.remember`. Wraps retrieveContext (the same on-demand retrieval the
+ * reasoner uses): the free-text query filters the agent-owned memory pool and
+ * the result is a relevance-ranked slice. `taskId` is accepted for symmetry with
+ * makeContextRemember (retrieval is agent-scoped, not task-scoped: a later task
+ * recalls memories written by earlier ones — spec principle 4). Returns Ok with
+ * the retrieved context + memories; retrieval is best-effort and never fails the
+ * caller, so this resolves Ok even when nothing matches.
+ */
+export const makeContextRecall = ({
+  store,
+  taskId: _taskId,
+  agentName,
+}: {
+  store: StoragePort;
+  taskId: string;
+  agentName: string;
+}): ((query: string) => Promise<Result<unknown, string>>) =>
+  async (query) => Ok(await retrieveContext({ store, agentName, query }));

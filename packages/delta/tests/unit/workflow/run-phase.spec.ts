@@ -309,6 +309,138 @@ describe("runPhase — branch when-guard", () => {
   });
 });
 
+// ── Branch guard sees the previous action's outcome (lastOutcome) ─────────────
+
+describe("runPhase — guard sees lastOutcome", () => {
+  it("guard receives the previous action's outcome (action + ok) in this phase", async () => {
+    let seen: unknown = "unset";
+    const reg = new Map([
+      ["first", makeAction("first", async () => Ok("done-first"))],
+      ["second", makeAction("second")],
+    ]);
+    const actions: ActionRef[] = [
+      "first",
+      { action: "second", when: (ctx) => { seen = ctx.lastOutcome; return true; } },
+    ];
+
+    await runPhase({
+      phase: makePhase("outcome-ok", actions),
+      actionRegistry: reg,
+      state: makeState(),
+      getApprovalStatus: alwaysNone,
+      inputFor: alwaysEmpty,
+      store: createInMemoryStore(),
+    });
+
+    expect(seen).toEqual({ action: "first", ok: true });
+  });
+
+  it("lastOutcome is undefined before the first action runs", async () => {
+    let seen: unknown = "unset";
+    const reg = new Map([["only", makeAction("only")]]);
+    const actions: ActionRef[] = [
+      { action: "only", when: (ctx) => { seen = ctx.lastOutcome; return true; } },
+    ];
+
+    await runPhase({
+      phase: makePhase("outcome-first", actions),
+      actionRegistry: reg,
+      state: makeState(),
+      getApprovalStatus: alwaysNone,
+      inputFor: alwaysEmpty,
+      store: createInMemoryStore(),
+    });
+
+    expect(seen).toBeUndefined();
+  });
+
+  it("guard sees ok:false and the error when the previous action failed and routed here", async () => {
+    let seen: unknown = "unset";
+    const reg = new Map([
+      ["first", makeAction("first", async () => Err("boom"))],
+      ["recover", makeAction("recover")],
+    ]);
+    // first fails → onFailure jumps to the guarded "recover" branch.
+    const actions: ActionRef[] = [
+      { action: "first", onFailure: "recover" },
+      { action: "recover", when: (ctx) => { seen = ctx.lastOutcome; return true; } },
+    ];
+
+    await runPhase({
+      phase: makePhase("outcome-err", actions),
+      actionRegistry: reg,
+      state: makeState(),
+      getApprovalStatus: alwaysNone,
+      inputFor: alwaysEmpty,
+      store: createInMemoryStore(),
+    });
+
+    expect(seen).toEqual({ action: "first", ok: false, error: "boom" });
+  });
+});
+
+// ── Phase hooks observe the outcome + goal threading ──────────────────────────
+
+describe("runPhase — hooks observe outcome, ctx carries goal", () => {
+  it("phase after hook receives the completed snapshot as ctx.result", async () => {
+    let received: unknown = "unset";
+    const reg = new Map([["step", makeAction("step")]]);
+
+    await runPhase({
+      phase: makePhase("after-result", ["step"], {
+        hooks: { after: async (ctx) => { received = ctx.result; return Ok(undefined); } },
+      }),
+      actionRegistry: reg,
+      state: makeState(),
+      getApprovalStatus: alwaysNone,
+      inputFor: alwaysEmpty,
+      store: createInMemoryStore(),
+    });
+
+    expect(received).toMatchObject({ taskId: "tsk_phase_test" });
+  });
+
+  it("phase onError hook receives the failure reason as ctx.error", async () => {
+    let received: unknown = "unset";
+    const reg = new Map([["bad", makeAction("bad", async () => Err("kaboom"))]]);
+
+    await runPhase({
+      phase: makePhase("error-msg", ["bad"], {
+        hooks: { onError: async (ctx) => { received = ctx.error; return Ok(undefined); } },
+      }),
+      actionRegistry: reg,
+      state: makeState(),
+      getApprovalStatus: alwaysNone,
+      inputFor: alwaysEmpty,
+      store: createInMemoryStore(),
+    });
+
+    expect(received).toBe("kaboom");
+  });
+
+  it("threads goal and workflowName onto the action fn's ctx", async () => {
+    let goalSeen: unknown = "unset";
+    let workflowSeen: unknown = "unset";
+    const reg = new Map([
+      ["step", makeAction("step", async (_input, ctx) => { goalSeen = ctx.goal; workflowSeen = ctx.workflowName; return Ok("ok"); })],
+    ]);
+
+    await runPhase({
+      phase: makePhase("goal-thread", ["step"]),
+      actionRegistry: reg,
+      state: makeState(),
+      getApprovalStatus: alwaysNone,
+      inputFor: alwaysEmpty,
+      store: createInMemoryStore(),
+      goal: "resolve the dispute",
+      workflowName: "dispute-flow",
+    });
+
+    expect(goalSeen).toBe("resolve the dispute");
+    expect(workflowSeen).toBe("dispute-flow");
+  });
+});
+
 // ── Checkpoints (invariant 10) ────────────────────────────────────────────────
 
 describe("runPhase — checkpoints (invariant 10: checkpoint = recoverable state)", () => {

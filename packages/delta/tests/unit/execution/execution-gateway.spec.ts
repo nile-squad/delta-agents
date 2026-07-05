@@ -17,8 +17,9 @@ import { Ok, Err } from "slang-ts";
 import { runGateway } from "../../../src/execution";
 import { createInMemoryStore } from "../../../src/ports";
 import { initialTrust, initialRiskState } from "../../../src/governance";
-import type { Action } from "../../../src/authoring";
+import type { Action, ActionContext } from "../../../src/authoring";
 import type { TaskStateSnapshot } from "../../../src/state-space";
+import type { Attachment } from "../../../src/shared/types";
 
 // ── Shared test helpers ──────────────────────────────────────────────────────
 
@@ -716,5 +717,100 @@ describe("runGateway — surprise erodes trust (G1)", () => {
       expect(result.value.updatedSnapshot.trust.surpriseEvents).toBe(0);
       expect(result.value.updatedSnapshot.trust.successfulExecutions).toBe(state.trust.successfulExecutions + 1);
     }
+  });
+});
+
+// ── Extended ActionContext fields (goal, workflowName, attachments, recall, budget) ─
+
+describe("runGateway — extended ActionContext fields", () => {
+  it("threads goal, workflowName, attachments, recall, and budget onto the action fn's ctx", async () => {
+    let ctxSeen: ActionContext | undefined;
+    const recall = async () => Ok("recalled");
+    const attachments: Attachment[] = [{ id: "att_1", kind: "file", mimeType: "text/plain", name: "a.txt" }];
+    const budget = { spent: { tokens: 5, durationMs: 10 }, limit: { tokens: 100, durationMs: 1000 } };
+
+    await runGateway({
+      action: makeAction({ fn: async (_input, ctx) => { ctxSeen = ctx; return Ok("x"); } }),
+      rawInput: validInput,
+      state: makeState(),
+      approvalStatus: "none",
+      store: createInMemoryStore(),
+      goal: "close the ticket",
+      workflowName: "support-flow",
+      attachments,
+      recall,
+      budget,
+    });
+
+    expect(ctxSeen?.goal).toBe("close the ticket");
+    expect(ctxSeen?.workflowName).toBe("support-flow");
+    expect(ctxSeen?.attachments).toEqual(attachments);
+    expect(ctxSeen?.budget).toEqual(budget);
+    expect(ctxSeen?.recall).toBe(recall);
+  });
+
+  it("omits the extended fields from ctx when GatewayInput does not supply them", async () => {
+    let ctxSeen: ActionContext | undefined;
+    await runGateway({
+      action: makeAction({ fn: async (_input, ctx) => { ctxSeen = ctx; return Ok("x"); } }),
+      rawInput: validInput,
+      state: makeState(),
+      approvalStatus: "none",
+      store: createInMemoryStore(),
+    });
+    expect(ctxSeen?.goal).toBeUndefined();
+    expect(ctxSeen?.attachments).toBeUndefined();
+    expect(ctxSeen?.recall).toBeUndefined();
+    expect(ctxSeen?.budget).toBeUndefined();
+  });
+});
+
+// ── After / onError hooks observe the outcome (result / error) ──────────────
+
+describe("runGateway — hooks observe the fn outcome", () => {
+  it("after hook receives the fn's Ok value as ctx.result", async () => {
+    let resultSeen: unknown = "unset";
+    await runGateway({
+      action: makeAction({
+        fn: async () => Ok("payload"),
+        hooks: { after: async (ctx) => { resultSeen = ctx.result; return Ok(undefined); } },
+      }),
+      rawInput: validInput,
+      state: makeState(),
+      approvalStatus: "none",
+      store: createInMemoryStore(),
+    });
+    expect(resultSeen).toBe("payload");
+  });
+
+  it("onError hook receives the fn's error message as ctx.error", async () => {
+    let errorSeen: unknown = "unset";
+    await runGateway({
+      action: makeAction({
+        fn: async () => Err("db down"),
+        hooks: { onError: async (ctx) => { errorSeen = ctx.error; return Ok(undefined); } },
+      }),
+      rawInput: validInput,
+      state: makeState(),
+      approvalStatus: "none",
+      store: createInMemoryStore(),
+    });
+    expect(errorSeen).toBe("db down");
+  });
+
+  it("onError hook receives the thrown error (normalised to a string) as ctx.error", async () => {
+    let errorSeen: unknown = "unset";
+    await runGateway({
+      action: makeAction({
+        fn: async () => { throw new Error("boom"); },
+        hooks: { onError: async (ctx) => { errorSeen = ctx.error; return Ok(undefined); } },
+      }),
+      rawInput: validInput,
+      state: makeState(),
+      approvalStatus: "none",
+      store: createInMemoryStore(),
+    });
+    expect(typeof errorSeen).toBe("string");
+    expect(errorSeen).toContain("boom");
   });
 });

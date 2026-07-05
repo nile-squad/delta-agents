@@ -46,6 +46,11 @@ export const runGateway = async ({
   stepIndex = 0,
   communicate,
   remember,
+  goal,
+  workflowName,
+  attachments,
+  recall,
+  budget,
   availableSkills,
   storyline,
   phaseStoryline,
@@ -96,9 +101,14 @@ export const runGateway = async ({
     executionId: excId,
     agentName: state.agentName,
     phase: state.currentPhase,
+    ...(goal !== undefined ? { goal } : {}),
+    ...(workflowName !== undefined ? { workflowName } : {}),
+    ...(attachments !== undefined ? { attachments } : {}),
     ...(availableSkills !== undefined ? { availableSkills } : {}),
     ...(communicate !== undefined ? { communicate } : {}),
     ...(remember !== undefined ? { remember } : {}),
+    ...(recall !== undefined ? { recall } : {}),
+    ...(budget !== undefined ? { budget } : {}),
     ...(storyline !== undefined ? { storyline } : {}),
     ...(phaseStoryline !== undefined ? { phaseStoryline } : {}),
   };
@@ -130,7 +140,7 @@ export const runGateway = async ({
   // safeTry normalizes fn's Result return intact (Ok→Ok, Err→Err) and converts
   // any throw to Err — a thrown error is a contract violation, treated as fn
   // returning Err (prohibition 18: never infer success from absence of a throw).
-  actionDiag?.event("action-start", { action: action.name, taskId: state.taskId, executionId: excId });
+  actionDiag?.event("action-start", { action: action.name, taskId: state.taskId, agentName: state.agentName, executionId: excId });
   const fnResult = await safeTry(async () => action.fn(validatedInput, ctx));
 
   const endedAt = new Date();
@@ -151,6 +161,7 @@ export const runGateway = async ({
   actionDiag?.event("action-end", {
     action: action.name,
     taskId: state.taskId,
+    agentName: state.agentName,
     executionId: excId,
     status: fnSucceeded ? "completed" : "failed",
     durationMs,
@@ -159,10 +170,10 @@ export const runGateway = async ({
   // ── 8. After / onError hook ────────────────────────────────────────────
   // Run teardown hooks. Their results do not alter fnResult or the
   // governance decision already made above (prohibition 17).
-  if (fnSucceeded) {
-    await runHook(action.hooks?.after, ctx);
+  if (fnResult.isOk) {
+    await runHook(action.hooks?.after, { ...ctx, result: fnResult.value });
   } else {
-    await runHook(action.hooks?.onError, ctx);
+    await runHook(action.hooks?.onError, { ...ctx, error: fnResult.error });
   }
 
   // ── 9. Finalise Execution record ────────────────────────────────────────

@@ -42,7 +42,7 @@ import { applyPostStepGovernance, getApprovalStatusForAction, requestApproval, r
 import { retryWithJitter, defaultRetryOptions } from "../infra";
 import type { RetryOptions } from "../infra";
 import { dispatchCommunication, makeContextCommunicate } from "../comms";
-import { retrieveContext, makeContextRemember } from "../memory";
+import { retrieveContext, makeContextRemember, makeContextRecall } from "../memory";
 import { computeActionValue } from "../governance";
 import { computeRosterEntries } from "./roster";
 import { enforceSubtaskScope, requestSlot, releaseSlot, abortEntireTree } from "../supervision";
@@ -391,6 +391,7 @@ const stepTask = async ({
     });
     events.emit("escalation-raised", {
       taskId: task.id,
+      agentName: agent.name,
       trigger: "reasoner-failure",
       reason: `reasoner failed after ${providerRetry.maxAttempts} attempt(s): ${reasonResult.error}`,
     });
@@ -477,7 +478,7 @@ const stepTask = async ({
   // to ./tool-dispatch (handleToolExecution) — see that module for the full
   // behavior (loop detection ordering, truncation, history recording).
   if (decision.kind === "tool") {
-    return handleToolExecution({ decision, agent, task, snapshot, registry, loopDetector });
+    return handleToolExecution({ decision, agent, task, snapshot, registry, loopDetector, goal: task.goal });
   }
 
   // Tool-info: the model wants a tool's schema, the full history, or a single
@@ -530,6 +531,7 @@ const stepTask = async ({
       });
       events.emit("escalation-raised", {
         taskId: task.id,
+        agentName: agent.name,
         trigger: "budget-violation",
         reason: `projected cost of action "${actionName}" (${projected.tokens} tokens / ${projected.durationMs}ms including spend to date) exceeds budget before execution (MPC)`,
       });
@@ -572,7 +574,7 @@ const stepTask = async ({
         store,
       });
       if (autoResult.isOk) {
-        events.emit("approval-requested", { taskId: task.id, action: actionName, approvalId: autoResult.value.id, reason: autoResult.value.reason });
+        events.emit("approval-requested", { taskId: task.id, agentName: agent.name, action: actionName, approvalId: autoResult.value.id, reason: autoResult.value.reason });
       }
       approvalStatus = "approved";
     } else {
@@ -584,7 +586,7 @@ const stepTask = async ({
       });
       const approvalIdStr = reqResult.isOk ? reqResult.value.id : "(unavailable)";
       if (reqResult.isOk) {
-        events.emit("approval-requested", { taskId: task.id, action: actionName, approvalId: reqResult.value.id, reason: reqResult.value.reason });
+        events.emit("approval-requested", { taskId: task.id, agentName: agent.name, action: actionName, approvalId: reqResult.value.id, reason: reqResult.value.reason });
       }
       return {
         kind: "blocked",
@@ -598,6 +600,7 @@ const stepTask = async ({
   // ctx helpers bound to this agent + task: channel-send and memory-write.
   const communicate = makeContextCommunicate({ agent, taskId: task.id, agentName: agent.name, store });
   const remember = makeContextRemember({ store, taskId: task.id, agentName: agent.name });
+  const recall = makeContextRecall({ store, taskId: task.id, agentName: agent.name });
   // Per-action skills override the agent-level set when declared; otherwise the
   // full agent skill set (already built for the reasoner above) is forwarded.
   let actionAvailableSkills = availableSkills;
@@ -608,7 +611,7 @@ const stepTask = async ({
     }
     actionAvailableSkills = await buildAvailableSkills(refsResult.value);
   }
-  const gwResult = await runGateway({ action, rawInput: input, state: snapshot, approvalStatus, store, reasoningCost, stepIndex: step, communicate, remember, availableSkills: actionAvailableSkills });
+  const gwResult = await runGateway({ action, rawInput: input, state: snapshot, approvalStatus, store, reasoningCost, stepIndex: step, communicate, remember, recall, availableSkills: actionAvailableSkills, goal: task.goal, attachments: snapshot.attachments, budget: { spent: snapshot.spent, limit: snapshot.budget } });
 
   if (gwResult.isErr) {
     if (gwResult.error.startsWith("approval-required:")) {
@@ -961,7 +964,7 @@ export const runScheduler = async ({
       // Engine instrumentation (PoC): step-start before the step, step-end
       // after with the outcome kind. Two emission points per step; the
       // disabled path is provably zero overhead.
-      engineDiag.event("step-start", { taskId: runner.task.id, step: runner.step });
+      engineDiag.event("step-start", { taskId: runner.task.id, agentName: runner.agent.name, step: runner.step });
       const outcome = await stepTask({
         task: runner.task,
         agent: runner.agent,
@@ -981,7 +984,7 @@ export const runScheduler = async ({
       });
       runner.step++;
       runner.snapshot = outcome.snapshot;
-      engineDiag.event("step-end", { taskId: runner.task.id, step: runner.step, kind: outcome.kind });
+      engineDiag.event("step-end", { taskId: runner.task.id, agentName: runner.agent.name, step: runner.step, kind: outcome.kind });
 
       // Phase-change detection: when the snapshot's currentPhase differs from
       // what the runner last saw, reset per-phase tool counters so phase-scoped

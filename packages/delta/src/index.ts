@@ -16,6 +16,8 @@ export type {
   ActionContext,
   ActionFn,
   HookFn,
+  AfterHookFn,
+  ErrorHookFn,
   Hooks,
   Branch,
   ActionRef,
@@ -87,7 +89,7 @@ export type { DiagnosticsConfig } from "./shared/diagnostics";
 // ── Events ─────────────────────────────────────────────────────────────────────
 // Engine lifecycle events. Subscribe via `delta.events.on(eventName, handler)`
 // to react to step-start, action-end, and other lifecycle moments.
-export type { DeltaEventPayloads, DeltaEventName, DeltaEvents } from "./shared/create-events";
+export type { DeltaEventPayloads, DeltaEventName, DeltaEvents, DeltaEventEnvelope, DeltaEventDelivered } from "./shared/create-events";
 
 // ── Result utilities ──────────────────────────────────────────────────────────
 // Re-export slang-ts so callers can construct Ok/Err, pattern-match results,

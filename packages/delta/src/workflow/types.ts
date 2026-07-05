@@ -69,6 +69,16 @@ export type RunPhaseInput = {
   communicate?: ActionContext["communicate"];
   /** Memory-write helper exposed to phase/action hooks via ctx.remember. */
   remember?: ActionContext["remember"];
+  /** The task's goal, threaded onto ctx.goal for phase/action hooks and guards. Absent when the caller carries no goal. */
+  goal?: ActionContext["goal"];
+  /** Attachments threaded onto ctx.attachments (parity with ToolContext). Absent or empty when the task carries none. */
+  attachments?: ActionContext["attachments"];
+  /** Memory-read helper exposed to phase/action hooks via ctx.recall. */
+  recall?: ActionContext["recall"];
+  /** Read-only cost snapshot threaded onto ctx.budget so a long-running action can self-limit. */
+  budget?: ActionContext["budget"];
+  /** The enclosing workflow's name, threaded onto ctx.workflowName. Derived by runWorkflow from the workflow. */
+  workflowName?: ActionContext["workflowName"];
   /** Index in the phase action list to begin at. Lets supervision `retry`
    *  resume from the failed action instead of re-running from the top.
    *  Defaults to 0 (run the whole phase). */
@@ -109,6 +119,14 @@ export type RunWorkflowInput = {
   communicate?: ActionContext["communicate"];
   /** Memory-write helper exposed to workflow/phase/action hooks via ctx.remember. */
   remember?: ActionContext["remember"];
+  /** The task's goal, threaded onto ctx.goal for workflow/phase/action hooks and guards. Absent when the caller carries no goal. */
+  goal?: ActionContext["goal"];
+  /** Attachments threaded onto ctx.attachments (parity with ToolContext). Absent or empty when the task carries none. */
+  attachments?: ActionContext["attachments"];
+  /** Memory-read helper exposed to workflow/phase/action hooks via ctx.recall. */
+  recall?: ActionContext["recall"];
+  /** Read-only cost snapshot threaded onto ctx.budget so a long-running action can self-limit. */
+  budget?: ActionContext["budget"];
   /** The agent's full declared skill set, used to resolve phase/action skill refs. */
   agentSkills?: Skill[];
   /**

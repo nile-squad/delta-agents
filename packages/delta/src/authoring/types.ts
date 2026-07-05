@@ -21,6 +21,23 @@ export type ActionContext = {
   agentName: string;
   phase?: string;
   /**
+   * The task's goal — what the agent is trying to achieve. Lets an action fn,
+   * hook, or guard reason about intent rather than just its own input. Absent in
+   * a standalone gateway call that carries no task goal (e.g. a unit test).
+   */
+  goal?: string;
+  /**
+   * The name of the workflow this action runs inside. Absent in the free
+   * reasoner loop (no workflow context) and in standalone gateway calls.
+   */
+  workflowName?: string;
+  /**
+   * Attachments supplied at send() time — parity with ToolContext, so an action
+   * fn or hook can look up raw content (e.g. a file to process) by id. Absent or
+   * empty when the task carries none.
+   */
+  attachments?: Attachment[];
+  /**
    * The workflow-level narrative arc, when running inside a workflow. Absent in
    * the free reasoner loop (no workflow context).
    */
@@ -55,6 +72,21 @@ export type ActionContext = {
    * when no agent context is available (e.g. a standalone gateway call in a test).
    */
   remember?: (content: string, kind?: string) => Promise<Result<unknown, string>>;
+  /**
+   * Read the agent's memories on demand — the counterpart of `remember`. Given a
+   * free-text query, returns a relevance-ranked slice of memories owned by this
+   * agent (spec principle 4: memory is retrieved, not carried). Absent when no
+   * agent context is available (e.g. a standalone gateway call in a test).
+   */
+  recall?: (query: string) => Promise<Result<unknown, string>>;
+  /**
+   * Read-only snapshot of the task's cost so a long-running action or hook can
+   * self-limit before the engine's budget gate stops it. `spent` is the cost
+   * accrued so far; `limit` is the declared ceiling (absent means unbounded on
+   * that axis). Never a control surface — mutating it does nothing; enforcement
+   * stays in the gateway. Absent in standalone gateway calls that carry no budget.
+   */
+  budget?: { spent: Cost; limit?: Cost };
 };
 
 // Every action fn and hook returns a Result. The engine never infers
@@ -66,12 +98,30 @@ export type ActionFn<TInput extends Record<string, unknown>> = (
 
 export type HookFn = (ctx: ActionContext) => Promise<Result<unknown, string>>;
 
+/**
+ * After-hook signature: runs when fn returned Ok. Receives the base
+ * ActionContext plus `result` — the value fn resolved with — so teardown can
+ * observe what happened. Cannot alter the outcome (prohibition 17).
+ */
+export type AfterHookFn = (ctx: ActionContext & { result: unknown }) => Promise<Result<unknown, string>>;
+
+/**
+ * Error-hook signature: runs when fn returned Err (or threw). Receives the base
+ * ActionContext plus `error` — the failure message — so teardown can observe the
+ * cause. Cannot alter the outcome (prohibition 17).
+ */
+export type ErrorHookFn = (ctx: ActionContext & { error: string }) => Promise<Result<unknown, string>>;
+
 // Hooks observe and prepare. They never authorize or bypass governance
 // (spec §Lifecycle Hooks, invariant 22, prohibition 17).
+//
+// `after`/`onError` receive an extended context (result/error). This is
+// backward compatible: a user fn typed on the base ActionContext still assigns,
+// since the extended type is a subtype — the extra field is simply ignored.
 export type Hooks = {
   before?: HookFn;
-  after?: HookFn;
-  onError?: HookFn;
+  after?: AfterHookFn;
+  onError?: ErrorHookFn;
 };
 
 /**
@@ -122,6 +172,8 @@ export type ToolContext = {
   agentName: string;
   taskId: string;
   phaseName?: string;
+  /** The task's goal — what the agent is trying to achieve. Lets a tool reason about intent, not just its input. Absent when the task carries no goal (e.g. a standalone call). */
+  goal?: string;
   toolHistory: ToolHistoryEntry[];
   /** Attachments supplied at send() time — lets a tool look up raw content (e.g. a file to extract text from) by id. Absent or empty when the task carries none. */
   attachments?: Attachment[];
@@ -186,7 +238,14 @@ export type Branch = {
   action: string;
   onSuccess?: string;
   onFailure?: string;
-  when?: (ctx: ActionContext) => boolean;
+  /**
+   * Optional guard evaluated against task state before the branch action runs
+   * (a false guard skips the branch). Receives the phase's ActionContext plus
+   * `lastOutcome` — the previous action's result in this phase ({ action, ok,
+   * error? }), or undefined before the first action runs — so a guard can route
+   * on what just happened, fulfilling "evaluated against task state".
+   */
+  when?: (ctx: ActionContext & { lastOutcome?: { action: string; ok: boolean; error?: string } }) => boolean;
 };
 
 // An action reference in a phase: plain string = sequential, Branch = conditional.

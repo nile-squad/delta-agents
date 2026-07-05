@@ -30,7 +30,7 @@ import type { SendResult } from "./types";
 import { snapshotFromTask, snapshotToJson } from "../state-space/task-state";
 import { runWorkflow } from "../workflow";
 import { makeContextCommunicate } from "../comms";
-import { makeContextRemember } from "../memory";
+import { makeContextRemember, makeContextRecall } from "../memory";
 import { getApprovalStatusForAction, requestApproval, recordAutoApproval, approvalRequired, describeRejection, raiseEscalation } from "../oversight";
 import { resolveApproval } from "../oversight";
 import { projectHorizon } from "../governance";
@@ -313,7 +313,7 @@ export const runWorkflowTask = async ({
           store,
         });
         if (autoResult.isOk) {
-          events.emit("approval-requested", { taskId: task.id, action: name, approvalId: autoResult.value.id, reason: autoResult.value.reason });
+          events.emit("approval-requested", { taskId: task.id, agentName: agent.name, action: name, approvalId: autoResult.value.id, reason: autoResult.value.reason });
         }
         status = "approved";
       } else {
@@ -324,7 +324,7 @@ export const runWorkflowTask = async ({
           store,
         });
         if (reqResult.isOk) {
-          events.emit("approval-requested", { taskId: task.id, action: name, approvalId: reqResult.value.id, reason: reqResult.value.reason });
+          events.emit("approval-requested", { taskId: task.id, agentName: agent.name, action: name, approvalId: reqResult.value.id, reason: reqResult.value.reason });
         }
         status = "pending";
       }
@@ -370,6 +370,7 @@ export const runWorkflowTask = async ({
     });
     events.emit("escalation-raised", {
       taskId: task.id,
+      agentName: agent.name,
       trigger: "budget-violation",
       reason: `projected workflow cost (${horizon.totalProjectedCost.tokens} tokens / ${horizon.totalProjectedCost.durationMs}ms over ${horizon.stepsTaken} step(s)) exceeds budget before execution (MPC)`,
     });
@@ -392,9 +393,13 @@ export const runWorkflowTask = async ({
     store,
     communicate: makeContextCommunicate({ agent, taskId: task.id, agentName: agent.name, store }),
     remember: makeContextRemember({ store, taskId: task.id, agentName: agent.name }),
+    recall: makeContextRecall({ store, taskId: task.id, agentName: agent.name }),
     agentSkills: agent.skills,
     diagnostics,
     guidanceEnabled,
+    goal: task.goal,
+    ...(snapshot.attachments !== undefined && snapshot.attachments.length > 0 ? { attachments: snapshot.attachments } : {}),
+    budget: { spent: snapshot.spent, limit: snapshot.budget },
   });
 
   if (result.status === "completed") {

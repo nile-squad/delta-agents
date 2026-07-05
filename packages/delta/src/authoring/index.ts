@@ -2,6 +2,8 @@ export type {
   ActionContext,
   ActionFn,
   HookFn,
+  AfterHookFn,
+  ErrorHookFn,
   Hooks,
   Action,
   Branch,

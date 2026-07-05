@@ -416,10 +416,20 @@ export const createDeltaEngine = async ({
     return Ok(result);
   };
 
+  // The ApprovalRequest record carries no agent name, so resolve it from the
+  // owning task. This is a rare human-triggered path (a reviewer decides), so
+  // the extra read is fine; an unreadable task degrades to "unknown" rather
+  // than dropping the event a UI/audit feed depends on.
+  const agentNameForTask = async (taskId_: string): Promise<string> => {
+    const taskResult = await store.getTask(taskId_);
+    return taskResult.isOk ? taskResult.value.assignedAgent : "unknown";
+  };
+
   const approve: DeltaEngine["approve"] = async (approvalId) => {
     const result = await resolveApproval({ approvalId, decision: "approved", store });
     if (result.isOk) {
-      events.emit("approval-resolved", { taskId: result.value.taskId, action: result.value.action, approvalId, decision: "approved" });
+      const agentName = await agentNameForTask(result.value.taskId);
+      events.emit("approval-resolved", { taskId: result.value.taskId, agentName, action: result.value.action, approvalId, decision: "approved" });
     }
     return result;
   };
@@ -427,7 +437,8 @@ export const createDeltaEngine = async ({
   const reject: DeltaEngine["reject"] = async (approvalId, reason) => {
     const result = await resolveApproval({ approvalId, decision: "rejected", reason, store });
     if (result.isOk) {
-      events.emit("approval-resolved", { taskId: result.value.taskId, action: result.value.action, approvalId, decision: "rejected" });
+      const agentName = await agentNameForTask(result.value.taskId);
+      events.emit("approval-resolved", { taskId: result.value.taskId, agentName, action: result.value.action, approvalId, decision: "rejected" });
     }
     return result;
   };

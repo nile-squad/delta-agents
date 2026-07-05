@@ -13,16 +13,20 @@
 
 import { Ok, Err, option, safeTry } from "slang-ts";
 import type { Result } from "slang-ts";
-import type { HookFn, ActionContext } from "../authoring/types";
+import type { ActionContext } from "../authoring/types";
 
 /**
  * Run a single hook, catching thrown exceptions and returned Err alike.
  * Returns Ok(void) when the hook is absent or succeeds.
  * Returns Err(message) if the hook throws or returns its own Err.
+ *
+ * Generic over the context type so callers can pass an extended ActionContext
+ * (e.g. after-hooks receive `{ ...ctx, result }`, onError receives
+ * `{ ...ctx, error }`) without widening or casting.
  */
-export const runHook = async (
-  hook: HookFn | undefined,
-  ctx: ActionContext,
+export const runHook = async <C extends ActionContext>(
+  hook: ((ctx: C) => Promise<Result<unknown, string>>) | undefined,
+  ctx: C,
 ): Promise<Result<void, string>> => {
   const hookOpt = option(hook);
   if (hookOpt.isNone) return Ok(undefined);

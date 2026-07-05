@@ -7,7 +7,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { rankMemories, retrieveContext, makeContextRemember } from "../../../src/memory";
+import { rankMemories, retrieveContext, makeContextRemember, makeContextRecall } from "../../../src/memory";
+import type { RetrievedContext } from "../../../src/memory";
 import { createInMemoryStore } from "../../../src/ports";
 import type { Memory } from "../../../src/shared/types";
 
@@ -62,6 +63,38 @@ describe("retrieveContext + makeContextRemember", () => {
     await makeContextRemember({ store, taskId: "t", agentName: "b" })("b-secret");
     const ra = await retrieveContext({ store, agentName: "a", query: "secret" });
     expect(ra.memories.map((m) => m.content)).toEqual(["a-secret"]);
+  });
+});
+
+describe("makeContextRecall — read counterpart of remember", () => {
+  it("recalls memories written by the same agent, ranked by the query", async () => {
+    const store = createInMemoryStore();
+    await makeContextRemember({ store, taskId: "t1", agentName: "agent-x" })("customer prefers email", "preference");
+    await makeContextRemember({ store, taskId: "t1", agentName: "agent-x" })("the cat sat on the mat");
+
+    const recall = makeContextRecall({ store, taskId: "t2", agentName: "agent-x" });
+    const result = await recall("how to contact the customer by email");
+
+    expect(result.isOk).toBe(true);
+    if (result.isOk) {
+      const value = result.value as RetrievedContext;
+      expect(value.memories[0]?.content).toBe("customer prefers email");
+      expect(value.context).toMatch(/customer prefers email/);
+    }
+  });
+
+  it("scopes recall to the owning agent and resolves Ok even with no matches", async () => {
+    const store = createInMemoryStore();
+    await makeContextRemember({ store, taskId: "t", agentName: "a" })("a-secret");
+    const recall = makeContextRecall({ store, taskId: "t", agentName: "b" });
+    const result = await recall("secret");
+
+    expect(result.isOk).toBe(true);
+    if (result.isOk) {
+      const value = result.value as RetrievedContext;
+      expect(value.memories).toEqual([]);
+      expect(value.context).toBe("");
+    }
   });
 });
 

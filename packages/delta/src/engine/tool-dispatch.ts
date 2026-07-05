@@ -59,6 +59,7 @@ export const handleToolExecution = async ({
   snapshot,
   registry,
   loopDetector,
+  goal,
 }: {
   decision: Extract<ReasonerDecision, { kind: "tool" }>;
   agent: Agent;
@@ -66,6 +67,8 @@ export const handleToolExecution = async ({
   snapshot: TaskStateSnapshot;
   registry: Registry;
   loopDetector: LoopDetector;
+  /** The task's goal, threaded onto ToolContext.goal so a tool can reason about intent. Absent when the caller carries no goal. */
+  goal?: string;
 }): Promise<StepOutcome> => {
   const toolCall = decision.toolCall;
   const toolResult = registry.getTool(toolCall.toolName);
@@ -126,6 +129,7 @@ export const handleToolExecution = async ({
       agentName: agent.name,
       taskId: task.id,
       ...(snapshot.currentPhase !== undefined ? { phaseName: snapshot.currentPhase } : {}),
+      ...(goal !== undefined ? { goal } : {}),
       toolHistory,
       ...(snapshot.attachments !== undefined && snapshot.attachments.length > 0 ? { attachments: snapshot.attachments } : {}),
     },

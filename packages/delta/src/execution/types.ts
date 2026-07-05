@@ -47,6 +47,23 @@ export type GatewayInput = {
   communicate?: ActionContext["communicate"];
   /** Memory-write helper threaded onto the ActionContext (ctx.remember). */
   remember?: ActionContext["remember"];
+  /**
+   * The task's goal, threaded onto ActionContext.goal so an action fn, hook, or
+   * guard can reason about intent. Absent for standalone gateway calls (e.g. a
+   * unit test) that carry no goal.
+   */
+  goal?: ActionContext["goal"];
+  /**
+   * The enclosing workflow's name, threaded onto ActionContext.workflowName.
+   * Absent in the free reasoner loop and in standalone gateway calls.
+   */
+  workflowName?: ActionContext["workflowName"];
+  /** Attachments threaded onto ActionContext.attachments (parity with ToolContext). Absent or empty when the task carries none. */
+  attachments?: ActionContext["attachments"];
+  /** Memory-read helper threaded onto the ActionContext (ctx.recall). Counterpart of `remember`. */
+  recall?: ActionContext["recall"];
+  /** Read-only cost snapshot threaded onto ActionContext.budget so a long-running action can self-limit. Absent when the caller carries no budget. */
+  budget?: ActionContext["budget"];
   /** Skills active at this action's invocation point. Threaded onto ctx.availableSkills. */
   availableSkills?: ActionContext["availableSkills"];
   /**

@@ -177,17 +177,29 @@ export const runWorkflow = async ({
   store,
   communicate,
   remember,
+  goal,
+  attachments,
+  recall,
+  budget,
   agentSkills,
   diagnostics,
   guidanceEnabled = true,
 }: RunWorkflowInput): Promise<WorkflowResult> => {
+  // The workflow name is derived from the workflow itself — every context under
+  // this workflow carries it so hooks and guards know where they run.
+  const workflowName = workflow.name;
   const workflowCtx: ActionContext = {
     taskId: state.taskId,
     executionId: executionId(),
     agentName: state.agentName,
     phase: undefined,
+    workflowName,
+    ...(goal !== undefined ? { goal } : {}),
+    ...(attachments !== undefined ? { attachments } : {}),
     ...(communicate !== undefined ? { communicate } : {}),
     ...(remember !== undefined ? { remember } : {}),
+    ...(recall !== undefined ? { recall } : {}),
+    ...(budget !== undefined ? { budget } : {}),
     ...(workflow.storyline !== undefined ? { storyline: workflow.storyline } : {}),
   };
 
@@ -231,6 +243,11 @@ export const runWorkflow = async ({
       store,
       communicate,
       remember,
+      ...(goal !== undefined ? { goal } : {}),
+      ...(attachments !== undefined ? { attachments } : {}),
+      ...(recall !== undefined ? { recall } : {}),
+      ...(budget !== undefined ? { budget } : {}),
+      workflowName,
       agentSkills,
       ...(diagnostics !== undefined ? { diagnostics } : {}),
       ...(startIndex !== undefined ? { startIndex } : {}),
@@ -244,7 +261,7 @@ export const runWorkflow = async ({
     currentState = phaseResult.snapshot;
 
     if (phaseResult.status === "blocked") {
-      await runHook(workflow.hooks?.onError, workflowCtx);
+      await runHook(workflow.hooks?.onError, { ...workflowCtx, error: phaseResult.reason });
       return {
         status: "blocked",
         snapshot: currentState,
@@ -254,7 +271,7 @@ export const runWorkflow = async ({
     }
 
     if (phaseResult.status === "failed") {
-      await runHook(workflow.hooks?.onError, workflowCtx);
+      await runHook(workflow.hooks?.onError, { ...workflowCtx, error: phaseResult.failedReason });
       return {
         status: "failed",
         snapshot: currentState,
@@ -271,6 +288,8 @@ export const runWorkflow = async ({
     workflowName: workflow.name,
   });
 
-  await runHook(workflow.hooks?.after, workflowCtx);
+  // The workflow's outcome value is its final governed snapshot — the after hook
+  // observes it without being able to change it (prohibition 17).
+  await runHook(workflow.hooks?.after, { ...workflowCtx, result: finalSnapshot });
   return { status: "completed", snapshot: finalSnapshot };
 };

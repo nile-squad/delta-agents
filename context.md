@@ -526,6 +526,7 @@ A typed consumer-facing events system built on `DeltaEventPayloads` (type map) +
 - **Events bridge through diagnostics**: `createDiagnostics` accepts an optional `emitEvent` callback. When enabled, diagnostics `.event()` both logs AND dispatches to events. One-directional: diagnostics owns the toggle, events owns the subscription.
 - **No global state**: `DeltaEventsInternal` threaded via function params (like `diagnostics`). No singleton or module-level state.
 - **Threading path**: `create-delta-engine.ts` → `runtime.ts` → `runtime-lifecycle.ts` → `scheduler.ts` → `stepTask`. All HITL and task lifecycle events emitted at the source callsite where the relevant store operation happens.
+- **Event envelope**: Every event carries `timestamp: number` (milliseconds since epoch, stamped centrally at emit) and `agentName: string` (added to payloads that lacked it). UI feeds, webhooks, and audit streams no longer need to join events against `delta.inspect()` for temporal or agent context.
 
 ### Files created
 
@@ -548,6 +549,16 @@ Engine lifecycle (gated — `engine` toggle): step-start, step-end, commit-step-
 Engine lifecycle (gated — `actions` toggle): action-start, action-end
 Human oversight (unconditional): approval-requested, approval-resolved, escalation-raised
 Task lifecycle (unconditional): task-completed, task-blocked, task-failed
+
+## Consumer Context Enrichment (2026-07-05)
+
+Action functions, hooks, and branch guards gain access to richer task and governance context without requiring separate engine calls.
+
+- **ActionContext fields**: `goal?: string` (task objective), `workflowName?: string` (enclosing workflow), `attachments?: Attachment[]` (multimodal input), `recall?: (query) => Promise<Memory[]>` (keyword memory lookup), `budget?: { spent, limit? }` (read-only cost snapshot).
+- **Hook outcomes**: `after` hooks receive `ctx & { result }`, `onError` hooks receive `ctx & { error }` — outcome-aware reactions without re-execution.
+- **Branch guard state**: `Branch.when` receives `ctx & { lastOutcome?: { action, ok, error? } }` — prior step's result available for decision logic.
+- **ToolContext goal**: `goal?: string` — tools can contextualize work within the task's stated intent.
+- **All additions optional and backward compatible** — absent in standalone gateway calls with no task context.
 
 ### docs-web Responsive Alignment Pattern (2026-07-05)
 
