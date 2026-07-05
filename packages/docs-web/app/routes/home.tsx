@@ -143,7 +143,7 @@ export default function Home() {
           <div className="grid items-center gap-16 lg:grid-cols-2 lg:gap-32">
             <FadeIn className="max-w-2xl">
               <h1 className="text-[clamp(2.25rem,1.4rem+3.4vw,3.75rem)] font-bold tracking-tight leading-[1.1]">
-                The AI agent framework
+                The AI agents framework
                 <br />
                 <span className="text-[#5F57E3]">with built-in </span>
                 <span className="bg-gradient-to-b from-[#fbbf24] via-[#f97316] to-[#ea580c] bg-clip-text text-transparent">
@@ -151,9 +151,7 @@ export default function Home() {
                 </span>
               </h1>
               <p className="mt-6 text-[clamp(1.0625rem,0.95rem+0.55vw,1.25rem)] text-fd-muted-foreground max-w-xl leading-normal">
-                Delta's math based engine supervises agents, and guides them
-                towards correction or involve you when it can't, no drift,
-                strict on policy and rules, no prompt hacks!
+                Delta AI Agents Framework & Runtime
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-4">
                 <Link
@@ -204,9 +202,9 @@ export default function Home() {
               How it works
             </h2>
             <p className="mt-4 max-w-2xl text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed">
-              You define the agent, the engine supervises it, and the model only
-              ever proposes. Every action is validated, authorized, or escalated
-              back to you.
+              You define the agent, the math based engine supervises, and every
+              agent action is validated, authorized, or escalated back to you,
+              strict on policy and rules, no prompt hacks!
             </p>
           </FadeIn>
           <FadeIn delay={0.1} className="mt-14 sm:mt-16">
@@ -249,7 +247,7 @@ export default function Home() {
               <FadeIn
                 key={cap.title}
                 delay={Math.min(i * 0.05, 0.25)}
-                className="border-t-2 bg-fd-background p-8 transition-colors hover:bg-fd-accent/30 sm:p-10"
+                className={`border-t-2 p-8 transition-colors hover:bg-fd-accent/30 sm:p-10 ${i === 4 ? "bg-fd-accent/30" : "bg-fd-background"}`}
                 style={{ borderTopColor: cap.accent }}
               >
                 <span

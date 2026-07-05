@@ -123,7 +123,7 @@ export default function UseCases() {
               <FadeIn
                 key={useCase.title}
                 delay={Math.min(i * 0.05, 0.25)}
-                className="border-t-2 bg-fd-background p-8 transition-colors hover:bg-fd-accent/30 sm:p-10"
+                className={`border-t-2 p-8 transition-colors hover:bg-fd-accent/30 sm:p-10 ${i === 4 ? "bg-fd-accent/30" : "bg-fd-background"}`}
                 style={{ borderTopColor: useCase.accent }}
               >
                 <span

@@ -4,7 +4,7 @@ import { appName } from "./site-config";
 export const siteUrl = "https://delta.nilesquad.com";
 
 export const defaultDescription =
-  "The AI agent framework with built-in safety, governance, and provenance.";
+  "The AI agents framework with built-in safety, governance, and provenance.";
 
 export function absoluteUrl(path: string): string {
   return new URL(path, siteUrl).toString();
