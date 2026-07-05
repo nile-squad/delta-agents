@@ -151,6 +151,7 @@ const stepTask = async ({
   diagnostics,
   commitContextLimit,
   maxInvalidDecisionRetries = 3,
+  guidanceEnabled = true,
 }: {
   task: Task;
   agent: Agent;
@@ -171,6 +172,8 @@ const stepTask = async ({
   commitContextLimit?: number;
   /** Max consecutive invalid model decisions fed back for correction before failing. */
   maxInvalidDecisionRetries?: number;
+  /** Whether to compute guidance lines from warning bands. */
+  guidanceEnabled?: boolean;
 }): Promise<StepOutcome> => {
   // Bounded invalid-decision feedback: a prior rejection (unknown action /
   // schema-invalid input) is surfaced to the model once via lastError, then
@@ -360,6 +363,10 @@ const stepTask = async ({
       spent: snapshot.spent,
       budget: snapshot.budget,
     },
+    // Guidance lines: warning-band advisory text so the model can self-correct
+    // before hitting escalation thresholds. Conditionally included when non-empty,
+    // matching how lastError is handled.
+    ...(snapshot.guidance !== undefined && snapshot.guidance.length > 0 ? { guidance: snapshot.guidance } : {}),
   };
   const reasonResult = await retryWithJitter({
     fn: () => reasoner.reason(reasonInput),
@@ -494,6 +501,32 @@ const stepTask = async ({
   }
   const action = actionResult.value;
 
+  // 3.5. Predictive (MPC) budget check — one-step horizon. The free loop's only
+  // knowable future is the action the model just proposed; anything beyond it
+  // is an epistemic boundary (prohibition 14), as is an action with no declared
+  // estimatedCost. Refuse to execute when the *known* projected cost already
+  // exceeds the budget (spec §Model Predictive Control) — mirrors the workflow
+  // pre-flight block in runtime.ts.
+  if (action.estimatedCost !== undefined) {
+    const projected = addCosts(
+      addCosts(snapshot.spent, reasoningCost ?? { tokens: 0, durationMs: 0 }),
+      action.estimatedCost,
+    );
+    if (isOverBudget(projected, snapshot.budget)) {
+      await raiseEscalation({
+        taskId: task.id,
+        trigger: "budget-violation",
+        reason: `projected cost of action "${actionName}" (${projected.tokens} tokens / ${projected.durationMs}ms including spend to date) exceeds budget before execution (MPC)`,
+        store,
+      });
+      return {
+        kind: "blocked",
+        snapshot,
+        reason: `escalated: action "${actionName}" is projected to exceed the task budget before execution (MPC)`,
+      };
+    }
+  }
+
   // 4. Resolve approval status; auto-request and block when required-but-absent.
   // The `{ untilTrust }` waiver applies ONLY when no request exists yet: once
   // the task's trust reaches the declared threshold the gate is auto-approved
@@ -574,7 +607,7 @@ const stepTask = async ({
 
   // 6. Post-step governance (escalation + trust/risk persistence), shared with
   // the workflow path. An escalation pauses the task and surfaces as blocked.
-  const gov = await applyPostStepGovernance({ taskId: task.id, snapshot: next, surpriseMagnitude, store });
+  const gov = await applyPostStepGovernance({ taskId: task.id, snapshot: next, surpriseMagnitude, store, guidanceEnabled });
   next = gov.snapshot;
   if (gov.kind === "escalated") {
     return { kind: "blocked", snapshot: next, reason: gov.reason };
@@ -620,6 +653,7 @@ export const runScheduler = async ({
   loopDetector: passedLoopDetector,
   commitContextLimit = 10,
   maxInvalidDecisionRetries,
+  guidanceEnabled = true,
 }: {
   root: Runner;
   reasoner: ReasonerPort;
@@ -642,6 +676,8 @@ export const runScheduler = async ({
   commitContextLimit?: number;
   /** Max consecutive invalid model decisions fed back before failing (defaulted in stepTask). */
   maxInvalidDecisionRetries?: number;
+  /** Whether to compute guidance lines from warning bands. */
+  guidanceEnabled?: boolean;
 }): Promise<SendResult> => {
   const rootId = root.task.rootId;
   const runners: Runner[] = [root];
@@ -916,6 +952,7 @@ export const runScheduler = async ({
         diagnostics,
         commitContextLimit,
         maxInvalidDecisionRetries,
+        guidanceEnabled,
       });
       runner.step++;
       runner.snapshot = outcome.snapshot;

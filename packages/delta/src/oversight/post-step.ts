@@ -20,6 +20,7 @@ import type { TaskStateSnapshot } from "../state-space/types";
 import { withEscalation } from "../state-space/task-state";
 import { checkEscalation } from "./escalation";
 import { raiseEscalation } from "./escalation";
+import { computeGuidance } from "./guidance";
 
 export type PostStepGovernance =
   | { kind: "continue"; snapshot: TaskStateSnapshot }
@@ -32,17 +33,22 @@ export type PostStepGovernance =
  * persisted, task may proceed). The caller stops on "escalated" and surfaces the
  * task as blocked — an escalated task awaits human oversight and must never be
  * reported as completed (spec §Human Oversight, invariant 13).
+ *
+ * When `guidanceEnabled` is true (default), computes warning-band guidance lines
+ * and writes them to the returned snapshot so they reach the model on its next turn.
  */
 export const applyPostStepGovernance = async ({
   taskId,
   snapshot,
   surpriseMagnitude,
   store,
+  guidanceEnabled = true,
 }: {
   taskId: string;
   snapshot: TaskStateSnapshot;
   surpriseMagnitude: number;
   store: StoragePort;
+  guidanceEnabled?: boolean;
 }): Promise<PostStepGovernance> => {
   const escCheck = checkEscalation({
     risk: snapshot.risk,
@@ -69,5 +75,21 @@ export const applyPostStepGovernance = async ({
     trust: snapshot.trust,
     updatedAt: new Date(),
   });
-  return { kind: "continue", snapshot };
+
+  // Compute guidance lines and write to snapshot (recompute fresh every step).
+  const guidance = guidanceEnabled
+    ? computeGuidance({
+        risk: snapshot.risk,
+        trust: snapshot.trust,
+        spent: snapshot.spent,
+        budget: snapshot.budget,
+        surpriseMagnitude,
+      })
+    : [];
+  const nextSnapshot = {
+    ...snapshot,
+    ...(guidance.length > 0 ? { guidance } : { guidance: undefined }),
+  };
+
+  return { kind: "continue", snapshot: nextSnapshot };
 };

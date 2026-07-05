@@ -5,10 +5,13 @@
  *   requestApproval / recordAutoApproval / resolveApproval / getApproval /
  *   getApprovalStatusForAction / approvalRequired / describeRejection
  *   checkEscalation / raiseEscalation / getEscalations
+ *   computeGuidance
  */
 
 export { requestApproval, recordAutoApproval, resolveApproval, getApproval, getApprovalStatusForAction, approvalRequired, describeRejection } from "./approvals";
 export { checkEscalation, raiseEscalation, getEscalations } from "./escalation";
 export { applyPostStepGovernance } from "./post-step";
+export { computeGuidance } from "./guidance";
 export type { PostStepGovernance } from "./post-step";
+export type { GuidanceInput } from "./guidance";
 export type { EscalationContext, EscalationCheck } from "./types";

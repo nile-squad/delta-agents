@@ -110,6 +110,15 @@ export type TaskStateSnapshot = {
    * clears this field, resetting the counter.
    */
   lastDecisionError?: { reason: string; consecutiveCount: number };
+
+  /**
+   * Engine-generated guidance lines from warning bands (risk, trust, budget,
+   * surprise) — advisory text rendered in the user message on the next `reason()`
+   * call so the model can self-correct before hitting escalation thresholds.
+   * Recomputed fresh after every step and cleared when empty (undefined, not []).
+   * Disabled when the engine config has `guidance: false`.
+   */
+  guidance?: string[];
 };
 
 // Result of a legality check. Includes a reason when illegal so the caller

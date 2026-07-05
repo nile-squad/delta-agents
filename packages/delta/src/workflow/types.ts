@@ -94,6 +94,8 @@ export type RunPhaseInput = {
    * "diagnostics disabled".
    */
   diagnostics?: Diagnostics;
+  /** Whether to compute guidance lines from warning bands. Defaults to true. */
+  guidanceEnabled?: boolean;
 };
 
 export type RunWorkflowInput = {
@@ -116,4 +118,6 @@ export type RunWorkflowInput = {
    * test callers; the engine always provides one.
    */
   diagnostics?: Diagnostics;
+  /** Whether to compute guidance lines from warning bands. Defaults to true. */
+  guidanceEnabled?: boolean;
 };

@@ -230,6 +230,14 @@ export type ReasonerInput = {
    */
   governanceState?: { riskScore: number; trustScore: number; spent: Cost; budget: Cost };
   /**
+   * Engine-generated guidance lines from warning bands (risk, trust, budget,
+   * surprise) — advisory text prefixed `Engine guidance: ` in the user message
+   * so the model can self-correct before escalation thresholds fire. Time-varying,
+   * recomputed each step, and absent when the list is empty. Rendered in the user
+   * message only, never the cacheable system prefix.
+   */
+  guidance?: string[];
+  /**
    * When true, the reasoner is in commit mode: only finish_task is offered
    * (no request_action, delegate, mention, communicate, or system tools).
    * Used by the post-workflow commit step so the agent can acknowledge

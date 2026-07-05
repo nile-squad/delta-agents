@@ -55,6 +55,7 @@ export const runPhase = async ({
   agentSkills,
   storyline,
   diagnostics,
+  guidanceEnabled = true,
 }: RunPhaseInput): Promise<PhaseResult> => {
   // Resolve phase-level skills once. Each action may override with its own set.
   const phaseSkillsResult = resolveSkillRefs(phase.skills ?? [], agentSkills ?? []);
@@ -200,6 +201,7 @@ export const runPhase = async ({
         snapshot: currentState,
         surpriseMagnitude,
         store,
+        guidanceEnabled,
       });
       currentState = gov.snapshot;
       if (gov.kind === "escalated") {

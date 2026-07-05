@@ -22,6 +22,7 @@ import type { CacheConfig } from "../shared/cache";
 import type { CleanupOptions } from "./cleanup";
 import type { DiagnosticsConfig } from "../shared/diagnostics";
 import type { RosterEntry } from "./roster";
+import type { AgentRanking, AgentStats, WorkflowStats } from "./stats";
 // Type-only import: referencing DocumentExtractOptions as a type must NOT create
 // a static runtime import of the document-extract module (which loads the heavy
 // optional peer deps). Type-only imports are erased at build.
@@ -223,6 +224,13 @@ export type DeltaEngineConfig = {
    * first (unread messages are never dropped). Omit to leave inboxes unbounded.
    */
   mailbox?: { inboxCap?: number };
+  /**
+   * Engine-generated guidance. When `true` (default), the engine computes
+   * warning-band advisory lines (risk, trust, budget, surprise) that reach the
+   * model on its next turn so it can self-correct before escalation thresholds
+   * fire. Set to `false` to disable guidance entirely.
+   */
+  guidance?: boolean;
 };
 
 export type SendInput = {
@@ -354,6 +362,22 @@ export type DeltaEngine = {
    * delegation and mentions (avoid overloaded teammates).
    */
   roster: (query?: { team?: string }) => Promise<Result<RosterEntry[], string>>;
+
+  /**
+   * Top agents by completedTasks, successRate, or trustScore.
+   * Includes all deployed agents with sorted rankings and optional limit.
+   */
+  topAgents: (args: { by: "completedTasks" | "successRate" | "trustScore"; limit?: number }) => Promise<Result<AgentRanking[], string>>;
+  /**
+   * Performance metrics for a single agent: success rate, cost, and trust trajectory.
+   * Unknown agent returns zero-valued stats, not an error.
+   */
+  agentStats: (args: { agent: string }) => Promise<Result<AgentStats, string>>;
+  /**
+   * Workflow benchmark stats: runs, success rate, cost, and per-phase durations.
+   * Unknown workflow returns zero-valued stats, not an error.
+   */
+  workflowStats: (args: { workflow: string }) => Promise<Result<WorkflowStats, string>>;
 
   // ── Mailbox (inbox / outbox / recall) ──────────────────────────────────────
   /**

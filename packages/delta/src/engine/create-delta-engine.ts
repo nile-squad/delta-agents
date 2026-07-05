@@ -48,6 +48,7 @@ import { runSendLoop, runWorkflowTask, pauseTask, resumeTask, inspectTask, resol
 import { runCleanup, opportunisticCleanup } from "./cleanup";
 import { makeToolsFacade } from "./tools-facade";
 import { computeRosterEntries } from "./roster";
+import { computeTopAgents, computeAgentStats, computeWorkflowStats } from "./stats";
 
 const DEFAULT_BUDGET = { tokens: 10_000, durationMs: 300_000 };
 
@@ -70,6 +71,7 @@ export const createDeltaEngine = async ({
   maxInvalidDecisionRetries = 3,
   tools: configTools,
   mailbox: configMailbox,
+  guidance: configGuidance = true,
 }: DeltaEngineConfig = {}): Promise<DeltaEngine> => {
   // Per-engine logger: built once, owned by the engine closure, threaded into
   // every module that needs it via DI. The default is a dev-mode pino-pretty
@@ -402,8 +404,9 @@ export const createDeltaEngine = async ({
         logger,
         commitMaxRetries: configCommitMaxRetries,
         attachments,
+        guidanceEnabled: configGuidance,
       })
-      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, providerRetry, timezone: configTimezone, logger, diagnostics, commitContextLimit: configCommitContextLimit, maxInvalidDecisionRetries, attachments });
+      : await runSendLoop({ task, agent: agentDef, reasoner: resolveReasoner(agentDef), registry, store, maxSteps: maxStepsPerTask, providerRetry, timezone: configTimezone, logger, diagnostics, commitContextLimit: configCommitContextLimit, maxInvalidDecisionRetries, attachments, guidanceEnabled: configGuidance });
 
     return Ok(result);
   };
@@ -527,5 +530,18 @@ export const createDeltaEngine = async ({
     return Ok(entries);
   };
 
-  return { action, workflow, dataSource, agent, deploy, send, approve, reject, pause, resume, inspect, lastTask, cleanup, roster, inbox, outbox, recall, tools };
+  const topAgents: DeltaEngine["topAgents"] = async (args) => {
+    const agentNames = registry.listAgents();
+    return computeTopAgents({ store, agentNames, by: args.by, limit: args.limit });
+  };
+
+  const agentStats: DeltaEngine["agentStats"] = async (args) => {
+    return computeAgentStats({ store, agent: args.agent });
+  };
+
+  const workflowStats: DeltaEngine["workflowStats"] = async (args) => {
+    return computeWorkflowStats({ store, workflow: args.workflow });
+  };
+
+  return { action, workflow, dataSource, agent, deploy, send, approve, reject, pause, resume, inspect, lastTask, cleanup, roster, topAgents, agentStats, workflowStats, inbox, outbox, recall, tools };
 };

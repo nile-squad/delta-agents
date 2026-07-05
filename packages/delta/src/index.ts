@@ -51,6 +51,9 @@ export type { WebSearchOptions } from "./tools/web-search";
 // used for declarations and runtime measurements).
 export type { Cost, Money, ContentCost, Task, SupervisionPolicy, Memory, Commit, CommitQuery, Attachment, AttachmentInput, RosterEntry, Message } from "./shared/types";
 
+// Agent stats and workflow benchmarks: derived read-models from persisted data.
+export type { AgentRanking, AgentStats, WorkflowStats } from "./engine/stats";
+
 // ── Logger ────────────────────────────────────────────────────────────────────
 // Per-engine logger configuration. The engine creates a default dev logger when
 // none is configured; callers can override the mode, level, or drain.

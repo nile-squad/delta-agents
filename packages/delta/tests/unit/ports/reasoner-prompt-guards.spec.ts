@@ -111,3 +111,37 @@ describe("buildMessages — governance state", () => {
     expect(textOf(user?.content)).not.toContain("Your governance state");
   });
 });
+
+describe("buildMessages — guidance lines", () => {
+  it("renders guidance lines prefixed 'Engine guidance:' in the user message", () => {
+    const [, user] = buildMessages(makeInput({
+      guidance: [
+        "risk is elevated (0.65) — prefer low-risk actions and avoid irreversible operations.",
+        "82% of the token budget is consumed — prioritize finishing the goal.",
+      ],
+    }));
+    const text = textOf(user?.content);
+    expect(text).toContain("Engine guidance: risk is elevated (0.65)");
+    expect(text).toContain("Engine guidance: 82% of the token budget");
+  });
+
+  it("renders no guidance lines when the field is absent", () => {
+    const [, user] = buildMessages(makeInput());
+    const text = textOf(user?.content);
+    expect(text).not.toContain("Engine guidance:");
+  });
+
+  it("renders no guidance lines when the field is an empty array", () => {
+    const [, user] = buildMessages(makeInput({ guidance: [] }));
+    const text = textOf(user?.content);
+    expect(text).not.toContain("Engine guidance:");
+  });
+
+  it("keeps guidance out of the system prefix (preserves cacheability)", () => {
+    const [systemWithoutGuidance] = buildMessages(makeInput());
+    const [systemWithGuidance] = buildMessages(makeInput({
+      guidance: ["risk is elevated (0.65) — prefer low-risk actions and avoid irreversible operations."],
+    }));
+    expect(textOf(systemWithGuidance?.content)).toBe(textOf(systemWithoutGuidance?.content));
+  });
+});

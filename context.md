@@ -55,9 +55,9 @@ See `docs/internal/documentation-guidelines.md` section 1.1 and 1.2 for the full
 - If you can read it from code, it doesn't need to be here
 - Only document what's **non-obvious** from reading source files
 
-## Current State (as of 2026-07-03)
+## Current State (as of 2026-07-04)
 
-All packages A–J are implemented and tested (955 tests pass). Framework lives at `packages/delta/` (public surface `packages/delta/index.ts` → `src/`). `dist/` loads under plain Node. Full spec in `docs/internal/delta-agents.spec.md`. Monorepo root (`delta-agents-workspace`) is pure setup — scripts delegate to the `delta-agents` package via `pnpm --filter`.
+All packages A–J are implemented and tested (990 tests pass). Framework lives at `packages/delta/` (public surface `packages/delta/index.ts` → `src/`). `dist/` loads under plain Node. Full spec in `docs/internal/delta-agents.spec.md`. Monorepo root (`delta-agents-workspace`) is pure setup — scripts delegate to the `delta-agents` package via `pnpm --filter`. Commit `dbb3a0e` (v1 hardening, 2026-07-04) closed 7 of 8 identified gaps from the claims audit.
 
 All H-series subsystems are wired into the live path. Remaining work is catalogued below, not whole subsystems.
 
@@ -77,6 +77,7 @@ All H-series subsystems are wired into the live path. Remaining work is catalogu
 - **F (memory retrieval):** `Memory` type + `memories` table (libsql). `retrieveContext` before each `reason()` call. `ctx.remember()` for write. Keyword ranking (no embeddings).
 - **G (optimization + trust):** surprise erodes trust (>0.4 threshold). Degraded trust (<0.3) escalates. Bellman MPC pre-block on workflow. Action ranking cheapest-first.
 - **Multi-axis Cost:** `Cost` = `{ tokens, durationMs, memory?, latency?, money?: Money, content?: ContentCost }`. Opt-in enforcement. Flows through budget, MPC, subtask scoping. `money` carries an explicit `{ value, currency }` pair, not a bare number.
+- **Free-loop MPC pre-block:** one-step horizon in the reasoner loop — a proposed action with a declared `estimatedCost` that would exceed the budget (spent + reasoning cost included) escalates ("budget-violation") and pauses before execution. Undeclared cost = epistemic boundary, no prediction (prohibition 14). Declared estimates only, never model-supplied.
 - **H1/H3 re-run fidelity:** retry from `failedIndex`, restart from phase entry, resume from checkpoint. Active child rehydration on resume. Per-action workflow inputs (`actionInputs`).
 - **Storylines:** `Workflow.storyline?` + `Phase.storyline?` (free-prose narrative of ideal user flow). Injected into `ActionContext.storyline` + `ActionContext.phaseStoryline` via the execution gateway — single channel, no duplicate injection. Free loop (no workflow) sees `undefined`. NOT persisted in `TaskStateSnapshot` (authoring content, plumbed fresh from definitions).
 - **System prompt + time awareness:** `DeltaEngineConfig.systemPrompt?` (static org instructions, baked into system message prefix for prompt cache) + `DeltaEngineConfig.timezone?` (grounds agents with time awareness). Current time (humanized + ISO + tz) injected into user message per `reason()` call. Prior messages loaded from store with relative time (`formatDistanceToNow`). System message = cacheable prefix only; user message = all varying content. `buildMessages` exported for direct testing.
@@ -92,6 +93,8 @@ All H-series subsystems are wired into the live path. Remaining work is catalogu
 - **Governance state in prompt:** `ReasonerInput.governanceState` (risk/trust/spent/budget from the live snapshot) rendered per turn in the user message so the model can self-correct before hitting gates.
 - **Concurrent-resume guard:** `StoragePort.transitionTaskStatus` (required, all adapters) is a compare-and-swap; `resumeTask` uses it as the gate so two concurrent resumes can never both drive a task.
 - **Team Roster + Agent Mailbox:** `engine.roster({team?})` — derived read-model of per-agent load (major/subtasks/queued + overloaded flag), computed from live task/message state (never stored). Surfaced to agents in reasoning context (load-aware teammate block, replaces the bare name list) and to developers via `roster()`. Mailbox: `engine.inbox/outbox/recall` over an evolved `Message` (`deliveredAt`/`readAt`/`recalledAt`, `consumed` kept in lockstep for back-compat). Turn-only delivery stamps `readAt` (dual-sided receipt, visible in sender's outbox); recall allowed only while unread; `mailbox.inboxCap` evicts oldest **read** first (never unread). New store methods: `getActiveTasksByAgent`, `getMessagesBySender`, `markMessageRead`, `recallMessage`, `evictReadMessages` (in-memory + Drizzle, all optional with graceful degrade).
+- **Agent Stats and Workflow Benchmarks:** `engine.topAgents({by, limit})`, `engine.agentStats({agent})`, `engine.workflowStats({workflow})` — derived read-models computed on-demand from tasks, executions, and checkpoints (never stored). Ranks agents by completed tasks, success rate, or trust score; profiles per-agent performance (cost, durations, trust trajectory); and reports workflow-level metrics including per-phase durations. Follows `roster()` precedent: pure compute, optional StoragePort methods (`getTasksByAgent`, `getTasksByWorkflow`, `getCheckpointsByTask`) with graceful hard-Err if store lacks support. Unknown agent/workflow returns zero-valued stats, never an error.
+- **Engine guidance (warning bands):** the engine guides before it escalates. `computeGuidance` (`src/oversight/guidance.ts`) emits humanized advisory lines when a governance signal is elevated but strictly *below* its escalation threshold — risk in [0.5, 0.8), trust in (0.3, 0.5], any declared budget axis in [75%, 100%), surprise in [0.4, 0.7). Computed fresh every step in `applyPostStepGovernance` (continue branch only), carried on `TaskStateSnapshot.guidance`, and rendered per turn in the user message as `Engine guidance: <line>` (never the cacheable system prefix). On by default; `DeltaEngineConfig.guidance: false` disables. Bands are fixed constants tied to the escalation thresholds they sit under, so guidance and escalation never fire for the same signal on the same step.
 
 ### Docs Complete (2026-07-03)
 
@@ -110,12 +113,14 @@ All pages build and prerender successfully (`pnpm --filter delta-agents-docs bui
 - Memory-access audit log (writes attributable; reads not logged)
 - Auto-capture execution outcomes as memories (today explicit via `ctx.remember`)
 - Richer future-cost estimation for `computeActionValue` (uniform term = ranking reduces to immediate cost)
-- MPC horizon in free reasoner loop (only workflow path has declared horizon)
+- Expose delta as an MCP server (agents/actions callable by external MCP clients). Current MCP scope is the *client* direction only: consuming simple MCP servers (e.g. context7) as governed tools via `tools.mcp` config
 - `Queue` entity is spec-aligned but NOT engine-driven (engine uses `TaskTree.queuedChildren` + `Message`s)
 - ~~File-attachment extraction tool (OCR/document parsing)~~ — DONE: `document-extract` builtin tool (see Builtin Tools section)
 - Web search builtin tool (Exa or similar) — not started
 - Attachment "shown once" optimization — images currently re-embed on every reasoner step within a task run (see Multimodal Input tradeoffs)
 - `ContentCost` is populated but not enforced by any budget axis yet
+- Append-only score-events table (intra-task score granularity) — stats.workflowStats currently derives `scoreOverTime` per-task granularity; finer-grained events (every governance step) would require a separate events table
+- Configurable guidance thresholds — warning bands are fixed constants today; per-engine tuning (`guidance: { riskWarningAt, budgetWarningAt, ... }`) is deferred until asked for
 
 ### Storage
 All 9 entities have working store methods in both adapters (in-memory + Drizzle). New `commits` table added for the Agent Commit Feature (Drizzle schema + migrations). No remaining work needs new DB schema. New persisted state rides inside `TaskStateSnapshot` JsonRecord.

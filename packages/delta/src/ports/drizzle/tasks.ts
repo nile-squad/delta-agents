@@ -1,7 +1,7 @@
 import { Ok, Err } from "slang-ts";
 import type { Result } from "slang-ts";
-import { eq, desc, lt, and, inArray } from "drizzle-orm";
-import type { Task, ExecutionStatus } from "../../shared/types";
+import { eq, desc, lt, and, inArray, asc } from "drizzle-orm";
+import type { Task, ExecutionStatus, Checkpoint } from "../../shared/types";
 import {
   tasks,
   taskTrees,
@@ -14,6 +14,7 @@ import {
 } from "../../../db/models/schema";
 import type { DB } from "./db";
 import { toTask } from "./converters";
+import { toCheckpoint } from "./converters";
 
 // ── Tasks ────────────────────────────────────────────────────────────────
 
@@ -122,6 +123,49 @@ export const taskMethods = (db: DB) => ({
       return Ok(rows.map(toTask));
     } catch (e) {
       return Err(`failed to get active tasks for agent "${agentName}": ${String(e)}`);
+    }
+  },
+
+  getTasksByAgent: async (agentName: string, opts?: { statuses?: ExecutionStatus[]; limit?: number }): Promise<Result<Task[], string>> => {
+    try {
+      const conditions = [eq(tasks.assignedAgent, agentName)];
+      if (opts?.statuses !== undefined && opts.statuses.length > 0) {
+        conditions.push(inArray(tasks.status, opts.statuses));
+      }
+      const query = db.select().from(tasks)
+        .where(and(...conditions))
+        .orderBy(desc(tasks.updatedAt));
+      const rows = opts?.limit !== undefined ? await query.limit(opts.limit) : await query;
+      return Ok(rows.map(toTask));
+    } catch (e) {
+      return Err(`failed to get tasks for agent "${agentName}": ${String(e)}`);
+    }
+  },
+
+  getTasksByWorkflow: async (workflowName: string, opts?: { statuses?: ExecutionStatus[]; limit?: number }): Promise<Result<Task[], string>> => {
+    try {
+      const conditions = [eq(tasks.workflow, workflowName)];
+      if (opts?.statuses !== undefined && opts.statuses.length > 0) {
+        conditions.push(inArray(tasks.status, opts.statuses));
+      }
+      const query = db.select().from(tasks)
+        .where(and(...conditions))
+        .orderBy(desc(tasks.updatedAt));
+      const rows = opts?.limit !== undefined ? await query.limit(opts.limit) : await query;
+      return Ok(rows.map(toTask));
+    } catch (e) {
+      return Err(`failed to get tasks for workflow "${workflowName}": ${String(e)}`);
+    }
+  },
+
+  getCheckpointsByTask: async (taskId: string): Promise<Result<Checkpoint[], string>> => {
+    try {
+      const rows = await db.select().from(checkpoints)
+        .where(eq(checkpoints.taskId, taskId))
+        .orderBy(asc(checkpoints.createdAt));
+      return Ok(rows.map(toCheckpoint));
+    } catch (e) {
+      return Err(`failed to get checkpoints for task "${taskId}": ${String(e)}`);
     }
   },
 

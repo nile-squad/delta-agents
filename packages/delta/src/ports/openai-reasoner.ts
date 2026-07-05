@@ -117,7 +117,7 @@ const DEFAULT_MAX_TOKENS = 512;
  * without standing up a live reasoner.
  */
 export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[] => {
-  const { task, availableActions, availableAgents, availableChannels, availableSkills, availableActionSchemas, availableTools, toolHints, agentRole, rolePrompt, context, commitContext, systemPrompt, currentTimestamp, priorMessages, toolHistory, toolInfoResult, attachments, roster, lastError, governanceState } = input;
+  const { task, availableActions, availableAgents, availableChannels, availableSkills, availableActionSchemas, availableTools, toolHints, agentRole, rolePrompt, context, commitContext, systemPrompt, currentTimestamp, priorMessages, toolHistory, toolInfoResult, attachments, roster, lastError, governanceState, guidance } = input;
   const canDelegate = availableAgents !== undefined && availableAgents.length > 0;
   const hasRoster = roster !== undefined && roster.length > 0;
   const canCommunicate = availableChannels !== undefined && availableChannels.length > 0;
@@ -187,6 +187,14 @@ export const buildMessages = (input: ReasonerInput): ChatCompletionMessageParam[
       ...(g.budget.latency !== undefined ? [`${g.spent.latency ?? 0}/${g.budget.latency} latency`] : []),
     ];
     userLines.push(`Your governance state: risk ${g.riskScore.toFixed(2)} | trust ${g.trustScore.toFixed(2)} | budget used: ${axes.join(", ")}`);
+  }
+  // Guidance lines: warning-band advisory text so the model can self-correct
+  // before hitting escalation thresholds. One line per signal in band, each
+  // prefixed so the model reads it as the engine speaking (not task content).
+  if (guidance !== undefined && guidance.length > 0) {
+    for (const line of guidance) {
+      userLines.push(`Engine guidance: ${line}`);
+    }
   }
   userLines.push(`Available actions: ${availableActions.join(", ")}`);
   // Action schemas: full description + JSON schema for each legal action.

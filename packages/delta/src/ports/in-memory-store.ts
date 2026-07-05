@@ -80,6 +80,27 @@ export const createInMemoryStore = (): StoragePort => {
       );
       return Ok(active);
     },
+    getTasksByAgent: async (agentName, opts) => {
+      const all = [...tasks.values()].filter((t) => t.assignedAgent === agentName);
+      const filtered = opts?.statuses !== undefined
+        ? all.filter((t) => opts.statuses!.includes(t.status))
+        : all;
+      const sorted = [...filtered].sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      return Ok(opts?.limit !== undefined ? sorted.slice(0, opts.limit) : sorted);
+    },
+    getTasksByWorkflow: async (workflowName, opts) => {
+      const all = [...tasks.values()].filter((t) => t.workflow === workflowName);
+      const filtered = opts?.statuses !== undefined
+        ? all.filter((t) => opts.statuses!.includes(t.status))
+        : all;
+      const sorted = [...filtered].sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      return Ok(opts?.limit !== undefined ? sorted.slice(0, opts.limit) : sorted);
+    },
+    getCheckpointsByTask: async (taskId) => {
+      const list = checkpointsByTask.get(taskId) ?? [];
+      const sorted = [...list].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      return Ok(sorted);
+    },
 
     // Task trees
     saveTaskTree: async (tree) => {

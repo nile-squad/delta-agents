@@ -60,6 +60,27 @@ export type StoragePort = {
    * "latest task only" (subtask count reads as a floor of 0), never an error.
    */
   getActiveTasksByAgent?: (agentName: string) => Promise<Result<Task[], string>>;
+  /**
+   * Return all tasks for a given agent, newest-first by updatedAt.
+   * Used by the stats read-models (topAgents, agentStats) to compute
+   * success rates, averages, and trust trajectories. Optional — adapters
+   * that don't implement it cause stats queries to return Err.
+   */
+  getTasksByAgent?: (agentName: string, opts?: { statuses?: ExecutionStatus[]; limit?: number }) => Promise<Result<Task[], string>>;
+  /**
+   * Return all tasks for a given workflow, newest-first by updatedAt.
+   * Used by the stats read-models (workflowStats) to compute workflow-level
+   * success rates, costs, and phase durations. Optional — adapters that don't
+   * implement it cause stats queries to return Err.
+   */
+  getTasksByWorkflow?: (workflowName: string, opts?: { statuses?: ExecutionStatus[]; limit?: number }) => Promise<Result<Task[], string>>;
+  /**
+   * Return all checkpoints for a given task, oldest-first by createdAt.
+   * Used by the stats read-models (workflowStats) to derive phase durations
+   * within a workflow run. Optional — adapters that don't implement it cause
+   * stats queries to return Err.
+   */
+  getCheckpointsByTask?: (taskId: string) => Promise<Result<Checkpoint[], string>>;
 
   // Task trees — one per root task
   saveTaskTree: (tree: TaskTree) => Promise<Result<TaskTree, string>>;

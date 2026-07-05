@@ -121,6 +121,8 @@ export const createCachedStore = (inner: StoragePort, config?: CacheConfig): Cac
       },
       getLatestTaskByAgent: inner.getLatestTaskByAgent,
       ...(inner.getActiveTasksByAgent !== undefined ? { getActiveTasksByAgent: inner.getActiveTasksByAgent } : {}),
+      ...(inner.getTasksByAgent !== undefined ? { getTasksByAgent: inner.getTasksByAgent } : {}),
+      ...(inner.getTasksByWorkflow !== undefined ? { getTasksByWorkflow: inner.getTasksByWorkflow } : {}),
 
       // ── Task trees: pass-through (not on the hot path) ──
       saveTaskTree: inner.saveTaskTree,
@@ -142,6 +144,7 @@ export const createCachedStore = (inner: StoragePort, config?: CacheConfig): Cac
       },
       getLatestCheckpoint: (taskId) =>
         cachedRead(KEY.checkpoint(taskId), () => inner.getLatestCheckpoint(taskId)),
+      ...(inner.getCheckpointsByTask !== undefined ? { getCheckpointsByTask: inner.getCheckpointsByTask } : {}),
 
       // ── Approvals: pass-through ──
       saveApprovalRequest: inner.saveApprovalRequest,

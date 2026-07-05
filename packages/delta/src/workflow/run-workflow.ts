@@ -179,6 +179,7 @@ export const runWorkflow = async ({
   remember,
   agentSkills,
   diagnostics,
+  guidanceEnabled = true,
 }: RunWorkflowInput): Promise<WorkflowResult> => {
   const workflowCtx: ActionContext = {
     taskId: state.taskId,
@@ -237,6 +238,7 @@ export const runWorkflow = async ({
       // it restores decision-tree termination for a resumed jump target.
       ...(startIndex !== undefined && resumeViaJump === true ? { startViaJump: true } : {}),
       ...(workflow.storyline !== undefined ? { storyline: workflow.storyline } : {}),
+      guidanceEnabled,
     });
 
     currentState = phaseResult.snapshot;

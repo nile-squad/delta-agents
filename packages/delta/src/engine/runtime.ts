@@ -70,6 +70,7 @@ export const runSendLoop = async ({
   commitContextLimit,
   maxInvalidDecisionRetries,
   attachments,
+  guidanceEnabled = true,
 }: {
   task: Task;
   agent: Agent;
@@ -92,6 +93,8 @@ export const runSendLoop = async ({
   maxInvalidDecisionRetries?: number;
   /** Attachments supplied at send() time; seeds the initial snapshot. Absent on resume (already persisted in the checkpointed snapshot). */
   attachments?: Attachment[];
+  /** Whether to compute guidance lines from warning bands. */
+  guidanceEnabled?: boolean;
 }): Promise<SendResult> => {
   const root = makeRunner({
     task,
@@ -99,7 +102,7 @@ export const runSendLoop = async ({
     snapshot: startingSnapshot ?? { ...snapshotFromTask(task), ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}) },
     maxSteps,
   });
-  return runScheduler({ root, reasoner, registry, store, maxSteps, providerRetry, timezone, logger, diagnostics, commitContextLimit, maxInvalidDecisionRetries });
+  return runScheduler({ root, reasoner, registry, store, maxSteps, providerRetry, timezone, logger, diagnostics, commitContextLimit, maxInvalidDecisionRetries, guidanceEnabled });
 };
 
 // ── Workflow task driver (C-a) ──────────────────────────────────────────────
@@ -170,6 +173,7 @@ export const runWorkflowTask = async ({
   commitMaxRetries,
   diagnostics,
   attachments,
+  guidanceEnabled = true,
 }: {
   task: Task;
   agent: Agent;
@@ -200,6 +204,8 @@ export const runWorkflowTask = async ({
   diagnostics: Diagnostics;
   /** Attachments supplied at send() time; seeds the initial snapshot. Absent on resume (already persisted in the checkpointed snapshot). */
   attachments?: Attachment[];
+  /** Whether to compute guidance lines from warning bands. */
+  guidanceEnabled?: boolean;
 }): Promise<SendResult> => {
   // On a fresh send, start from the task record. On resume, start from the
   // checkpoint snapshot so completedPhases and the original input survive.
@@ -362,6 +368,7 @@ export const runWorkflowTask = async ({
     remember: makeContextRemember({ store, taskId: task.id, agentName: agent.name }),
     agentSkills: agent.skills,
     diagnostics,
+    guidanceEnabled,
   });
 
   if (result.status === "completed") {
