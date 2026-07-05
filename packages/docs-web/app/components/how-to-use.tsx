@@ -1,3 +1,4 @@
+import { FadeIn } from "@/components/fade-in";
 import { ShikiCode } from "@/components/shiki-code";
 
 /* all card backdrops share the purple accent; step numbers rotate
@@ -68,7 +69,7 @@ export function HowToUse() {
   return (
     <div className="flex flex-col gap-16 sm:gap-20">
       {STEPS.map((step, i) => (
-        <div
+        <FadeIn
           key={step.title}
           className="grid items-center gap-8 md:grid-cols-5 md:gap-14"
         >
@@ -101,7 +102,7 @@ export function HowToUse() {
               </div>
             </div>
           </div>
-        </div>
+        </FadeIn>
       ))}
     </div>
   );

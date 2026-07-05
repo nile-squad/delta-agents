@@ -1,5 +1,5 @@
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
-import { appName, gitConfig } from "./shared";
+import { appName, githubUrl } from "./site-config";
 
 export function baseOptions(): BaseLayoutProps {
   return {
@@ -19,11 +19,19 @@ export function baseOptions(): BaseLayoutProps {
     },
     links: [
       {
+        text: "Showcase",
+        url: "/showcase",
+      },
+      {
+        text: "Use Cases",
+        url: "/use-cases",
+      },
+      {
         text: "GitHub",
-        url: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
+        url: githubUrl,
         active: "none",
       },
     ],
-    githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
+    githubUrl,
   };
 }

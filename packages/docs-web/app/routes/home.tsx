@@ -1,6 +1,5 @@
 import { HomeLayout } from "fumadocs-ui/layouts/home";
 import {
-  ArrowRight,
   Award,
   Check,
   ClipboardCopy,
@@ -21,27 +20,29 @@ import {
 import {
   type MotionStyle,
   motion,
+  useReducedMotion,
   useScroll,
   useTransform,
 } from "motion/react";
 import type { CSSProperties, ReactNode } from "react";
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { FadeIn } from "@/components/fade-in";
 import { GovernanceLoop } from "@/components/governance-loop";
 import { HowToUse } from "@/components/how-to-use";
+import { SiteFooter } from "@/components/site-footer";
 import { baseOptions } from "@/lib/layout.shared";
-import { appName, gitConfig } from "@/lib/shared";
+import { buildMeta, defaultDescription } from "@/lib/seo";
+import { githubUrl } from "@/lib/site-config";
 import type { Route } from "./+types/home";
 
 export function meta(_args: Route.MetaArgs) {
-  return [
-    { title: "Delta Agents" },
-    {
-      name: "description",
-      content:
-        "The AI agent framework with built-in safety, governance, and provenance.",
-    },
-  ];
+  return buildMeta({
+    title: "Delta Agents",
+    description: defaultDescription,
+    path: "/",
+    image: "/og/default.png",
+  });
 }
 
 const CAPABILITIES: ReadonlyArray<{
@@ -126,6 +127,7 @@ export default function Home() {
     offset: ["start start", "end start"],
   });
   const glow = useTransform(scrollYProgress, [0, 1], [1, 0.15]);
+  const reduceMotion = useReducedMotion();
 
   const copyInstall = async () => {
     await navigator.clipboard.writeText(INSTALL_COMMAND);
@@ -137,9 +139,9 @@ export default function Home() {
     <HomeLayout {...baseOptions()}>
       {/* Hero */}
       <section ref={heroRef}>
-        <div className="mx-auto max-w-5xl px-6 pb-28 pt-36 sm:pb-36 sm:pt-44">
-          <div className="grid items-center gap-16 lg:grid-cols-2 lg:gap-24">
-            <div className="max-w-2xl">
+        <div className="mx-auto max-w-6xl px-6 pb-16 pt-24 sm:pb-36 sm:pt-44">
+          <div className="grid items-center gap-16 lg:grid-cols-2 lg:gap-32">
+            <FadeIn className="max-w-2xl">
               <h1 className="text-[clamp(2.25rem,1.4rem+3.4vw,3.75rem)] font-bold tracking-tight leading-[1.1]">
                 The AI agent framework
                 <br />
@@ -160,26 +162,31 @@ export default function Home() {
                 >
                   Get Started
                 </Link>
-                <Link
+                <a
                   className="inline-flex h-11 items-center gap-2 rounded-lg border border-fd-border px-6 font-mono text-sm font-medium text-fd-foreground transition-colors hover:bg-fd-accent"
-                  to="/docs/reference"
+                  href={githubUrl}
+                  rel="noreferrer"
+                  target="_blank"
                 >
-                  API Reference
-                  <ArrowRight className="size-4" />
-                </Link>
+                  <Star className="size-4" />
+                  Star on GitHub
+                </a>
               </div>
-              <div className="mt-7 flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-xs text-fd-muted-foreground/70">
+              <div className="mt-10 flex flex-wrap items-center gap-x-3.5 gap-y-1.5 font-mono text-sm text-fd-muted-foreground/80">
                 <span>Open source</span>
                 <span className="text-fd-muted-foreground/40">·</span>
                 <span>Free</span>
                 <span className="text-fd-muted-foreground/40">·</span>
                 <span>Works with Node, Bun &amp; Deno</span>
               </div>
-            </div>
+            </FadeIn>
             <div className="relative hidden min-w-0 items-center justify-center lg:flex">
               <motion.span
                 className="delta-glow"
                 style={{ "--glow": glow } as MotionStyle}
+                initial={reduceMotion ? undefined : { opacity: 0, scale: 0.92 }}
+                animate={reduceMotion ? undefined : { opacity: 1, scale: 1 }}
+                transition={{ duration: 0.5, ease: "easeOut", delay: 0.1 }}
                 aria-hidden="true"
               >
                 δ
@@ -191,30 +198,34 @@ export default function Home() {
 
       {/* How it works */}
       <section>
-        <div className="mx-auto max-w-7xl px-6 py-20 sm:py-28">
-          <h2 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
-            How it works
-          </h2>
-          <p className="mt-4 max-w-2xl text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed">
-            You define the agent, the engine supervises it, and the model only
-            ever proposes. Every action is validated, authorized, or escalated
-            back to you.
-          </p>
-          <div className="mt-14 sm:mt-16">
+        <div className="mx-auto max-w-7xl px-6 py-16 sm:py-28">
+          <FadeIn>
+            <h2 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
+              How it works
+            </h2>
+            <p className="mt-4 max-w-2xl text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed">
+              You define the agent, the engine supervises it, and the model only
+              ever proposes. Every action is validated, authorized, or escalated
+              back to you.
+            </p>
+          </FadeIn>
+          <FadeIn delay={0.1} className="mt-14 sm:mt-16">
             <GovernanceLoop />
-          </div>
+          </FadeIn>
         </div>
       </section>
 
       {/* How to use the Delta framework */}
-      <section>
-        <div className="mx-auto max-w-7xl px-6 py-20 sm:py-28">
-          <h2 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
-            How to use the Delta framework
-          </h2>
-          <p className="mt-4 max-w-2xl text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed">
-            From zero to a governed agent in four steps.
-          </p>
+      <section className="section-side-glow">
+        <div className="mx-auto max-w-7xl px-6 py-16 sm:py-28">
+          <FadeIn>
+            <h2 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
+              How to use the Delta framework
+            </h2>
+            <p className="mt-4 max-w-2xl text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed">
+              From zero to a governed agent in four steps.
+            </p>
+          </FadeIn>
           <div className="mt-14 sm:mt-20">
             <HowToUse />
           </div>
@@ -223,8 +234,8 @@ export default function Home() {
 
       {/* Features highlight */}
       <section>
-        <div className="mx-auto max-w-7xl px-6 py-20 sm:py-28">
-          <div className="flex items-center gap-4">
+        <div className="mx-auto max-w-7xl px-6 py-16 sm:py-28">
+          <FadeIn className="flex items-center gap-4">
             <h2 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
               Features highlight
             </h2>
@@ -232,11 +243,12 @@ export default function Home() {
               className="bulb-glow size-8 shrink-0 text-[#F59E0B] sm:size-10"
               aria-hidden="true"
             />
-          </div>
+          </FadeIn>
           <div className="mt-14 grid gap-px border border-fd-border bg-fd-border sm:mt-20 sm:grid-cols-2 lg:grid-cols-3">
-            {CAPABILITIES.map((cap) => (
-              <div
+            {CAPABILITIES.map((cap, i) => (
+              <FadeIn
                 key={cap.title}
+                delay={Math.min(i * 0.05, 0.25)}
                 className="border-t-2 bg-fd-background p-8 transition-colors hover:bg-fd-accent/30 sm:p-10"
                 style={{ borderTopColor: cap.accent }}
               >
@@ -255,16 +267,16 @@ export default function Home() {
                 <p className="mt-3 text-sm leading-relaxed text-fd-muted-foreground">
                   {cap.description}
                 </p>
-              </div>
+              </FadeIn>
             ))}
           </div>
         </div>
       </section>
 
       {/* More about Delta: badges, install command, docs CTA */}
-      <section>
-        <div className="mx-auto max-w-3xl px-6 pb-24 pt-28 text-center sm:pb-32 sm:pt-40">
-          <div className="flex flex-wrap items-start justify-center gap-x-12 gap-y-10">
+      <section className="section-more-glow">
+        <div className="mx-auto max-w-3xl px-6 pb-16 pt-20 text-center sm:pb-32 sm:pt-40">
+          <div className="flex flex-wrap items-start justify-center gap-x-3 gap-y-8 sm:gap-x-12 sm:gap-y-10">
             {(
               [
                 {
@@ -286,10 +298,11 @@ export default function Home() {
                   colors: { hi: "#fbbf24", mid: "#f97316", lo: "#ea580c" },
                 },
               ] as const
-            ).map(({ icon: Icon, label, labelClass, colors }) => (
-              <div
+            ).map(({ icon: Icon, label, labelClass, colors }, i) => (
+              <FadeIn
                 key={label}
-                className="flex w-36 flex-col items-center gap-4"
+                delay={i * 0.08}
+                className="flex w-[5.5rem] flex-col items-center gap-5 sm:w-36 sm:gap-6"
               >
                 <span
                   className="award-badge"
@@ -301,17 +314,20 @@ export default function Home() {
                     } as CSSProperties
                   }
                 >
-                  <Icon className="size-6" aria-hidden="true" />
+                  <Icon className="size-7 sm:size-8" aria-hidden="true" />
                 </span>
                 <span
-                  className={`font-mono text-xs leading-snug ${labelClass}`}
+                  className={`font-mono text-xs leading-snug sm:text-sm ${labelClass}`}
                 >
                   {label}
                 </span>
-              </div>
+              </FadeIn>
             ))}
           </div>
-          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
+          <FadeIn
+            delay={0.2}
+            className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row"
+          >
             <div className="quick-start-code flex h-11 items-center gap-3 rounded-lg border border-[#F97316]/30 pl-4 pr-2 font-mono text-sm text-fd-foreground/90">
               <span aria-hidden="true" className="text-[#F97316]/70">
                 $
@@ -332,59 +348,18 @@ export default function Home() {
             </div>
             <a
               className="inline-flex h-11 items-center gap-2 rounded-lg bg-gradient-to-b from-[#fbbf24] via-[#f97316] to-[#ea580c] px-6 font-mono text-sm font-semibold text-white transition-opacity hover:opacity-90"
-              href={`https://github.com/${gitConfig.user}/${gitConfig.repo}`}
+              href={githubUrl}
               rel="noreferrer"
               target="_blank"
             >
               <Star className="size-4" />
               Star on GitHub
             </a>
-          </div>
+          </FadeIn>
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="border-t border-fd-border">
-        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-6 px-6 py-10 sm:flex-row">
-          <div className="flex items-center gap-2.5">
-            <img
-              src="/delta-logo.svg"
-              alt=""
-              width="20"
-              height="20"
-              className="size-5 rounded"
-            />
-            <span className="text-sm font-semibold text-fd-foreground">
-              {appName}
-            </span>
-            <span className="font-mono text-xs text-fd-muted-foreground/70">
-              free and open source
-            </span>
-          </div>
-          <nav className="flex items-center gap-6 font-mono text-xs text-fd-muted-foreground">
-            <Link
-              className="transition-colors hover:text-fd-foreground"
-              to="/docs"
-            >
-              Docs
-            </Link>
-            <Link
-              className="transition-colors hover:text-fd-foreground"
-              to="/docs/reference"
-            >
-              API Reference
-            </Link>
-            <a
-              className="transition-colors hover:text-fd-foreground"
-              href={`https://github.com/${gitConfig.user}/${gitConfig.repo}`}
-              rel="noreferrer"
-              target="_blank"
-            >
-              GitHub
-            </a>
-          </nav>
-        </div>
-      </footer>
+      <SiteFooter />
     </HomeLayout>
   );
 }

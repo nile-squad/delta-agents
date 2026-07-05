@@ -1,10 +1,13 @@
-import type { Route } from "./+types/not-found";
 import { HomeLayout } from "fumadocs-ui/layouts/home";
 import { Link } from "react-router-dom";
 import { baseOptions } from "@/lib/layout.shared";
+import type { Route } from "./+types/not-found";
 
-export function meta({}: Route.MetaArgs) {
-  return [{ title: "Not Found" }];
+export function meta(_args: Route.MetaArgs) {
+  return [
+    { title: "Not Found | Delta Agents" },
+    { name: "robots", content: "noindex, nofollow" },
+  ];
 }
 
 export default function NotFound() {

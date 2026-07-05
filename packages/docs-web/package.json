@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "react-router build && cp serve.json build/client/serve.json",
+    "build": "react-router build && cp serve.json build/client/serve.json && node scripts/generate-sitemap.mjs",
     "dev": "react-router dev",
     "start": "serve ./build/client",
     "types:check": "react-router typegen && fumadocs-mdx && tsc --noEmit",
