@@ -142,7 +142,7 @@ export default function Home() {
         <div className="mx-auto max-w-6xl px-6 pb-16 pt-24 sm:pb-36 sm:pt-44">
           <div className="grid items-center gap-16 lg:grid-cols-2 lg:gap-32">
             <FadeIn className="max-w-2xl">
-              <h1 className="text-[clamp(2.25rem,1.4rem+3.4vw,3.75rem)] font-bold tracking-tight leading-[1.1]">
+              <h1 className="text-center text-[clamp(2.25rem,1.4rem+3.4vw,3.75rem)] font-bold tracking-tight leading-[1.1] sm:text-left">
                 The AI agents framework
                 <br />
                 <span className="text-[#5F57E3]">with built-in </span>
@@ -150,10 +150,10 @@ export default function Home() {
                   governance.
                 </span>
               </h1>
-              <p className="mt-6 text-[clamp(1.0625rem,0.95rem+0.55vw,1.25rem)] text-fd-muted-foreground max-w-xl leading-normal">
-                Delta AI Agents Framework & Runtime
+              <p className="mt-6 text-center text-[clamp(1.0625rem,0.95rem+0.55vw,1.25rem)] text-fd-muted-foreground max-w-xl leading-normal sm:text-left">
+                Delta AI Agents Framework <br className="md:hidden" /> & Runtime
               </p>
-              <div className="mt-8 flex flex-wrap items-center gap-4">
+              <div className="mt-8 flex flex-wrap items-center justify-center gap-4 sm:justify-start">
                 <Link
                   className="inline-flex h-11 items-center rounded-lg bg-[#5F57E3] px-6 font-mono text-sm font-semibold text-white transition-colors hover:bg-[#5F57E3]/90"
                   to="/docs"
@@ -170,7 +170,7 @@ export default function Home() {
                   Star on GitHub
                 </a>
               </div>
-              <div className="mt-10 flex flex-wrap items-center gap-x-3.5 gap-y-1.5 font-mono text-sm text-fd-muted-foreground/80">
+              <div className="mt-10 flex flex-wrap items-center justify-center gap-x-3.5 gap-y-1.5 font-mono text-sm text-fd-muted-foreground/80 sm:justify-start">
                 <span>Open source</span>
                 <span className="text-fd-muted-foreground/40">·</span>
                 <span>Free</span>
@@ -198,10 +198,10 @@ export default function Home() {
       <section>
         <div className="mx-auto max-w-7xl px-6 py-16 sm:py-28">
           <FadeIn>
-            <h2 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
+            <h2 className="text-center text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground sm:text-left">
               How it works
             </h2>
-            <p className="mt-4 max-w-2xl text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed">
+            <p className="mt-4 max-w-2xl text-center text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed sm:text-left">
               You define the agent, the math based engine supervises, and every
               agent action is validated, authorized, or escalated back to you,
               strict on policy and rules, no prompt hacks!
@@ -217,10 +217,10 @@ export default function Home() {
       <section className="section-side-glow">
         <div className="mx-auto max-w-7xl px-6 py-16 sm:py-28">
           <FadeIn>
-            <h2 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
+            <h2 className="text-center text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground sm:text-left">
               How to use the Delta framework
             </h2>
-            <p className="mt-4 max-w-2xl text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed">
+            <p className="mt-4 max-w-2xl text-center text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed sm:text-left">
               From zero to a governed agent in four steps.
             </p>
           </FadeIn>
@@ -233,7 +233,7 @@ export default function Home() {
       {/* Features highlight */}
       <section>
         <div className="mx-auto max-w-7xl px-6 py-16 sm:py-28">
-          <FadeIn className="flex items-center gap-4">
+          <FadeIn className="flex items-center justify-center gap-4 sm:justify-start">
             <h2 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
               Features highlight
             </h2>
@@ -247,7 +247,7 @@ export default function Home() {
               <FadeIn
                 key={cap.title}
                 delay={Math.min(i * 0.05, 0.25)}
-                className={`border-t-2 p-8 transition-colors hover:bg-fd-accent/30 sm:p-10 ${i === 4 ? "bg-fd-accent/30" : "bg-fd-background"}`}
+                className={`border-t-2 p-8 text-center transition-colors hover:bg-fd-accent/30 sm:p-10 sm:text-left ${i === 4 ? "bg-fd-accent/30" : "bg-fd-background"}`}
                 style={{ borderTopColor: cap.accent }}
               >
                 <span

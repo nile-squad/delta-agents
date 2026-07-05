@@ -104,10 +104,10 @@ export default function UseCases() {
       <section className="section-more-glow">
         <div className="mx-auto max-w-5xl px-6 pb-16 pt-24 sm:pb-20 sm:pt-32">
           <FadeIn>
-            <h1 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
+            <h1 className="text-center text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground sm:text-left">
               Use cases
             </h1>
-            <p className="mt-4 max-w-2xl text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed">
+            <p className="mt-4 max-w-2xl text-center text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed sm:text-left">
               Anywhere an agent needs to act on its own, and you need proof it
               stayed inside the lines.
             </p>
@@ -123,7 +123,7 @@ export default function UseCases() {
               <FadeIn
                 key={useCase.title}
                 delay={Math.min(i * 0.05, 0.25)}
-                className={`border-t-2 p-8 transition-colors hover:bg-fd-accent/30 sm:p-10 ${i === 4 ? "bg-fd-accent/30" : "bg-fd-background"}`}
+                className={`border-t-2 p-8 text-center transition-colors hover:bg-fd-accent/30 sm:p-10 sm:text-left ${i === 4 ? "bg-fd-accent/30" : "bg-fd-background"}`}
                 style={{ borderTopColor: useCase.accent }}
               >
                 <span

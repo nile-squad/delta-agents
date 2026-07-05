@@ -514,6 +514,36 @@ Key: `slang-ts` (bundled into dist), `zod`, `@libsql/client` + `drizzle-orm`, `o
 - .env: never read/edit
 - Installs/stack changes: never without permission
 
+## docs-web Responsive Alignment Pattern (2026-07-05)
+
+### The rule
+On mobile (`< sm`), section titles and their subheadings/descriptions center-align. On `sm+` desktop, everything left-aligns. The breakpoint is `sm:` (640px) in Tailwind v4.
+
+### How to apply it
+- **Section titles (h1/h2)**: add `text-center sm:text-left` to the heading itself. Do NOT leave the heading unaligned (default `start`/left) while its subheading centers — that mismatch was the original bug.
+- **Subheadings/descriptions** (the `p` directly under a section title): `text-center sm:text-left`. Already the existing pattern; the fix was making the *title* match.
+- **Hero CTA rows + micro-lines** (buttons, "Open source · Free · ..." line): `justify-center sm:justify-start` on the flex container so the buttons center under the centered title on mobile.
+- **Title + icon rows** (e.g. "Features highlight" with the Lightbulb): `justify-center sm:justify-start` on the flex row, NOT `text-center` on the h2 (the h2 is a flex child, text-align doesn't move it).
+
+### Grid card cells (Features highlight, Use cases)
+The joined mosaic grid cells (`gap-px bg-fd-border` shared hairlines) have their own alignment rule, separate from section titles:
+- Put `text-center sm:text-left` on the **cell container** (the `FadeIn` wrapper), NOT on each child. The icon chip (`inline-flex`), h3, and p all inherit `text-align` from the cell, so they align together without per-element classes.
+- Before the fix, only h3/p had `text-center sm:text-left` while the icon chip was left-aligned (inline-flex follows parent text-align, but the parent cell had no text-align set) — icon sat at left while text centered.
+- Do NOT use `flex flex-col items-center` on the cell to fix this — that shrinks h3/p to content width and breaks text wrapping. `text-align` is the right tool; it centers inline content without collapsing block width.
+
+### Scope boundary
+- This pattern applies to **section titles + their direct subheadings** and **grid card cell contents** only.
+- It does NOT apply to: card-internal layouts that have their own composition (governance loop cards, how-to-use zig-zag rows), the footer, or the empty-state card on the showcase page (which is deliberately `text-center` + `items-center` at all breakpoints).
+- The "More about Delta" section (badges + install chip + CTA) is already `text-center` at all breakpoints by design — it's a short centered cluster, not a title+subheading block.
+
+### Pages verified
+- `packages/docs-web/app/routes/home.tsx` — hero, "How it works", "How to use the Delta framework", "Features highlight" (title + cells)
+- `packages/docs-web/app/routes/use-cases.tsx` — header h1, grid cells
+- `packages/docs-web/app/routes/showcase.tsx` — header h1, "How to submit" h2, "Featured projects" h2
+
+### Verification method
+Use `agent-browser` (installed globally, not npx) with `set viewport 390 844` for mobile and `set viewport 1280 800` for desktop. Query `getComputedStyle(el).textAlign` and `getBoundingClientRect()` left/right to confirm alignment without needing to view screenshots. Note: `window.resizeTo()` does NOT work in headless Chrome — use `agent-browser set viewport W H` instead.
+
 ## Files to Reference
 - `docs/internal/delta-agents.spec.md` — THE spec, canonical blueprint
 - `AGENTS.md` — coding rules for the whole team

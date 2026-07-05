@@ -34,10 +34,10 @@ export default function Showcase() {
       <section className="section-more-glow">
         <div className="mx-auto max-w-5xl px-6 pb-16 pt-24 sm:pb-20 sm:pt-32">
           <FadeIn>
-            <h1 className="text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground">
+            <h1 className="text-center text-[clamp(2.25rem,1.6rem+2.6vw,3.5rem)] font-bold tracking-tight leading-[1.1] text-fd-foreground sm:text-left">
               Showcase
             </h1>
-            <p className="mt-4 max-w-2xl text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed">
+            <p className="mt-4 max-w-2xl text-center text-[clamp(1rem,0.92rem+0.4vw,1.125rem)] text-fd-muted-foreground leading-relaxed sm:text-left">
               Real projects built with Delta, submitted by the community. Built
               something governed? Put it here.
             </p>
@@ -49,10 +49,10 @@ export default function Showcase() {
       <section>
         <div className="mx-auto max-w-5xl px-6 py-16 sm:py-24">
           <FadeIn>
-            <h2 className="text-[clamp(1.5rem,1.25rem+1vw,2rem)] font-bold tracking-tight leading-[1.15] text-fd-foreground">
+            <h2 className="text-center text-[clamp(1.5rem,1.25rem+1vw,2rem)] font-bold tracking-tight leading-[1.15] text-fd-foreground sm:text-left">
               How to submit
             </h2>
-            <p className="mt-3 max-w-2xl text-sm text-fd-muted-foreground leading-relaxed sm:text-base">
+            <p className="mt-3 max-w-2xl text-center text-sm text-fd-muted-foreground leading-relaxed sm:text-left sm:text-base">
               Make a PR with the following structure:
             </p>
           </FadeIn>
@@ -71,7 +71,7 @@ export default function Showcase() {
           </FadeIn>
           <FadeIn
             delay={0.15}
-            className="mt-6 max-w-2xl text-sm text-fd-muted-foreground leading-relaxed"
+            className="mt-6 max-w-2xl text-center text-sm text-fd-muted-foreground leading-relaxed sm:text-left"
           >
             Add your entry to the showcase list, keep the description concise,
             and link to something that actually runs. Open the PR against the
@@ -95,7 +95,7 @@ export default function Showcase() {
       <section>
         <div className="mx-auto max-w-5xl px-6 py-16 sm:py-24">
           <FadeIn>
-            <h2 className="text-[clamp(1.5rem,1.25rem+1vw,2rem)] font-bold tracking-tight leading-[1.15] text-fd-foreground">
+            <h2 className="text-center text-[clamp(1.5rem,1.25rem+1vw,2rem)] font-bold tracking-tight leading-[1.15] text-fd-foreground sm:text-left">
               Featured projects
             </h2>
           </FadeIn>
