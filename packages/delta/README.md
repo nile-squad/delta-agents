@@ -1,59 +1,44 @@
 # delta-agents
 
-**The AI agents framework with built in safety, governance and provenance.**
+**The AI agents framework with built-in safety, governance and provenance.**
 
-Delta Agents is a framework and runtime for building production AI agents.
+Agents that don't drift. Agents that follow operating procedures even when the model hallucinates. Every agent operation runs through a governance engine that validates, authorizes, supervises, and audits before anything reaches the outside world.
 
-It prevents agents from drifting away from organizational policies and operating procedures by running every agent operation in a deterministic, math-backed governance engine. The model proposes actions; the engine validates, authorizes, supervises, audits and determines whether it is safe to proceed or not, guides the agent towards correctness and blocks if agent does not comply.
+The model proposes. The engine disposes. Budget enforcement, schema validation, risk scoring, trust estimation, and loop detection happen structurally, not by prompt engineering. An agent cannot skip a prerequisite, exceed a budget, or call an action it was not assigned, no matter what the model does.
 
-When the agent is doing well and following rules, you won't need to do anything. On drift however you can interact via human in the loop: inspect and approve or reject an agent's step with correction or the engine can auto correct it if safe to do so.
+When the agent is doing well, it runs without intervention. On drift, the engine guides it back or blocks until a human reviews. The engine auto-corrects when safe to do so. It escalates when human judgment is needed.
 
-It also lifts the common plumbing teams need to build from scratch to achieve production-ready agents, reducing time to ship from months to minutes.
+Full documentation at [delta.nilesquad.com](https://delta.nilesquad.com).
 
-## Under the hood
+## What you get
 
-Delta's governance engine is built on control theory, decision theory, and statistical estimation: bounded state-space models, Markov constraints, Bellman optimization, model predictive control, Kalman estimation, and Bayesian updating. Every governance decision is deterministic, provable, and auditable.
+**Governance firewall:** Prerequisites validate before actions execute: an agent cannot ship an order before confirming it. Schema enforcement catches malformed input before the action function runs. Budgets cap spend at the engine level, not by prompting.
 
-The full specification, mechanics, and architecture: [delta-agents.spec.md](./docs/internal/delta-agents.spec.md).
+**Human oversight:** A task mid-flight can be inspected, approved, or rejected with corrective feedback. The engine escalates when it cannot decide safely.
 
-## Key Highlights
+**Guaranteed behavior:** Workflows defined as action sequences retry on failure, resume from checkpoints, and never degrade across model versions. The same SOP runs identically on any model.
 
-## Your agents can't go rogue.
+**Multi-agent teams:** Agents delegate to each other with scoped budgets. Communication via mailboxes with read receipts: senders see when a message was read. A live roster tracks load across the team, preventing overload.
 
-No amount of prompt engineering can match a system that literally cannot execute an unsafe action. The governance firewall enforces every constraint structurally.
+**Memory that works:** Agents read context from past tasks automatically, so they do not repeat mistakes or re-ask for the same information. They take notes on completed work and improve next time.
 
-- Budget enforcement at the token, time and multi dimensional level
-- Schema and prerequisite validation before every action, agent can't process an order for example before first confirming the order
-- Risk scoring that gates high-stakes operations behind human approval, the engine is always watching and guiding on fly.
-- Loop detection that catches reasoning spirals before they burn budget, trajectories that predict failure before it happens.
+**Full traceability:** Every action, decision, and token is queryable. Trust and risk revise from observed behavior, so reliable agents get more autonomy and risky agents get more oversight.
 
-## Multi-agent teams that coordinate.
+**Tools on the same pipeline:** Web search (Exa), document extraction (PDF, images, Office), and custom integrations run through the same budget and audit pipeline as actions. Tools inform the model without changing state.
 
-Agents delegate to other agents with scoped budgets. When network fails or an agent becomes unresponsive, automatic recovery handles retries, restarts, and escalations without manual intervention. Agents communicate through mailboxes with read receipts, so you know messages were delivered. A live roster tracks per-agent load across the team, preventing overload and enabling smart task distribution.
+**Your model, your provider:** OpenAI, OpenRouter, any OpenAI-compatible endpoint. Per-agent model selection: fast model for routine tasks, reasoning model for complex ones, with no code changes to switch.
 
-## Agents that remember.
+**Channel support:** Slack, Teams, Discord, Telegram. One deployment serves all platforms. Agent execution is decoupled from delivery, so agents work independently of channel availability.
 
-Agents retrieve context from past tasks on demand, so they don't repeat mistakes or ask for the same information twice. Agents take notes on completed work and improve on the same tasks next time. Agents know what time it is and what happened recently, so they can make time-sensitive decisions and understand temporal context.
+## Install
 
-## Where your team is.
+>> Free · Fully open source (MIT) · Type safe · Works with Node, Bun, and Deno.
 
-Delta supports messaging channels such as Slack, Teams, Discord, and Telegram, so agents can communicate through the platforms your team already uses. One deployment serves all platforms with cross-platform conversation continuity, so conversations flow seamlessly regardless of which channel the user switches to. Agent execution is decoupled from delivery, so agents work independently of channel availability.
+```
+pnpm add delta-agents
+```
 
-## Workflows that don't drift.
-
-Define multi-phase SOPs as sequences of actions — verify, process, confirm, update — and they run the same way every time, no matter what model is behind them. When something fails, recovery is automatic: retry from the failed step instead of restarting the entire workflow, restart the phase if state is corrupted, resume from where it left off after human approval, or escalate when human judgment is needed. Pause for human approval on high-risk operations, then resume from where it left off. No model drift. No unpredictable behavior.
-
-## Full observability.
-
-Every action, decision, and token is traceable and queryable, so you can debug issues, audit compliance, and understand agent behavior. Trust and risk are based on observed behavior — the engine revises them continuously from what actually happened, so reliable agents get more autonomy and risky agents get more oversight. Commit history tracks what was done, by whom, and when.
-
-## Tools that work safely.
-
-Web search via Exa for grounding agents in live information. Document extraction from PDFs, images, and Office files. Custom tools for connecting agents to external systems. Tools inform the model without changing business state, while still running through the same budget and audit pipeline as actions, so tool usage is tracked and controlled just like any other operation.
-
-## Your model, your provider.
-
-OpenAI, OpenRouter, any OpenAI-compatible endpoint. Per-agent model selection — fast model for routine tasks, reasoning model for complex ones — with no code changes to switch, so you can optimize cost and performance per agent. No lock-in. Vision and audio capabilities are declared per model and enforced at send-time, so a capability mismatch is caught before execution, not after, preventing wasted API calls and confusing errors.
+Requires TypeScript 5+.
 
 ## Quick Start
 
@@ -90,31 +75,40 @@ const result = await delta.send({
   input: { customerId: "C-42" },
   budget: { tokens: 5000, durationMs: 30_000 },
 });
-
-if (result.isOk) {
-  console.log(result.value.status); // "completed" | "blocked" | "failed" | "queued"
-}
 ```
 
-The agent is budget-enforced, risk-scored, audit-logged, and checkpoint-recoverable. The model cannot exceed the token budget, skip schema validation, or call an action it was not assigned. All enforced structurally, not by prompt engineering.
+## Human in the Loop
 
-## Install
-
+```ts
+delta.events.on("approval-requested", async ({ taskId, approvalId }) => {
+  const approved = await reviewInDashboard(taskId, approvalId);
+  if (approved) {
+    await delta.approve(approvalId);
+  } else {
+    await delta.reject(approvalId, "use a different carrier");
+  }
+});
 ```
-pnpm add delta-agents
+
+## Multi-Agent Delegation
+
+```ts
+const lead = delta.agent({ name: "lead", ... });
+const worker = delta.agent({ name: "worker", ... });
+delta.deploy(lead);
+delta.deploy(worker);
+
+// Lead mentions @worker to delegate subtasks automatically
+const result = await delta.send({
+  goal: "Research competitor pricing and draft a report",
+  agentName: "lead",
+  budget: { tokens: 200_000, durationMs: 120_000 },
+});
 ```
 
-Requirements: TypeScript 5 or later.
+## Contributing
 
-## Documentation
-
-The full guide covers actions, agents, workflows, human oversight, tools, memory, delegation, channels, multimodal input, the cost model, and the complete API reference.
-
-Read it at **[delta.nilesquad.com](https://delta.nilesquad.com)**. Source lives in [`packages/docs-web/content/docs/`](./packages/docs-web/content/docs/).
-
-## Status
-
-v1. The specification is stable and the API is final. The core engine, governance math, supervision strategies, workflow execution, delegation, channels, memory retrieval, tools, multimodal input, and human oversight are implemented and tested.
+Bug reports, feature requests, and pull requests welcome at [github.com/nile-squad/delta-agents](https://github.com/nile-squad/delta-agents).
 
 ## License
 
