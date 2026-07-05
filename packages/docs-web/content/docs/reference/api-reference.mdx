@@ -148,12 +148,12 @@ An agent's outbox: messages it sent, newest first.
 const messages = await delta.outbox(args: { agent: string }): Promise<Result<Message[], string>>
 ```
 
-#### `delta.recall(args)`
+#### `delta.unsend(args)`
 
-Recall (unsend) a message, allowed only while unread.
+Unsend a message, allowed only while unread.
 
 ```ts
-const message = await delta.recall(args: { messageId: string }): Promise<Result<Message, string>>
+const message = await delta.unsend(args: { messageId: string }): Promise<Result<Message, string>>
 ```
 
 #### `delta.cleanup(options?)`

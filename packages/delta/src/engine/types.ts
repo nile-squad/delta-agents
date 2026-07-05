@@ -380,7 +380,7 @@ export type DeltaEngine = {
    */
   workflowStats: (args: { workflow: string }) => Promise<Result<WorkflowStats, string>>;
 
-  // ── Mailbox (inbox / outbox / recall) ──────────────────────────────────────
+  // ── Mailbox (inbox / outbox / unsend) ──────────────────────────────────────
   /**
    * An agent's inbox: messages addressed to it, unread first then oldest-first,
    * with recalled messages excluded. Each message carries its read receipt
@@ -399,7 +399,7 @@ export type DeltaEngine = {
    * unread. Returns the updated (recalled) message, or Err if it was already read,
    * already recalled, or not found.
    */
-  recall: (args: { messageId: string }) => Promise<Result<Message, string>>;
+  unsend: (args: { messageId: string }) => Promise<Result<Message, string>>;
   /**
    * Manually prune completed/failed tasks and consumed messages past their
    * retention windows, and evict expired cache entries. Destructive store

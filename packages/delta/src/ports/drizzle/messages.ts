@@ -89,13 +89,13 @@ export const messageMethods = (db: DB) => ({
       const rows = await db.select().from(messages).where(eq(messages.id, id));
       const row = rows[0];
       if (!row) return Err(`message "${id}" not found`);
-      if (row.readAt !== null && row.readAt !== undefined) return Err(`message "${id}" was already read — cannot recall`);
+      if (row.readAt !== null && row.readAt !== undefined) return Err(`message "${id}" was already read — cannot unsend`);
       if (row.recalledAt !== null && row.recalledAt !== undefined) return Err(`message "${id}" was already recalled`);
       const recalledAt = Date.now();
       await db.update(messages).set({ recalledAt }).where(eq(messages.id, id));
       return Ok(toMessage({ ...row, recalledAt }));
     } catch (e) {
-      return Err(`failed to recall message "${id}": ${String(e)}`);
+      return Err(`failed to unsend message "${id}": ${String(e)}`);
     }
   },
 

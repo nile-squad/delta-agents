@@ -238,7 +238,7 @@ export const createInMemoryStore = (): StoragePort => {
         const idx = msgs.findIndex((m) => m.id === id);
         if (idx !== -1) {
           const prev = msgs[idx]!;
-          if (prev.readAt !== undefined) return Err(`message "${id}" was already read — cannot recall`);
+          if (prev.readAt !== undefined) return Err(`message "${id}" was already read — cannot unsend`);
           if (prev.recalledAt !== undefined) return Err(`message "${id}" was already recalled`);
           const updated = [...msgs];
           const recalled = { ...prev, recalledAt: new Date() };

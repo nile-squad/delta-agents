@@ -543,9 +543,9 @@ export const createDeltaEngine = async ({
     return Ok(sorted);
   };
 
-  const recall: DeltaEngine["recall"] = async ({ messageId }) => {
+  const unsend: DeltaEngine["unsend"] = async ({ messageId }) => {
     if (store.recallMessage === undefined) {
-      return Err("recall unavailable: store adapter does not implement recallMessage");
+      return Err("unsend unavailable: store adapter does not implement recallMessage");
     }
     return store.recallMessage(messageId);
   };
@@ -578,5 +578,5 @@ export const createDeltaEngine = async ({
     return computeWorkflowStats({ store, workflow: args.workflow });
   };
 
-  return { action, workflow, dataSource, agent, deploy, send, approve, reject, pause, resume, inspect, lastTask, cleanup, roster, topAgents, agentStats, workflowStats, inbox, outbox, recall, events, tools };
+  return { action, workflow, dataSource, agent, deploy, send, approve, reject, pause, resume, inspect, lastTask, cleanup, roster, topAgents, agentStats, workflowStats, inbox, outbox, unsend, events, tools };
 };

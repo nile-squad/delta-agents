@@ -55,12 +55,12 @@ const sentMessages = await delta.outbox({ agent: "support-agent" });
 
 Reading stamps `readAt` on the message. The receiver sees it on their inbox; the sender sees it on their outbox. A sender can tell whether, and when, a message was read.
 
-### Recall
+### Unsend
 
-An agent can unsend a message, but only while it is still unread. The turn-only model gives a clean window: the sender can retract a message before the recipient's next turn reads it. A recalled message is removed from the inbox and excluded from delivery, but remains visible as recalled in the sender's outbox.
+An agent can unsend a message, but only while it is still unread. The turn-only model gives a clean window: the sender can retract a message before the recipient's next turn reads it. An unsent message is removed from the inbox and excluded from delivery, but remains visible as unsent in the sender's outbox.
 
 ```ts
-const recalled = await delta.recall({ messageId: "msg_abc123" });
+const recalled = await delta.unsend({ messageId: "msg_abc123" });
 ```
 
 ### Inbox capacity

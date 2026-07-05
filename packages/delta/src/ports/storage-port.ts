@@ -134,7 +134,7 @@ export type StoragePort = {
    * Recall (unsend) a message: allowed only while it is unread (`readAt` unset).
    * Stamps `recalledAt` and returns the updated message. Returns Err if the
    * message is missing, already read, or already recalled. Optional — adapters
-   * that don't implement it disable recall.
+   * that don't implement it disable unsend.
    */
   recallMessage?: (id: string) => Promise<Result<Message, string>>;
   /**

@@ -1,10 +1,10 @@
 /**
- * Mailbox: durable inbox/outbox with dual-sided read receipts, recall (unsend
+ * Mailbox: durable inbox/outbox with dual-sided read receipts, unsend (recall
  * while unread), and configurable size-cap eviction (oldest read first).
  *
  * Agent-to-agent mentions ride the existing turn-only delivery: a teammate reads
  * a mention when its next turn folds it in, which stamps the receipt visible in
- * the sender's outbox. Recall is only valid before that read.
+ * the sender's outbox. Unsend is only valid before that read.
  */
 
 import { describe, it, expect } from "vitest";
@@ -67,9 +67,9 @@ describe("mailbox delivery + read receipts", () => {
   });
 });
 
-describe("recall (unsend)", () => {
-  it("recalls an unread message and prevents its delivery; rejects recall after read", async () => {
-    // Two separate runs let us recall between send and the recipient's read.
+describe("unsend", () => {
+  it("unsends an unread message and prevents its delivery; rejects unsend after read", async () => {
+    // Two separate runs let us unsend between send and the recipient's read.
     let leadTurns = 0;
     const reasoner: ReasonerPort = {
       reason: async ({ agentRole }) => {
@@ -89,8 +89,8 @@ describe("recall (unsend)", () => {
     expect(inbox.isOk && inbox.value.length).toBe(1);
     const msgId = inbox.isOk ? inbox.value[0]!.id : "";
 
-    // Recall while unread → succeeds and removes it from the inbox.
-    const recalled = await delta.recall({ messageId: msgId });
+    // Unsend while unread → succeeds and removes it from the inbox.
+    const recalled = await delta.unsend({ messageId: msgId });
     expect(recalled.isOk).toBe(true);
     const inboxAfter = await delta.inbox({ agent: "worker" });
     expect(inboxAfter.isOk && inboxAfter.value.length).toBe(0);
@@ -98,18 +98,18 @@ describe("recall (unsend)", () => {
     // Worker runs — nothing to read (recalled), so no receipt.
     await delta.send({ goal: "work", agentName: "worker" });
 
-    // Recalling again is rejected (already recalled).
-    const again = await delta.recall({ messageId: msgId });
+    // Unsend again is rejected (already recalled).
+    const again = await delta.unsend({ messageId: msgId });
     expect(again.isErr).toBe(true);
   });
 
-  it("rejects recall of an already-read message", async () => {
+  it("rejects unsend of an already-read message", async () => {
     const store = createInMemoryStore();
     const now = new Date();
     const read: Message = { id: "r1", taskId: "t", sender: "lead", receiver: "worker", payload: "hi", createdAt: now, readAt: now, deliveredAt: now, consumed: true };
     await store.saveMessage(read);
     const delta = await createDeltaEngine({ reasoner: { reason: async () => Ok({ kind: "done" }) }, store });
-    const res = await delta.recall({ messageId: "r1" });
+    const res = await delta.unsend({ messageId: "r1" });
     expect(res.isErr).toBe(true);
   });
 });
