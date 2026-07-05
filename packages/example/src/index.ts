@@ -1,38 +1,49 @@
-import { createDeltaEngine, createMockReasoner } from "delta-agents";
+import { createDeltaEngine } from "delta-agents";
 import { createSupportAgent, createFulfillmentAgent, ACTIONS, AGENT_NAME, WF_NAME } from "./agents/support-agent";
 
 const ORDER_ID = "ORD-1042";
 
 const main = async () => {
   const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    console.error("Set OPENAI_API_KEY to run this example against a real model.");
+    process.exit(1);
+  }
 
-  // With OPENAI_API_KEY set, the engine uses a real model (gpt-4o-mini).
-  // Without one, it falls back to a mock reasoner so the example runs
-  // deterministically with no external dependencies.
-  const delta = apiKey
-    ? await createDeltaEngine({
-        apiKey,
-        models: [{ name: "default", model: "gpt-4o-mini", default: true }],
-        systemPrompt: "You are Acme Corp's order support agent. Always be helpful and concise.",
-      })
-    : await createDeltaEngine({
-        reasoner: createMockReasoner({
-          responses: [
-            { actionName: ACTIONS.lookupOrder, input: { orderId: ORDER_ID } },
-            { actionName: ACTIONS.issueRefund, input: { orderId: ORDER_ID, amount: 49.99, reason: "Item arrived damaged in transit" } },
-            { actionName: ACTIONS.issueRefund, input: { orderId: ORDER_ID, amount: 49.99, reason: "Item arrived damaged in transit" } },
-          ],
-        }),
-        systemPrompt: "You are Acme Corp's order support agent.",
-      });
+  const delta = await createDeltaEngine({
+    apiKey,
+    models: [{ name: "default", model: "gpt-4o-mini", default: true }],
+    systemPrompt:
+      "You are Acme Corp's order support agent. Always be helpful and concise.",
+  });
 
-  // ── Pattern 1: free-loop with human oversight ────────────────────────────────
+  // ── HITL: events drive the human review loop ─────────────────────────────
+  let approvalResolve!: (id: string) => void;
+  const approvalPromise = new Promise<string>((resolve) => {
+    approvalResolve = resolve;
+  });
+
+  delta.events.on("approval-requested", async ({ approvalId, reason }) => {
+    console.log(`\n--- approval requested ---`);
+    console.log(`  reason: ${reason}`);
+    const approved = await reviewInDashboard(approvalId);
+    if (approved) {
+      await delta.approve(approvalId);
+      console.log(`  approved`);
+    } else {
+      await delta.reject(approvalId, "rejected by reviewer");
+      console.log(`  rejected`);
+    }
+    approvalResolve(approvalId);
+  });
+
+  // ── Pattern 1: free-loop with human oversight ────────────────────────────
   const supportAgent = createSupportAgent(delta);
   delta.deploy(supportAgent);
 
   console.log(`\n--- free-loop: sending goal to "${AGENT_NAME}" ---`);
   const sendResult = await delta.send({
-    goal: `Look up order ${ORDER_ID} and refund the customer — the item arrived damaged.`,
+    goal: `Look up order ${ORDER_ID} and refund the customer. The item arrived damaged.`,
     agentName: AGENT_NAME,
   });
 
@@ -44,38 +55,30 @@ const main = async () => {
   let outcome = sendResult.value;
   console.log(`send() → ${outcome.status}${outcome.reason ? ` (${outcome.reason})` : ""}`);
 
-  // The refund requires human sign-off. Find the pending approval, approve it,
-  // then resume the task. The engine picks up exactly where it left off.
+  // The refund action requires human sign-off. The approval-requested event
+  // fires during engine execution; the reviewer approves or rejects asynchronously.
+  // Wait for that decision before resuming the blocked task.
   if (outcome.status === "blocked") {
-    const inspection = await delta.inspect(outcome.taskId);
-    if (inspection.isErr) { console.error("inspect failed:", inspection.error); process.exit(1); }
-
-    const pending = inspection.value.pendingApprovals.find((a) => a.action === ACTIONS.issueRefund);
-    if (pending === undefined) { console.error("expected pending approval for issue-refund"); process.exit(1); }
-
-    console.log(`\n--- human review ---`);
-    console.log(`approval requested: ${pending.reason}`);
-    console.log(`approving ${pending.id}...`);
-    await delta.approve(pending.id);
-
-    console.log(`resuming task ${outcome.taskId}...`);
+    await approvalPromise;
+    console.log(`\n--- resuming after review ---`);
     const resumeResult = await delta.resume(outcome.taskId);
-    if (resumeResult.isErr) { console.error("resume failed:", resumeResult.error); process.exit(1); }
+    if (resumeResult.isErr) {
+      console.error("resume failed:", resumeResult.error);
+      process.exit(1);
+    }
     outcome = resumeResult.value;
     console.log(`resume() → ${outcome.status}${outcome.reason ? ` (${outcome.reason})` : ""}`);
-
-    const finalInspection = await delta.inspect(outcome.taskId);
-    if (finalInspection.isErr) { console.error("inspect failed:", finalInspection.error); process.exit(1); }
-    const { task, executions } = finalInspection.value;
-    console.log(`\naudit trail:`);
-    console.log(`  status: ${task.status}`);
-    console.log(`  trust: ${task.trust.score.toFixed(2)}`);
-    console.log(`  actions: ${executions.map((e) => e.action).join(", ")}`);
   }
 
-  // ── Pattern 2: deterministic workflow ────────────────────────────────────────
-  // Workflows run phases in declared order with no model involvement in routing.
-  // The same action set, but executed deterministically.
+  const inspection = await delta.inspect(outcome.taskId);
+  if (inspection.isErr) { console.error("inspect failed:", inspection.error); process.exit(1); }
+  const { task, executions } = inspection.value;
+  console.log(`\naudit trail:`);
+  console.log(` status: ${task.status}`);
+  console.log(` trust: ${task.trust.score.toFixed(2)}`);
+  console.log(` actions: ${executions.map((e) => e.action).join(", ")}`);
+
+  // ── Pattern 2: deterministic workflow ─────────────────────────────────────
   const fulfillmentAgent = createFulfillmentAgent(delta);
   delta.deploy(fulfillmentAgent);
 
@@ -97,9 +100,12 @@ const main = async () => {
 
   const wfInspection = await delta.inspect(wfOutcome.taskId);
   if (wfInspection.isErr) { console.error("inspect failed:", wfInspection.error); process.exit(1); }
-  console.log(`  phases: ${wfInspection.value.task.currentPhase ?? "done"}`);
-  console.log(`  actions: ${wfInspection.value.executions.map((e) => e.action).join(", ")}`);
+  console.log(` phases: ${wfInspection.value.task.currentPhase ?? "done"}`);
+  console.log(` actions: ${wfInspection.value.executions.map((e) => e.action).join(", ")}`);
 };
+
+// Review stub — replace with a real UI, Slack prompt, or CI gate.
+const reviewInDashboard = async (_approvalId: string): Promise<boolean> => true;
 
 main().catch((error: unknown) => {
   console.error("unhandled error:", error);
