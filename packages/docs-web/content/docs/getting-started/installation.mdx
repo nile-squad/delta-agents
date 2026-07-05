@@ -1,0 +1,68 @@
+---
+title: Installation
+description: Install delta-agents and its optional dependencies
+---
+
+
+## Requirements
+
+- Node.js 18 or later
+- TypeScript 5 or later
+- pnpm, npm, or yarn
+
+## Install the package
+
+```
+pnpm add delta-agents
+```
+
+Or with npm:
+
+```
+npm install delta-agents
+```
+
+## Optional peer dependencies
+
+Delta ships with builtin tools that require additional dependencies. These are optional: the engine works without them and loads nothing until the tool is enabled.
+
+### Document extraction
+
+The builtin `document-extract` tool reads text from PDFs, images, and Office files. It requires two optional peer dependencies:
+
+```
+pnpm add @llamaindex/liteparse sharp
+```
+
+Enable the tool in engine configuration and the engine validates the dependencies at construction time. If they are missing, construction fails with an actionable install message rather than a mid-task error.
+
+### Web search
+
+The builtin `web-search` tool queries Exa for live grounding. It requires one optional peer dependency:
+
+```
+pnpm add exa-js
+```
+
+Enable the tool with an explicit API key. The key is required and declared at configuration time: it is never read from the environment.
+
+## Storage adapters
+
+Delta uses an in-memory store by default: no database setup needed for development. For persistence, install the optional Drizzle storage adapter.
+
+The Drizzle adapter requires additional dependencies. See the [adapters](/docs/reference/adapters) page for setup instructions.
+
+## Verify installation
+
+```ts
+import { createDeltaEngine } from "delta-agents";
+
+const delta = await createDeltaEngine({
+  apiKey: process.env.OPENAI_API_KEY,
+  models: [{ name: "fast", model: "gpt-4o-mini", default: true }],
+});
+
+console.log("Engine ready");
+```
+
+Run with `tsx` or `bun` for TypeScript, or compile first and run with Node.

@@ -1,0 +1,82 @@
+---
+title: Memory
+description: On-demand retrieval of past context, task memory, and agent commits
+---
+
+
+Delta agents retrieve context from past tasks on demand and record completed work for future reference. Memory is retrieved, not carried: agents load relevant context when needed rather than maintaining unbounded working memory.
+
+## How memory works
+
+Before every reasoning turn, the engine retrieves relevant memory entries for the agent and injects them into context. This happens automatically: the agent does not need to request it.
+
+Memory entries are:
+
+- **Attributable to a TaskID**: every memory access traces back to the task that created or read it.
+- **Keyword-ranked**: retrieval uses keyword matching (no embeddings required). Semantic ranking is available for future embedding-based retrieval.
+- **Scoped to the agent**: an agent sees its own memories, not memories from other agents.
+
+## Recording memory
+
+Actions can write to memory using `ctx.remember()`:
+
+```ts
+const resolveIssue = delta.action({
+  name: "resolve-issue",
+  schema: z.object({ issueId: z.string(), resolution: z.string() }),
+  fn: async ({ issueId, resolution }, ctx) => {
+    await ctx.remember(`Resolved issue ${issueId}: ${resolution}`, "resolution");
+    return Ok({ resolved: true });
+  },
+});
+```
+
+Memory writing is explicit: the agent declares what is worth remembering. The engine does not automatically capture execution outcomes as memories (though this is available as a future enhancement).
+
+## Commits
+
+Commits are structured records of completed work. Unlike free-form memory entries, commits carry workflow context (which workflow ran, which checkpoint) and optional notes from the agent.
+
+### After a workflow
+
+When a workflow completes, the engine enters a commit step: a single constrained reasoning turn where the model can only choose to commit (with notes) or fail. If the model exhausts retries, the engine auto-commits with no notes: the task always converges to completed.
+
+```ts
+// Task completes, engine runs commit step
+// Agent writes: "Processed order ORD-42: confirmed, charged, notified customer"
+```
+
+### During a free loop
+
+The agent can voluntarily commit at any point using the `system:commit` tool. Unlike the post-workflow commit, this does not end the task: the commit is recorded and execution continues.
+
+### Commit history
+
+Commits are persisted and retrievable. The last N commits (configurable via `commitContextLimit`, default 10) are injected into the agent's reasoning context on every turn, so the agent is aware of its recent history.
+
+```ts
+// Recent commits appear in context:
+// - [fulfillment] Processed order ORD-42 (about 2 minutes ago)
+// - [refund] Issued refund for order REF-101 (about 1 hour ago)
+```
+
+### Searching commits
+
+The agent can search its own commit history using the `system:search_commits` tool. This returns matching commits by keyword, workflow name, or time range.
+
+## Time awareness
+
+The engine injects the current time into every reasoning turn so agents can make time-sensitive decisions. Current time includes a humanized description ("about 2 minutes ago"), an ISO timestamp, and the configured timezone.
+
+Prior messages from the conversation are also formatted with relative time labels, so the agent can perceive time gaps across the conversation: a message that arrived 4 hours ago reads differently than one that arrived moments ago.
+
+Configure the timezone at engine creation:
+
+```ts
+const delta = await createDeltaEngine({
+  timezone: "Africa/Lagos",
+  // ...
+});
+```
+
+Defaults to the system timezone when omitted.

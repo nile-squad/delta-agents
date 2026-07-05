@@ -1,0 +1,77 @@
+---
+title: FAQ
+description: Frequently asked questions about delta-agents
+---
+
+
+## General
+
+### What is delta-agents?
+
+Delta Agents is a framework and runtime for building production AI agents. It provides a deterministic governance layer that validates, authorizes, and audits every agent operation. The model proposes actions; the engine enforces constraints.
+
+### How is this different from LangChain, CrewAI, or similar?
+
+Delta treats governance as the primary concern, not an add-on. Actions run through a deterministic gateway that checks schema, prerequisites, budget, risk, and approval before execution: enforced structurally, not by prompt engineering. Delegation is bounded to prevent complexity explosion. Trust and risk are derived from observed behavior using control theory and Bayesian updating.
+
+### Can I use my own model provider?
+
+Yes. Delta works with any OpenAI-compatible endpoint: OpenAI, OpenRouter, Azure OpenAI, local Ollama instances, or any custom endpoint. Each model is configured as a named `ModelDef` and agents select by name. Per-agent model assignment allows mixing fast and reasoning models in the same engine.
+
+### Do I need a database?
+
+No. Delta uses an in-memory store by default: no database setup for development. For production persistence, use the Drizzle SQLite adapter.
+
+## Actions and workflows
+
+### Can an action run without the model?
+
+Yes. When a workflow is assigned via `send({ workflow: "..." })`, the task runs deterministically through phases without the reasoner. The engine executes actions in declared order with configured branching. Workflow-less tasks use the reasoner loop where the model plans and proposes.
+
+### How are failures handled?
+
+Supervision strategies: retry, restart, resume, escalate, or abort: are configured per phase. Retries use jittered exponential backoff. When automated recovery is exhausted, the task escalates to a human.
+
+### What happens when an agent is busy?
+
+The engine never creates a new task for an agent that already has active or queued work. `delta.send()` returns `status: "queued"` and the goal attaches as a message on the existing task. When the agent is free, the message is folded into context.
+
+## Budget and cost
+
+### What happens when budget is exceeded?
+
+The engine blocks the action and transitions the task to `failed` with budget exhaustion as the reason. The check happens before execution, not after: the agent cannot spend what it does not have.
+
+### Does delta track financial costs?
+
+Yes. The `Cost` type includes a `money` field with explicit value and currency (ISO 4217). Financial budget enforcement follows the same pattern as tokens and time.
+
+## Tools
+
+### Can I add my own tools?
+
+Yes. Custom tools are declared in the `tools.custom` array in engine configuration. Each tool declares a name, description, Zod schema, and execution function. Tools are global and visible to all agents.
+
+### When should I use a tool vs an action?
+
+Use a tool for stateless operations that inform the model (web search, calculation, document extraction). Use an action for business operations that change state (process an order, update a record, send a notification). Tools have no prerequisites, no risk, and no state impact.
+
+## Multi-agent
+
+### How many agents can I have?
+
+There is no hard limit on agent count. Each agent can have at most one active task at a time with up to two active subtasks. Additional work queues. The roster tracks load across all agents.
+
+### Can agents communicate with each other?
+
+Yes. Agents communicate through mailboxes (inbox and outbox) with read receipts and recall support. Communication is turn-only: messages never interrupt an agent mid-task.
+
+## Observability
+
+### Can I see what an agent is doing?
+
+Yes. `delta.inspect(taskId)` returns the full governance state: task record, execution history, latest checkpoint, escalation events, and pending approvals. Every action, decision, and token is traced.
+
+### How do I debug agent behavior?
+
+Enable per-module diagnostics in engine configuration. Diagnostics emit structured events (timing, decision traces, counts) to the logger at debug or trace level. Each module (actions, workflows, governance, supervision, memory, comms, tools, engine) can be independently toggled.

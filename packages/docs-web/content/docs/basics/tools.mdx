@@ -1,0 +1,121 @@
+---
+title: Tools
+description: Reusable utilities that inform agents without changing state
+---
+
+
+Tools are reusable, stateless utilities registered at the engine level. Unlike actions, tools have no prerequisites, no risk, and no state impact. They inform the model without changing business state.
+
+## Tools vs actions
+
+| Property | Tool | Action |
+|----------|------|--------|
+| State impact | None. Tools are read-only utilities. | Changes task state. |
+| Prerequisites | None. | Declared prerequisites must be satisfied. |
+| Risk | Zero. | Declared risk 1-5, continuously estimated. |
+| Budget | Optional (cost tracking only). | Mandatory (task budget enforced). |
+| Visibility | Global. All tools visible to all agents. | Scoped by task state and prerequisites. |
+| Result type | Informs model reasoning. | Drives trust, risk, branching, supervision. |
+
+## Declaring tools
+
+Tools: both builtin and custom: are declared in one place in engine configuration. There is no `delta.tool()` authoring method.
+
+```ts
+const delta = await createDeltaEngine({
+  apiKey: process.env.OPENAI_API_KEY,
+  models: [{ name: "fast", model: "gpt-4o-mini", default: true }],
+  tools: {
+    builtin: {
+      documentExtract: true,
+      webSearch: { apiKey: process.env.EXA_API_KEY },
+    },
+    custom: [
+      {
+        name: "lookup-inventory",
+        description: "Check inventory levels for a product SKU",
+        schema: z.object({ sku: z.string() }),
+        fn: async ({ data, ctx }) => Ok(await db.inventory.check(data.sku)),
+      },
+    ],
+  },
+});
+```
+
+### Builtin tools
+
+Framework-provided tools the developer turns on through configuration rather than authoring by hand.
+
+- **`documentExtract`**: reads text from file or image attachments. Input is an `attachmentId` resolved against the task's own attachments. The tool never accepts a filesystem path or arbitrary URL: an agent cannot direct it to read a resource outside the task's declared attachments.
+- **`webSearch`**: queries Exa for live grounding. Requires an explicit API key (never read from the environment). Returns formatted results with titles, URLs, and query-relevant highlights.
+
+Builtin tools are opt-in. Declaring one registers it; leaving it undeclared loads none of its dependencies. When a declared builtin's optional peer dependencies are absent, engine construction fails immediately with an actionable install message.
+
+### Custom tools
+
+Developer-authored tools for connecting agents to external systems. Every tool declares a name, description, Zod schema, and execution function. Tools may optionally declare skills, execution limits (cooldown, max calls per phase, max calls per task), and a cost budget.
+
+```ts
+type Tool = {
+  name: string;
+  description: string;
+  schema: ZodObject;
+  skills?: (string | Skill)[];
+  fn: (ctx: { data: unknown; ctx: ToolContext }) => Promise<Result<unknown, string>>;
+  limits?: {
+    maxCallsPerPhase?: number;
+    maxCallsPerTask?: number;
+    cooldownMs?: number;
+  };
+  cost?: Cost;
+  budget?: Cost;
+};
+```
+
+## Progressive disclosure
+
+Tools use progressive disclosure to keep the model's context window efficient:
+
+- The model sees a menu of tool names and descriptions on every turn.
+- Schemas are not included by default. The model fetches them on demand using the internal tool `system:get_tool_schema`.
+- Tool execution history is also fetched on demand via `system:get_tool_history` and `system:get_tool_history_entry`.
+
+Actions use the opposite pattern: schemas are included by default because actions are task-specific and the model needs full schema information to execute correctly.
+
+## Tool hints
+
+Phases and actions may declare advisory tool hints. These are suggestions to the model about which tools are useful in a given context. All tools remain visible regardless of hints.
+
+```ts
+const phase = {
+  name: "research",
+  description: "Gather customer data",
+  actions: ["lookup-customer"],
+  checkpoint: true,
+  tools: ["web-search", "database-query"],
+};
+```
+
+## Tool history
+
+Every tool call is logged with full context for audit and provenance. History entries are persisted in the task state snapshot and recoverable through checkpoints. Entries are truncated by default (500 characters); the full output is retrievable on demand via `system:get_tool_history_entry`.
+
+## Direct invocation
+
+Tools can be invoked directly from developer code, not only by an agent mid-task.
+
+```ts
+const text = await delta.tools.invoke({
+  tool: "document-extract",
+  input: { attachmentId: "att_abc123" },
+  ctx: { attachments: [myAttachment] },
+});
+```
+
+Direct invocation validates input against the tool's schema and runs it. Unlike the agent path, it does not record tool history, charge budget, or apply loop detection: those belong to task-scoped governance.
+
+## Loop detection
+
+The engine tracks per-agent tool usage: cooldown between consecutive calls, maximum calls per phase, and maximum calls per task. When a limit is hit, the engine blocks the call with a humanized message explaining why. The full context is logged for audit.
+
+The detector is created fresh per task run, so paused and resumed tasks get a clean detector.

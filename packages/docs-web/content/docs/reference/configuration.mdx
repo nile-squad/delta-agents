@@ -1,0 +1,77 @@
+---
+title: Configuration
+description: All engine configuration options with defaults
+---
+
+
+## Engine configuration
+
+Passed to `createDeltaEngine()`.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `store` | `StoragePort` | In-memory store | Persistence adapter for tasks, checkpoints, and messages. |
+| `endpoint` | `string` | OpenAI endpoint | Default base URL for model API calls. |
+| `apiKey` | `string` | None | Default API key for model calls. |
+| `options` | `ModelOptions` | None | Default provider options (temperature, topP, maxTokens). |
+| `models` | `ModelDef[]` | None | Named model configurations. At least one must have `default: true`. |
+| `maxStepsPerTask` | `number` | 100 | Maximum reasoner iterations per task. |
+| `providerRetry` | `Partial<RetryOptions>` | 3 attempts, 200ms base, 5s cap | Retry configuration for model API calls. |
+| `systemPrompt` | `string` | None | Global org instructions for all agents, baked into the cacheable system prompt prefix. |
+| `timezone` | `string` | System timezone | Timezone for humanized time in reasoner messages. |
+| `logger` | `LoggerConfig` | Dev mode, info level | Per-engine logger configuration. |
+| `cache` | `CacheConfig` | 1000 entries, 5min TTL | Read-through cache tuning. |
+| `diagnostics` | `DiagnosticsConfig` | All disabled | Per-module diagnostic event toggles. |
+| `commitContextLimit` | `number` | 10 | Recent commits to inject into agent context per turn. |
+| `commitMaxRetries` | `number` | 3 | Max reasoner attempts in commit step before auto-commit. |
+| `tools` | `ToolsConfig` | None | Builtin and custom tool declarations. |
+| `mailbox` | `{ inboxCap?: number }` | Unbounded | Per-agent inbox capacity cap. |
+
+## ModelDef
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `string` | Yes | Identifier agents reference via `agent.model`. |
+| `model` | `string` | Yes | Model ID sent to the provider (e.g. "gpt-4o"). |
+| `default` | `boolean` | No | Exactly one must be `true`. Agents without a model use this. |
+| `endpoint` | `string` | No | Per-model base URL override. |
+| `apiKey` | `string` | No | Per-model API key override. |
+| `options` | `ModelOptions` | No | Per-model provider options merged over engine-level options. |
+| `vision` | `boolean` | No | Declares vision capability. |
+| `audio` | `boolean` | No | Declares audio capability. |
+
+## ToolsConfig
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `builtin` | `BuiltinToolsConfig` | Framework-provided tools to enable. |
+| `custom` | `Tool[]` | Developer-authored tools. |
+
+### BuiltinToolsConfig
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `documentExtract` | `boolean \| DocumentExtractOptions` | Enable document extraction tool. |
+| `webSearch` | `WebSearchOptions` | Enable web search tool (requires explicit `apiKey`). |
+
+## Provider retry options
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `maxAttempts` | `number` | 3 | Maximum retry attempts per reasoner call. |
+| `baseDelayMs` | `number` | 200 | Base delay before first retry (jittered exponential backoff). |
+| `maxDelayMs` | `number` | 5000 | Maximum delay cap. |
+
+## Send input defaults
+
+| Field | Default |
+|-------|---------|
+| `budget.tokens` | 10,000 |
+| `budget.durationMs` | 300,000 |
+
+## Cache configuration
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `maxEntries` | `number` | 1000 | Maximum cache entries before LRU eviction. |
+| `ttlMs` | `number` | 300,000 | Sliding TTL in milliseconds (5 minutes). |

@@ -1,0 +1,367 @@
+---
+title: Types
+description: Complete type reference for all public types
+---
+
+
+## Authoring types
+
+### Action
+
+```ts
+type Action = {
+  name: string;
+  description: string;
+  schema: ZodObject;
+  risk?: 1 | 2 | 3 | 4 | 5;
+  estimatedCost?: Cost;
+  requiresApproval?: boolean;
+  prerequisites?: {
+    actions?: string[];
+    workflows?: string[];
+  };
+  hooks?: Hooks;
+  tools?: string[];
+  fn: (data: ActionInput, ctx: ActionContext) => Promise<ResultType>;
+};
+```
+
+### ActionContext
+
+```ts
+type ActionContext = {
+  taskId: string;
+  executionId: string;
+  agentName: string;
+  phase?: string;
+  storyline?: string;
+  phaseStoryline?: string;
+  availableSkills?: Array<{ name: string; description: string; content?: string }>;
+  communicate?: (channelType: string, body: string) => Promise<ResultType>;
+  remember?: (content: string, kind?: string) => Promise<ResultType>;
+};
+```
+
+### Hooks
+
+```ts
+type Hooks = {
+  before?: (ctx: ActionContext) => Promise<ResultType>;
+  after?: (ctx: ActionContext) => Promise<ResultType>;
+  onError?: (ctx: ActionContext) => Promise<ResultType>;
+};
+```
+
+### Workflow
+
+```ts
+type Workflow = {
+  name: string;
+  description: string;
+  storyline?: string;
+  version: string;
+  phases: Phase[];
+  estimatedCost?: Cost;
+  hooks?: Hooks;
+};
+```
+
+### Phase
+
+```ts
+type Phase = {
+  name: string;
+  description: string;
+  storyline?: string;
+  actions: ActionRef[];
+  checkpoint: boolean;
+  supervision?: SupervisionPolicy;
+  hooks?: Hooks;
+  tools?: string[];
+};
+```
+
+### ActionRef / Branch
+
+```ts
+type ActionRef = string | Branch;
+
+type Branch = {
+  action: string;
+  onSuccess?: string;
+  onFailure?: string;
+  when?: (ctx: ActionContext) => boolean;
+};
+```
+
+### Agent
+
+```ts
+type Agent = {
+  name: string;
+  description: string;
+  role: string;
+  rolePrompt: string;
+  model?: string;
+  contextWindow?: number;
+  actions: Action[];
+  workflows?: Workflow[];
+  skills?: Skill[];
+  channels?: Channel[];
+  team?: string;
+};
+```
+
+### Tool
+
+```ts
+type Tool = {
+  name: string;
+  description: string;
+  schema: ZodObject<ZodRawShape>;
+  skills?: (string | Skill)[];
+  fn: (ctx: { data: unknown; ctx: ToolContext }) => Promise<Result<unknown, string>>;
+  limits?: {
+    maxCallsPerPhase?: number;
+    maxCallsPerTask?: number;
+    cooldownMs?: number;
+  };
+  cost?: Cost;
+  budget?: Cost;
+};
+```
+
+### ToolContext
+
+```ts
+type ToolContext = {
+  agentName: string;
+  taskId: string;
+  phaseName?: string;
+  toolHistory: ToolHistoryEntry[];
+  attachments?: Attachment[];
+};
+```
+
+### Skill
+
+```ts
+type Skill = {
+  name: string;
+  description: string;
+  path: string;
+  active: boolean;
+};
+```
+
+### Channel
+
+```ts
+type Channel = {
+  type: SupportedChannels;
+  enabled: boolean;
+  sendMessage: (message: string, ctx: ChannelContext) => Promise<ResultType>;
+  retrieveMessages?: (ctx: ChannelContext) => Promise<ResultType>;
+  replyMessage?: (id: string, message: string, ctx: ChannelContext) => Promise<ResultType>;
+};
+```
+
+### SupervisionPolicy
+
+```ts
+type SupervisionPolicy = {
+  strategy: "retry" | "restart" | "resume" | "escalate" | "abort-subtree" | "abort-tree";
+  maxRetries: number;
+};
+```
+
+## Engine types
+
+### DeltaEngineConfig
+
+```ts
+type DeltaEngineConfig = {
+  store?: StoragePort;
+  endpoint?: string;
+  apiKey?: string;
+  options?: ModelOptions;
+  models?: ModelDef[];
+  reasoner?: ReasonerPort;
+  maxStepsPerTask?: number;
+  providerRetry?: Partial<RetryOptions>;
+  systemPrompt?: string;
+  timezone?: string;
+  logger?: LoggerConfig;
+  cache?: CacheConfig;
+  diagnostics?: DiagnosticsConfig;
+  commitContextLimit?: number;
+  commitMaxRetries?: number;
+  tools?: ToolsConfig;
+  mailbox?: { inboxCap?: number };
+};
+```
+
+### ModelDef
+
+```ts
+type ModelDef = {
+  name: string;
+  model: string;
+  default?: boolean;
+  endpoint?: string;
+  apiKey?: string;
+  options?: ModelOptions;
+  vision?: boolean;
+  audio?: boolean;
+};
+```
+
+### SendInput
+
+```ts
+type SendInput = {
+  goal: string;
+  agentName: string;
+  budget?: Cost;
+  workflow?: string;
+  input?: Record<string, string | number | boolean | null>;
+  actionInputs?: Record<string, Record<string, string | number | boolean | null>>;
+  attachments?: AttachmentInput[];
+};
+```
+
+### SendResult
+
+```ts
+type SendResult = {
+  taskId: string;
+  status: "completed" | "failed" | "blocked" | "queued" | "pendingCommit";
+  snapshot: TaskStateSnapshot;
+  reason?: string;
+};
+```
+
+### InspectResult
+
+```ts
+type InspectResult = {
+  task: Task;
+  executions: Execution[];
+  latestCheckpoint: Checkpoint | null;
+  escalations: EscalationRecord[];
+  pendingApprovals: ApprovalRequest[];
+};
+```
+
+### InvokeArgs
+
+```ts
+type InvokeArgs = {
+  tool: string;
+  input: unknown;
+  ctx?: Partial<ToolContext>;
+};
+```
+
+## Shared types
+
+### Cost
+
+```ts
+type Cost = {
+  tokens: number;
+  durationMs: number;
+  memory?: number;
+  latency?: number;
+  money?: Money;
+  content?: ContentCost;
+};
+```
+
+### Money
+
+```ts
+type Money = {
+  value: number;
+  currency: string; // ISO 4217, e.g. "USD", "EUR", "NGN"
+};
+```
+
+### Attachment
+
+```ts
+type AttachmentInput = {
+  kind: "image" | "file" | "audio";
+  mimeType: string;
+  data?: string;
+  url?: string;
+  name?: string;
+};
+
+type Attachment = AttachmentInput & { id: string };
+```
+
+### Task
+
+```ts
+type Task = {
+  id: string;
+  rootId: string;
+  parentId?: string;
+  status: ExecutionStatus;
+  goal: string;
+  assignedAgent: string;
+  workflow?: string;
+  currentPhase?: string;
+  budget: Cost;
+  risk: RiskState;
+  trust: TrustState;
+  createdAt: Date;
+  updatedAt: Date;
+};
+```
+
+### Message
+
+```ts
+type Message = {
+  id: string;
+  taskId: string;
+  sender: string;
+  receiver: string;
+  payload: unknown;
+  createdAt: Date;
+  deliveredAt?: Date;
+  readAt?: Date;
+  recalledAt?: Date;
+  consumed: boolean;
+};
+```
+
+### Commit
+
+```ts
+type Commit = {
+  id: string;
+  agentName: string;
+  taskId: string;
+  workflowName: string | null;
+  phaseName: string | null;
+  checkpointId: string | null;
+  notes: string;
+  createdAt: Date;
+};
+```
+
+### RosterEntry
+
+```ts
+type RosterEntry = {
+  agentName: string;
+  goal: string;
+  status: string;
+  activeSubtasks: number;
+  queuedCount: number;
+  overloaded: boolean;
+};
+```

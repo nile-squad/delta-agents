@@ -1,0 +1,99 @@
+---
+title: Adapters
+description: Storage adapters, reasoner adapters, and channel bridges
+---
+
+
+Delta is designed around port adapters for storage, model access, and messaging. Defaults let you work immediately; adapters let you connect real infrastructure.
+
+## Storage adapters
+
+### In-memory store
+
+Default. All data lives in memory for the lifetime of the engine. No setup required.
+
+```ts
+import { createInMemoryStore } from "delta-agents";
+
+const delta = await createDeltaEngine({
+  store: createInMemoryStore(),
+});
+```
+
+Best for development and testing. Data is lost when the process exits.
+
+### Drizzle SQLite store
+
+Persistent storage using Drizzle ORM with libsql (SQLite). Suitable for single-process deployments.
+
+```ts
+import { createDrizzleStore } from "delta-agents";
+import { createClient } from "@libsql/client";
+
+const client = createClient({ url: "file:./delta.db" });
+const delta = await createDeltaEngine({
+  store: createDrizzleStore({ client }),
+});
+```
+
+The Drizzle adapter requires the Drizzle ORM packages and libsql client as dependencies. The store methods are optional: missing methods skip gracefully with a warning, so the adapter works even when a table has not been migrated yet.
+
+Both adapters support the full set of optional cleanup methods (`deleteTask`, `deleteMessages`, `getTasksOlderThan`, `getTaskIds`), enabling the `delta.cleanup()` lifecycle.
+
+## Reasoner adapters
+
+### OpenAI reasoner
+
+Default when `models` are configured. Uses the OpenAI API or any OpenAI-compatible endpoint.
+
+The engine resolves the model from the agent's `model` field, looks up the `ModelDef` configuration, and calls the provider with the resolved endpoint, API key, and options. If the model's `vision` or `audio` flags are set, the reasoner embeds image or audio attachments as content parts.
+
+### Mock reasoner
+
+For testing without a live model API.
+
+```ts
+import { createMockReasoner } from "delta-agents";
+
+const reasoner = createMockReasoner({
+  respondWith: {
+    kind: "action",
+    name: "lookup-customer",
+    input: { customerId: "C-42" },
+  },
+});
+```
+
+The mock reasoner always returns the configured response, making tests deterministic and fast.
+
+### Custom reasoner
+
+Implement the `ReasonerPort` interface to use any model provider.
+
+```ts
+type ReasonerPort = {
+  reason: (input: ReasonerInput) => Promise<Result<ReasonerDecision, string>>;
+};
+```
+
+## Channel adapters
+
+### Chat SDK channel
+
+Bridges agents to messaging platforms using the Chat SDK ecosystem.
+
+```ts
+import { createChatSdkChannel } from "delta-agents";
+
+const slackChannel = createChatSdkChannel({
+  type: "slack",
+  adapter: slackAdapter,
+});
+
+const supportAgent = delta.agent({
+  name: "support-agent",
+  channels: [slackChannel],
+});
+```
+
+The Chat SDK adapter works with Slack, Teams, Discord, and Telegram through a single interface. Cross-platform conversation continuity is maintained: agents track context regardless of which channel the user switches to.

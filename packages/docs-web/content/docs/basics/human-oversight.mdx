@@ -1,0 +1,60 @@
+---
+title: Human Oversight
+description: How the engine escalates to humans when uncertainty exceeds thresholds
+---
+
+
+The system never assumes perfect autonomy. Every task remains eligible for human intervention: escalation is a first-class execution path, not an error condition.
+
+## Guidance before escalation
+
+The engine guides the agent before it stops the agent. When a governance signal climbs but has not yet crossed an escalation threshold, the engine speaks to the model directly on its next turn with a short, plain instruction: risk is rising, so prefer safe actions; the trust score is slipping, so be precise; most of the budget is spent, so wrap up; the last outcome was surprising, so verify before building on it. The agent gets a chance to self-correct while it still can, which means many tasks steer back to safety without ever needing a human.
+
+Guidance is on by default. Set `guidance: false` in the engine configuration to turn it off. It never overlaps with escalation: each guidance band sits below the threshold that would pause the task, so the same signal is never both a hint and a halt on the same step.
+
+## When escalation happens
+
+The engine escalates to a human when:
+
+- **Risk exceeds threshold**: an action's assessed risk rises above the task's configured threshold. This can happen from the declared risk level or from the engine's continuously updated estimate.
+- **Bayesian surprise**: observed outcomes diverge significantly from expected outcomes. Large divergence indicates model drift, workflow drift, novel conditions, or potentially unsafe behavior.
+- **Budget violations**: an agent attempts to operate beyond its budget ceiling.
+- **Policy violations**: an agent proposes an action that violates organizational policies encoded in the system prompt or governance configuration.
+- **Workflow failures**: automated recovery (retry, restart, resume) is exhausted or inappropriate, and the configured supervision policy calls for escalation.
+- **Explicit configuration**: an action declares `requiresApproval: true`, forcing a human decision before execution.
+
+## Approval flow
+
+When an action requires approval, the engine creates an `ApprovalRequest` and transitions the task to `blocked` status. The task pauses at the governance gateway until a human resolves the request.
+
+```ts
+const pendingApprovals = (await delta.inspect(taskId)).pendingApprovals;
+
+// Approve
+await delta.approve(approvalId);
+await delta.resume(taskId);
+
+// Reject
+await delta.reject(approvalId);
+```
+
+After approval, call `delta.resume(taskId)` to continue execution from the checkpoint. A rejected approval is permanent: the engine never re-opens a rejected approval, so a later resume re-checks the status and blocks again rather than executing.
+
+## Supervision strategies
+
+When a workflow action fails, the engine applies the phase's supervision policy. Strategies range from fully automated recovery to human escalation:
+
+- **Retry**: restart from the failed action with the same input, up to `maxRetries` attempts.
+- **Restart**: restart the phase from the beginning.
+- **Resume**: continue from the latest checkpoint, typically after human approval resolves the issue.
+- **Escalate**: hand off to a human when automated recovery is inappropriate or exhausted.
+- **Abort subtree**: fail the current branch but allow the workflow to continue in other branches.
+- **Abort entire tree**: fail the entire task and all its descendants.
+
+## Reasoner failure recovery
+
+When a model API call fails (network error, rate limit, malformed response), the engine retries with jittered exponential backoff up to the configured `maxAttempts`. When retries are exhausted, the task escalates to a human with a `reasoner-failure` escalation rather than failing outright. The task pauses and is resumable: human oversight is fundamental, and a transient API failure should not destroy work.
+
+## Observing escalations
+
+Every escalation is auditable. Call `delta.inspect(taskId)` to read the full escalation history, including what triggered each escalation and when.

@@ -1,0 +1,49 @@
+---
+title: Introduction
+description: What delta-agents is and why it exists
+---
+
+
+Delta Agents is a framework and runtime for building AI agents that cannot violate policies, exceed budgets, or execute unsafe actions. The model proposes; the engine validates, authorizes, and audits. Every operation runs through a deterministic governance layer that enforces constraints structurally rather than relying on prompt engineering.
+
+The model is responsible for reasoning. The engine is responsible for governance.
+
+## What the engine prevents
+
+Left unchecked, language models drift: they attempt actions that are invalid in the current state, exceed token or time budgets, skip prerequisite steps, or operate outside approved risk boundaries. The governance firewall catches all of this before execution.
+
+- **Prerequisite validation.** An agent cannot process an order before confirming it. The engine refuses actions with unsatisfied prerequisites structurally: the action does not exist in the current state-space.
+- **Budget enforcement.** Token, time, memory, latency, and financial budgets are enforced as ceilings, not suggestions. Agents cannot exceed what the task allows.
+- **Risk gating.** High-risk actions block behind human approval. The engine continuously estimates risk from observed behavior and escalates when unexpected patterns emerge.
+- **Loop detection.** Reasoning spirals and retry storms are caught before they burn budget. The engine terminates execution when consumption outpaces progress.
+- **Schema validation.** Every action input is validated against its declared schema. Malformed or unexpected parameters are rejected before the action function runs.
+- **Action legality.** Only actions valid in the current state-space are exposed. Invalid actions do not exist from the model's perspective: they cannot be requested, let alone executed.
+
+## What the engine provides
+
+Beyond enforcement, the framework lifts the common plumbing that production agents need.
+
+- **Multi-agent orchestration.** Agents delegate to other agents with scoped budgets and bounded supervision trees. Teams coordinate through mailboxes with read receipts and a live roster that tracks per-agent load.
+- **Deterministic workflows.** Multi-phase SOPs run the same way every time, regardless of which model executes them. Conditional branching, declared prerequisites, and configurable supervision strategies keep execution predictable.
+- **Memory and context.** Agents retrieve context from past tasks on demand, take notes on completed work, and improve on the same tasks next time. Time awareness grounds agents in recency, urgency, and sequence.
+- **Messaging channels.** Agents communicate through Slack, Teams, Discord, or Telegram. Execution is decoupled from delivery: agents work independently of channel availability.
+- **Builtin and custom tools.** Web search and document extraction are available as opt-in builtin tools. Custom tools connect agents to external systems without changing the governance model.
+- **Full observability.** Every action, decision, and token is traceable and queryable. Trust and risk are derived from observed behavior, continuously revised from what actually happened.
+- **Commit history.** Agents record completed work with optional notes. The commit history tracks what was done, by whom, and when, enabling audit and learning from past runs.
+
+## How it works
+
+An agent is defined with its allowed actions, workflows, and a role. The engine enforces governance at every step:
+
+1. A goal arrives via `delta.send()`: the engine creates a task with a budget, risk estimate, and identity.
+2. The agent reasons about the goal and proposes an action.
+3. The engine validates the action against the current state-space: schema, prerequisites, budget, risk, and approval gates.
+4. The action executes. The engine checkpoints state, updates trust and risk estimates, and continues.
+5. On completion, the full execution trail is persisted: every action, decision, and token is attributable to the task.
+
+## What delta-agents is not
+
+- Not a no-code agent builder. Delta is a TypeScript framework designed for developers building production systems.
+- Not a model provider. Bring your own API key: OpenAI, OpenRouter, or any OpenAI-compatible endpoint.
+- Not a hosted service. Delta runs in your own Node.js process as an imported library.
+- Not a replacement for human judgment. Human oversight is a first-class component: the engine escalates when uncertainty exceeds configured thresholds.

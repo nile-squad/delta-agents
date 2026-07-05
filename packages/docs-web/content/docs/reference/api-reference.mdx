@@ -1,0 +1,237 @@
+---
+title: API Reference
+description: Complete reference for the delta-agents public API
+---
+
+
+## createDeltaEngine
+
+The single factory that assembles the engine. Returns a `Promise<DeltaEngine>`.
+
+```ts
+import { createDeltaEngine } from "delta-agents";
+
+const delta = await createDeltaEngine(config: DeltaEngineConfig);
+```
+
+## DeltaEngine
+
+The unified facade for authoring and runtime operations.
+
+### Authoring methods
+
+#### `delta.action(def)`
+
+Define an executable operation. Validated and registered immediately.
+
+```ts
+const action = delta.action(def: Action): Action
+```
+
+#### `delta.workflow(def)`
+
+Define an ordered procedure composed of phases.
+
+```ts
+const workflow = delta.workflow(def: Workflow): Workflow
+```
+
+#### `delta.agent(def)`
+
+Define a role with its allowed actions, workflows, and data sources.
+
+```ts
+const agent = delta.agent(def: Agent): Agent
+```
+
+#### `delta.dataSource(def)`
+
+Define a named, owned store of governed CRUD operations.
+
+```ts
+const ds = delta.dataSource(def: DataSource): DataSource
+```
+
+### Runtime methods
+
+#### `delta.deploy(agent)`
+
+Mark a defined agent as active. The agent must already be registered via `delta.agent()`.
+
+```ts
+delta.deploy(agent: Agent): void
+```
+
+#### `delta.send(input)`
+
+Hand a goal to a named agent and drive execution to completion or until blocked. Creates a new TaskID, runs the reasoner loop through governance checks, and returns the terminal result.
+
+```ts
+const result = await delta.send(input: SendInput): Promise<Result<SendResult, string>>
+```
+
+`SendResult.status` is one of: `"completed" | "failed" | "blocked" | "queued" | "pendingCommit"`.
+
+When the agent is already busy, returns `"queued"`: no new task is created, and the goal is queued as a message on the existing task.
+
+#### `delta.approve(approvalId)`
+
+Approve a pending human approval request. After approving, call `delta.resume(taskId)` to continue a blocked task.
+
+```ts
+const approval = await delta.approve(approvalId: string): Promise<Result<ApprovalRequest, string>>
+```
+
+#### `delta.reject(approvalId)`
+
+Reject a pending human approval request. The action stays permanently blocked: the engine never re-opens a rejected approval.
+
+```ts
+const approval = await delta.reject(approvalId: string): Promise<Result<ApprovalRequest, string>>
+```
+
+#### `delta.pause(taskId)`
+
+Suspend a running task and save its current state as a checkpoint.
+
+```ts
+await delta.pause(taskId: string): Promise<Result<void, string>>
+```
+
+#### `delta.resume(taskId)`
+
+Resume a paused or blocked task from its latest checkpoint.
+
+```ts
+const result = await delta.resume(taskId: string): Promise<Result<SendResult, string>>
+```
+
+#### `delta.inspect(taskId)`
+
+Read the full governance state for a task.
+
+```ts
+const state = await delta.inspect(taskId: string): Promise<Result<InspectResult, string>>
+```
+
+Returns task record, execution history, latest checkpoint, escalations, and pending approvals.
+
+#### `delta.lastTask(agentName)`
+
+Return the most recent task for a named agent. No need to store TaskIDs.
+
+```ts
+const task = await delta.lastTask(agentName: string): Promise<Result<Task | null, string>>
+```
+
+#### `delta.roster(query?)`
+
+Team-awareness read-model: who is doing what and how loaded each agent is.
+
+```ts
+const roster = await delta.roster(query?: { team?: string }): Promise<Result<RosterEntry[], string>>
+```
+
+#### `delta.inbox(args)`
+
+An agent's inbox: messages addressed to it, unread first then oldest-first.
+
+```ts
+const messages = await delta.inbox(args: { agent: string }): Promise<Result<Message[], string>>
+```
+
+#### `delta.outbox(args)`
+
+An agent's outbox: messages it sent, newest first.
+
+```ts
+const messages = await delta.outbox(args: { agent: string }): Promise<Result<Message[], string>>
+```
+
+#### `delta.recall(args)`
+
+Recall (unsend) a message, allowed only while unread.
+
+```ts
+const message = await delta.recall(args: { messageId: string }): Promise<Result<Message, string>>
+```
+
+#### `delta.cleanup(options?)`
+
+Manually prune old tasks and messages past retention windows.
+
+```ts
+await delta.cleanup(options?: CleanupOptions): Promise<Result<void, string>>
+```
+
+#### `delta.tools.invoke(args)`
+
+Direct developer-facing invocation for any registered tool (builtin or custom). Does not record tool history or apply loop or budget governance.
+
+```ts
+const result = await delta.tools.invoke(args: InvokeArgs): Promise<Result<unknown, string>>
+```
+
+## Adapter factories
+
+#### `createInMemoryStore()`
+
+Create an in-memory storage adapter. Default when no store is configured.
+
+```ts
+import { createInMemoryStore } from "delta-agents";
+const store = createInMemoryStore();
+```
+
+#### `createDrizzleStore(config)`
+
+Create a persistent SQLite storage adapter using Drizzle ORM.
+
+```ts
+import { createDrizzleStore } from "delta-agents";
+const store = createDrizzleStore({ client, schema });
+```
+
+#### `createMockReasoner(options?)`
+
+Create a mock reasoner for testing.
+
+```ts
+import { createMockReasoner } from "delta-agents";
+const reasoner = createMockReasoner({ respondWith: ... });
+```
+
+#### `createChatSdkChannel(config)`
+
+Create a channel adapter using the Chat SDK for multi-platform messaging.
+
+```ts
+import { createChatSdkChannel } from "delta-agents";
+const channel = createChatSdkChannel({ type: "slack", adapter: slackAdapter });
+```
+
+## Attachment loaders
+
+#### `loadAttachmentFromFile(path)`
+
+Read a local file and return an `AttachmentInput` with base64-encoded data.
+
+```ts
+const attachment = await loadAttachmentFromFile(path: string): Promise<Result<AttachmentInput, string>>
+```
+
+#### `loadAttachmentFromUrl(url)`
+
+Fetch a remote URL and return an `AttachmentInput` with base64-encoded data.
+
+```ts
+const attachment = await loadAttachmentFromUrl(url: string): Promise<Result<AttachmentInput, string>>
+```
+
+## Result utilities
+
+Re-exported from `slang-ts`:
+
+```ts
+import { Ok, Err, option, match, safeTry, pipe } from "delta-agents";
+```

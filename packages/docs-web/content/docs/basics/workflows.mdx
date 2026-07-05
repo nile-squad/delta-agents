@@ -1,0 +1,146 @@
+---
+title: Workflows
+description: Multi-phase deterministic SOPs with conditional branching and supervision
+---
+
+
+A workflow is a structured execution graph composed of phases. Workflows run deterministically: the same workflow produces the same execution order regardless of the model behind it.
+
+## Workflow structure
+
+```ts
+type Workflow = {
+  name: string;
+  description: string;
+  storyline?: string;
+  version: string;
+  phases: Phase[];
+  estimatedCost?: Cost;
+  hooks?: Hooks;
+};
+```
+
+## Phases
+
+A phase is a stage within a workflow containing ordered actions or conditional branches.
+
+```ts
+type Phase = {
+  name: string;
+  description: string;
+  storyline?: string;
+  actions: ActionRef[];
+  checkpoint: boolean;
+  supervision?: SupervisionPolicy;
+  hooks?: Hooks;
+  tools?: string[];
+};
+```
+
+### Sequential execution
+
+Actions in a phase run in declared order by default. The next action begins only after the current action produces a terminal outcome.
+
+```ts
+const fulfillment = delta.workflow({
+  name: "fulfillment",
+  phases: [
+    {
+      name: "settlement",
+      checkpoint: true,
+      actions: [
+        "confirm-order",
+        "process-order",
+        "notify-customer",
+      ],
+    },
+  ],
+});
+```
+
+### Conditional branching
+
+A phase may declare branching based on action outcomes. Branching forms a decision tree where each node routes to the next action based on the result.
+
+```ts
+const fulfillment = delta.workflow({
+  name: "fulfillment",
+  phases: [
+    {
+      name: "settlement",
+      checkpoint: true,
+      actions: [
+        "confirm-order",
+        {
+          action: "process-order",
+          onSuccess: "notify-customer",
+          onFailure: "escalate-to-human",
+        },
+      ],
+    },
+  ],
+});
+```
+
+Branching is declared, not inferred. The engine never invents transitions. Workflow branching is determined solely by declared transitions and observed action outcomes.
+
+### Guard conditions
+
+An optional guard evaluated against task state determines the next action.
+
+```ts
+{
+  action: "process-order",
+  onSuccess: "fulfill-order",
+  onFailure: "notify-failure",
+  when: (ctx) => ctx.task.risk.currentRisk < 3,
+}
+```
+
+## Checkpoints
+
+Checkpoints create recovery boundaries. When a phase declares `checkpoint: true`, the engine persists the full task state after every action in that phase completes.
+
+On failure, the engine can:
+
+- **Retry**: restart from the failed action with the same input (up to `maxRetries` attempts).
+- **Restart**: restart the phase from the beginning.
+- **Resume**: continue from the latest checkpoint after human intervention.
+- **Escalate**: hand off to a human when automated recovery is inappropriate.
+- **Abort subtree**: fail the current branch but allow other branches to continue.
+- **Abort entire tree**: fail the entire task.
+
+## Supervision policy
+
+Each phase can declare how failures are handled.
+
+```ts
+type SupervisionPolicy = {
+  strategy: "retry" | "restart" | "resume" | "escalate" | "abort-subtree" | "abort-tree";
+  maxRetries: number;
+};
+```
+
+The default strategy is `retry` with 3 attempts. The configured strategy applies consistently for the lifetime of the task.
+
+## Running a workflow
+
+Pass the workflow name to `delta.send()` to execute deterministically through the workflow engine rather than the free reasoner loop.
+
+```ts
+const result = await delta.send({
+  goal: "Process order ORD-42",
+  agentName: "support-agent",
+  workflow: "fulfillment",
+  input: { orderId: "ORD-42" },
+  budget: { tokens: 5000, durationMs: 60_000 },
+});
+```
+
+When a workflow is assigned, the task runs without the reasoner: phases execute in declared order. Workflow-less tasks use the reasoner loop, where the model plans and proposes actions.
+
+## Storylines
+
+Workflows and phases accept an optional `storyline` field: free-prose narrative of the ideal user flow. Storylines are injected into `ActionContext` so action functions and hooks can adapt their behavior (tone, pacing, what to emphasize).
+
+A `description` says what a workflow does. A `storyline` says how it should feel to the user. The distinction lets a developer declare the experiential arc without coupling it to the functional contract. The engine enforces the functional contract regardless; the storyline guides behavior within that enforcement.

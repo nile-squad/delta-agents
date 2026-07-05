@@ -1,0 +1,106 @@
+---
+title: Agents
+description: Define agents with roles, actions, workflows, and capabilities
+---
+
+
+An agent is a named role with a set of allowed actions, workflows, skills, and channels. The agent defines what the model can do; the engine defines what the model will be allowed to do at any given state.
+
+## Agent structure
+
+```ts
+type Agent = {
+  name: string;
+  description: string;
+  role: string;
+  rolePrompt: string;
+  model?: string;
+  contextWindow?: number;
+  actions: Action[];
+  workflows?: Workflow[];
+  skills?: Skill[];
+  channels?: Channel[];
+  team?: string;
+};
+```
+
+- **`name`**: unique identifier for the agent. Referenced in `delta.send()` and delegation targets.
+- **`description`**: what this agent does. Visible to other agents for delegation decisions.
+- **`role`**: the agent's functional role (e.g. "Customer Support Specialist").
+- **`rolePrompt`**: behavioral instructions that guide how the agent operates.
+- **`model`**: named model configuration from the engine's `models` list. Omit to use the default model.
+- **`actions`**: the operations this agent is permitted to perform.
+- **`workflows`**: structured multi-phase procedures the agent follows.
+- **`skills`**: knowledge resources the engine reads at runtime and injects into the agent's context.
+- **`channels`**: messaging platforms the agent communicates through.
+- **`team`**: group name for multi-agent coordination. Agents on the same team share a roster and mailbox awareness.
+
+## Defining an agent
+
+```ts
+const supportAgent = delta.agent({
+  name: "support-agent",
+  description: "Handles customer support requests",
+  role: "Customer Support Specialist",
+  rolePrompt: "Help customers resolve their issues.",
+  actions: [lookupCustomer, notifyCustomer],
+  workflows: [customerSupportWorkflow],
+  skills: [productKnowledge],
+  team: "customer-support",
+});
+```
+
+The engine validates the agent definition at registration time. Model names are checked against the configured models list, action and workflow names must be unique, and skill paths must reference valid files.
+
+## Per-agent model selection
+
+Each agent can use a different model. Define multiple models in engine configuration and assign them per agent.
+
+```ts
+const delta = await createDeltaEngine({
+  models: [
+    { name: "fast", model: "gpt-4o-mini", default: true },
+    { name: "reasoning", model: "o3-mini" },
+  ],
+});
+
+const triageAgent = delta.agent({
+  name: "triage",
+  model: "fast", // gpt-4o-mini: fast, cheap
+});
+
+const complexAgent = delta.agent({
+  name: "analyst",
+  model: "reasoning", // o3-mini: slower, more capable
+});
+```
+
+Agents that do not specify a model use the engine's default. Switching models requires no code changes: change the configuration, not the agent definitions.
+
+## Deploying an agent
+
+An agent must be deployed before it can receive tasks. Deploying registers the agent and makes it active.
+
+```ts
+delta.deploy(supportAgent);
+```
+
+Deploy validates that all referenced actions, workflows, and model names exist. If an action references an undeclared workflow or an unknown model, the engine throws at deploy time: not when a task arrives.
+
+## Agent identity and task retrieval
+
+Every task belongs to exactly one agent. The engine provides retrieval by agent identity so callers do not need to store TaskIDs.
+
+```ts
+const lastTask = await delta.lastTask("support-agent");
+```
+
+Returns the most recent active or completed task for the named agent. If the agent has no tasks, returns `Ok(null)`.
+
+## Agent lifecycle
+
+- An agent is defined via `delta.agent()`.
+- An agent is deployed via `delta.deploy()`.
+- A deployed agent receives goals via `delta.send()`.
+- An agent's tasks are inspectable via `delta.inspect()`.
+- An agent's current load is visible via `delta.roster()`.

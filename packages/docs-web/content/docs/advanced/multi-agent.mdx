@@ -1,0 +1,78 @@
+---
+title: Multi-Agent
+description: Delegation, supervision trees, team roster, and mailboxes
+---
+
+
+Delta agents coordinate through delegation, bounded supervision trees, mailbox-based communication, and a live team roster. Agents delegate to other agents; the engine governs every interaction.
+
+## Team roster
+
+Every agent's teammates and their current load are visible to the agent in its reasoning context. The roster reports per-agent activity: the current goal or phase of the major task, the number of active subtasks, and whether the agent is overloaded.
+
+An agent is overloaded when all execution slots are used or it carries a queued backlog. The roster helps agents route delegation and mentions toward idle teammates and away from overloaded ones.
+
+Developers can also read the roster:
+
+```ts
+const teamStatus = await delta.roster({ team: "customer-support" });
+```
+
+The roster is derived from live task and message state: never stored, always consistent, survives restarts with no bookkeeping to drift.
+
+## Bounded delegation
+
+Agents delegate to other agents through a bounded supervision tree. The structure guarantees predictable cost and risk profiles:
+
+- One active parent task per supervisor.
+- Up to two active subtasks.
+- Additional work enters a FIFO queue.
+- No additional task may execute until a slot becomes available.
+
+Subtasks inherit scoped budgets and permissions from their parent. A subtask never gains authority beyond the parent's scope. If a parent task is aborted, all descendant tasks are aborted: the abort cascades down the tree.
+
+## Agent mailboxes
+
+Every agent has a durable inbox and outbox. Messages are queued and attributable to tasks. Delivery is turn-only: a message never interrupts an agent mid-task; it waits until the recipient's next turn folds it into context.
+
+### Inbox
+
+Messages addressed to an agent, unread first then oldest-first. Recalled messages are excluded.
+
+```ts
+const inbox = await delta.inbox({ agent: "support-agent" });
+```
+
+### Outbox
+
+Messages the agent sent, newest first, including recalled messages.
+
+```ts
+const sentMessages = await delta.outbox({ agent: "support-agent" });
+```
+
+### Read receipts
+
+Reading stamps `readAt` on the message. The receiver sees it on their inbox; the sender sees it on their outbox. A sender can tell whether, and when, a message was read.
+
+### Recall
+
+An agent can unsend a message, but only while it is still unread. The turn-only model gives a clean window: the sender can retract a message before the recipient's next turn reads it. A recalled message is removed from the inbox and excluded from delivery, but remains visible as recalled in the sender's outbox.
+
+```ts
+const recalled = await delta.recall({ messageId: "msg_abc123" });
+```
+
+### Inbox capacity
+
+A configurable per-agent `inboxCap` bounds inbox growth. Once exceeded, the oldest read messages are evicted first. Unread messages are never dropped.
+
+## Multi-agent communication
+
+Agents can send messages to each other through the mailbox system. Communication is task-attributable, queued, and turn-only: consistent with the no-interrupt model. Messages carry payloads and are delivered when the recipient's next reasoning turn folds them into context.
+
+When an agent is busy, a new goal from another agent is queued as a message on its existing task rather than creating a new task. The engine never creates a new task for an agent that already has active or queued work.
+
+## Teams
+
+Agents can be grouped into named teams. Team membership scopes roster visibility and mailbox awareness. Agents on the same team see each other's load and can delegate intelligently. Team-less agents peer with everyone.

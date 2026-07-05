@@ -1,0 +1,139 @@
+---
+title: Observability
+description: Inspect task state, read audits, query logs, and monitor agent health
+---
+
+
+Every action, decision, and token is traceable and attributable. Delta provides inspection, logging, diagnostics, and cleanup capabilities for understanding agent behavior and maintaining system health.
+
+## Task inspection
+
+Call `delta.inspect(taskId)` to read the full governance state for any task:
+
+```ts
+const state = await delta.inspect(taskId);
+
+if (state.isOk) {
+  const { task, executions, latestCheckpoint, escalations, pendingApprovals } = state.value;
+  console.log(task.status);         // current execution status
+  console.log(executions);          // every action execution record
+  console.log(latestCheckpoint);    // latest recoverable state boundary
+  console.log(escalations);         // all escalation events
+  console.log(pendingApprovals);    // approvals waiting for a human decision
+}
+```
+
+All entries are TaskID-attributable: every execution, escalation, and approval traces back to the task that produced it.
+
+### Task record
+
+The task record carries current status, budget state, risk estimate, trust score, and timestamps. Status values:
+
+- **`running`**: actively executing.
+- **`completed`**: all actions ran and terminated normally.
+- **`failed`**: non-recoverable failure (budget exhaustion, unrecoverable error).
+- **`blocked`**: waiting on a human decision (approval gate).
+- **`pendingCommit`**: waiting for the agent to commit after a workflow run.
+- **`aborted`**: terminated by an abort cascade.
+- **`paused`**: suspended by `delta.pause()`.
+
+### Execution history
+
+Every action execution is recorded with its start time, end time, and outcome. Executions are ordered by creation and include the action name, the task it belongs to, its cost, and its status.
+
+## Trust and risk
+
+Trust and risk are derived from observed behavior. The engine continuously revises both from what actually happened: reliable agents gain autonomy, risky agents get more oversight.
+
+- **Trust** accumulates with successful executions and decays rapidly on failure. Unexpected failures incur substantially larger penalties than successful outcomes provide rewards. The system intentionally biases toward caution.
+- **Risk** is continuously estimated from predicted progress, observed progress, time consumption, token consumption, and tool outcomes. Large deviations between expected and observed outcomes increase risk.
+
+Call `delta.inspect(taskId)` to read the current trust score and risk estimate for any task.
+
+## Logging
+
+The engine creates a per-instance logger at construction time. The logger offers multiple output modes:
+
+- **Dev mode (default)**: colorized pino-pretty output to console at info level.
+- **Production mode**: configurable drain: file (daily rotation), SQLite (queryable), or custom.
+
+```ts
+const delta = await createDeltaEngine({
+  logger: {
+    mode: "prod",
+    level: "warn",
+    drain: {
+      type: "file",
+      dir: "./logs",
+    },
+  },
+});
+```
+
+Log entries carry the full context needed to diagnose issues: module name, task ID, error cause, and function. Log drain failures never throw: a logger that destabilizes the system it audits is worse than a missing entry.
+
+## Diagnostics
+
+Diagnostics provide structured, opt-in event emission for debugging the engine itself. Each module can be independently enabled:
+
+```ts
+const delta = await createDeltaEngine({
+  diagnostics: {
+    actions: true,
+    workflows: true,
+    governance: true,
+    supervision: true,
+    memory: true,
+    comms: true,
+    tools: true,
+    engine: true,
+  },
+});
+```
+
+When a module is enabled, it emits structured events (timing, decision traces, counts) to the logger at debug or trace level. When disabled, the path is provably zero overhead: the module never touches the logger.
+
+## Commit history
+
+Completed work is recorded as commits. The commit history tracks what was done, by whom, and when, enabling audit and learning from past runs.
+
+## Agent performance and benchmarks
+
+Track agent and workflow performance with derived read-models computed on-demand from task history. Rank agents by success rate or trustworthiness, profile cost and duration patterns, and measure workflow efficiency per phase.
+
+```ts
+// Top agents by completed tasks, success rate, or trust score
+const topAgents = await delta.topAgents({
+  by: "completedTasks",  // "completedTasks" | "successRate" | "trustScore"
+  limit: 10
+});
+
+// Performance metrics for one agent: costs, durations, success rate, trust trajectory
+const agentStats = await delta.agentStats({
+  agent: "support-agent"
+});
+
+// Workflow benchmark: runs, per-phase durations, overall success rate and cost
+const workflowStats = await delta.workflowStats({
+  workflow: "refund-flow"
+});
+```
+
+All three read-models return zero-valued stats for unknown agents or workflows, not errors. They are derived from persisted tasks and executions, never stored separately, so they always reflect the current state of the system.
+
+## Cleanup
+
+The engine provides two levels of cleanup for managing accumulated state:
+
+**Opportunistic cleanup** runs automatically at the start of every `send()` and `inspect()` call, evicting expired cache entries. Synchronous and cheap.
+
+**Manual cleanup** prunes completed or failed tasks and consumed messages past their retention windows:
+
+```ts
+await delta.cleanup({
+  taskRetentionMs: 7 * 24 * 60 * 60 * 1000, // keep tasks for 7 days
+  messageRetentionMs: 30 * 24 * 60 * 60 * 1000, // keep messages for 30 days
+});
+```
+
+Destructive store operations are opt-in. Missing retention parameters skip the corresponding pruning. Cache eviction runs by default but can be disabled with `evictCache: false`.

@@ -1,0 +1,123 @@
+---
+title: Actions
+description: Define executable operations with schemas, prerequisites, and hooks
+---
+
+
+An action is the smallest executable unit in delta-agents. It has a name, a description, a Zod schema for input validation, and a function that returns an explicit `Ok` or `Err` Result.
+
+## Action structure
+
+```ts
+type Action = {
+  name: string;
+  description: string;
+  schema: ZodObject;
+  risk?: 1 | 2 | 3 | 4 | 5;
+  estimatedCost?: Cost;
+  requiresApproval?: boolean;
+  prerequisites?: {
+    actions?: string[];
+    workflows?: string[];
+  };
+  hooks?: Hooks;
+  tools?: string[];
+  fn: (data: ActionInput, ctx: ActionContext) => Promise<ResultType>;
+};
+```
+
+## Defining an action
+
+```ts
+const confirmOrder = delta.action({
+  name: "confirm-order",
+  description: "Confirm an order with the customer",
+  risk: 2,
+  schema: z.object({ orderId: z.string() }),
+  fn: async ({ orderId }) => Ok(await orders.confirm(orderId)),
+});
+```
+
+The engine validates every call against the schema before the function runs. Malformed input never reaches the action function.
+
+## Risk scoring
+
+Actions may declare an anticipated risk level from 1 to 5.
+
+- **1**: safe, routine operation with no side effects.
+- **5**: dangerous or irreversible action.
+
+Risk seeds the Kalman state estimator so the engine starts from a calibrated expectation. The engine continuously refines its own estimate from observed behavior and may raise risk above the declared level when evidence warrants it. A low declared risk never overrides an observed danger.
+
+Actions at or above the task's risk threshold require human approval before execution.
+
+## Prerequisites
+
+An action may declare prerequisites that must complete before the action becomes legal. Prerequisites can be other actions or entire workflows.
+
+```ts
+const processOrder = delta.action({
+  name: "process-order",
+  description: "Charge and process a confirmed order",
+  risk: 4,
+  requiresApproval: true,
+  prerequisites: {
+    actions: ["confirm-order"],
+  },
+  schema: z.object({ orderId: z.string() }),
+  fn: async ({ orderId }) => Ok(orders.process(orderId)),
+});
+```
+
+With unsatisfied prerequisites, the action does not exist in the current state-space. The engine never exposes or executes it. An agent cannot process an order before confirming it: enforced structurally, not by instruction.
+
+## Hooks
+
+Hooks allow observation and preparation around execution without bypassing governance. Three hook points are available:
+
+- **`before`**: runs before the action executes. Use for logging, setup, or validation that the action itself should not own.
+- **`after`**: runs after a successful action outcome.
+- **`onError`**: runs when the action returns an `Err` outcome.
+
+```ts
+const processOrder = delta.action({
+  name: "process-order",
+  hooks: {
+    before: async (ctx) => audit.log("process-order:start", ctx),
+    onError: async (ctx) => alerts.page("process-order:failed", ctx),
+  },
+  // ...
+});
+```
+
+Hooks observe and prepare. They never authorize actions, never bypass schema validation, risk checks, budget checks, or approval gates, and never grant a capability the engine would otherwise deny.
+
+## Action results
+
+Every action function returns a `Result`: either `Ok` carrying the success value or `Err` carrying the failure value. The engine never infers success from the absence of a thrown error.
+
+This explicit contract drives trust updates, conditional branching, supervision decisions, and cost friction detection: all of which require a clear pass or fail signal.
+
+## Action context
+
+Action functions receive an `ActionContext` with runtime information:
+
+```ts
+type ActionContext = {
+  taskId: string;
+  executionId: string;
+  agentName: string;
+  phase?: string;
+  storyline?: string;
+  phaseStoryline?: string;
+  availableSkills?: Array<{ name: string; description: string; content?: string }>;
+  communicate?: (channelType: string, body: string) => Promise<ResultType>;
+  remember?: (content: string, kind?: string) => Promise<ResultType>;
+};
+```
+
+The engine assembles the context: the developer never constructs it.
+
+## Action discovery
+
+The engine exposes only actions that are valid in the current state-space. The model sees actions whose prerequisites are satisfied, whose risk is within threshold, and whose budget permits execution. Invalid actions are not visible: the model cannot request what it cannot see.

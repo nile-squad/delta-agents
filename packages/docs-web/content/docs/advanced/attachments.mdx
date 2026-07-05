@@ -1,0 +1,66 @@
+---
+title: Attachments
+description: Send images, audio, and files to agents for processing
+---
+
+
+Callers can attach images, audio, or files to a goal through `delta.send()`. Attachments give the agent access to content beyond plain text without changing the state-space, budget, or risk model: they are input, not action.
+
+## Attachment kinds
+
+```ts
+type AttachmentInput = {
+  kind: "image" | "file" | "audio";
+  mimeType: string;
+  data?: string;    // base64-encoded content
+  url?: string;      // remote URL (image only: audio requires data)
+  name?: string;     // filename for audit and display
+};
+```
+
+The kind is explicit and required: the caller states intent; it is never inferred from mimeType (a PDF could contain images; inference would be ambiguous). The engine assigns the attachment's ID: callers never self-assign one, the same rule that governs TaskIDs.
+
+## Images
+
+Images are embedded as real vision content in the reasoner call. The model literally sees the image. The agent's resolved model must declare `vision: true`: the engine rejects an image attachment sent to a non-vision model before any task is created, with a deterministic failure rather than a silent drop.
+
+## Audio
+
+Audio attachments are embedded as `input_audio` content parts when the model declares `audio: true`. Audio has a narrower path than images:
+
+- Audio requires inline `data` (base64-encoded). The provider's audio content part accepts no URL, so an audio attachment with only `url` is rejected at `send()` time.
+- The mimeType must map to a supported format (wav or mp3). An unmappable mimeType is rejected before task creation.
+
+## Files
+
+Files are never sent to the model as raw bytes. No assumption is made that every provider can ingest arbitrary file content as part of a chat request. Instead, the model sees a short reference (id, mimeType, name) and can read the file's contents through a tool built for that purpose, such as the builtin `document-extract` tool.
+
+Reading a file is a tool's job. Seeing or hearing image and audio content is the model's.
+
+## Attaching content to a send
+
+```ts
+import { loadAttachmentFromFile, loadAttachmentFromUrl } from "delta-agents";
+
+const imageAttachment = await loadAttachmentFromFile("/path/to/photo.png");
+const pdfAttachment = await loadAttachmentFromUrl("https://example.com/doc.pdf");
+
+const result = await delta.send({
+  goal: "Extract and summarize the information from these files",
+  agentName: "analyst-agent",
+  attachments: [imageAttachment, pdfAttachment],
+  budget: { tokens: 10000, durationMs: 120_000 },
+});
+```
+
+## Attachment lifecycle
+
+Attachments persist for the duration of the task run. Every reasoner turn is a fresh reconstruction of context from current task state, so an attachment stays available to be shown again on a later turn rather than being consumed once and discarded.
+
+## Resolving bytes
+
+The engine never touches the filesystem and never makes an outbound network call to resolve an attachment's content. Callers resolve bytes explicitly before calling `send()`, optionally through the built-in loaders. This keeps `send()` free of I/O side effects.
+
+## Capability enforcement
+
+Model capability is declared, not assumed. A `ModelDef` may declare `vision: true` or `audio: true`. Sending an image or audio attachment to an agent whose model does not declare the matching capability is rejected before task creation: a deterministic failure, not a silent drop. The engine owns enforcement, not the model's actual capability at request time.

@@ -1,0 +1,73 @@
+---
+title: Channels
+description: Connect agents to messaging platforms like Slack, Teams, Discord, and Telegram
+---
+
+
+Delta agents communicate through messaging platforms such as Slack, Teams, Discord, and Telegram. Agents operate independently of channel availability: execution is decoupled from delivery.
+
+## How channels work
+
+A channel is a bridge between the agent and an external messaging platform. The agent sends a message through the channel, and the channel delivers it to the platform. Responses from the platform arrive as new messages that the agent processes on its next turn.
+
+```ts
+type Channel = {
+  type: SupportedChannels;
+  enabled: boolean;
+  sendMessage: (message: string, ctx: ChannelContext) => Promise<ResultType>;
+  retrieveMessages?: (ctx: ChannelContext) => Promise<ResultType>;
+  replyMessage?: (id: string, message: string, ctx: ChannelContext) => Promise<ResultType>;
+};
+```
+
+## Defining channels on an agent
+
+Channels are declared per agent. An agent can have multiple channels, each connecting to a different platform.
+
+```ts
+const supportAgent = delta.agent({
+  name: "support-agent",
+  channels: [
+    slackChannel,
+    teamsChannel,
+    discordChannel,
+  ],
+});
+```
+
+## Chat SDK integration
+
+Delta provides a `createChatSdkChannel` adapter that bridges agents to the [Chat SDK](https://www.npmjs.com/package/chat) ecosystem. This single adapter works across multiple platforms: Slack, Teams, Discord, Telegram: without per-platform code.
+
+```ts
+import { createChatSdkChannel } from "delta-agents";
+
+const slackChannel = createChatSdkChannel({
+  type: "slack",
+  adapter: slackAdapter,
+});
+```
+
+## Cross-platform continuity
+
+A conversation can flow across platforms. An agent that starts in Slack and continues in Telegram maintains context: messages are task-attributable and the engine tracks the conversation across channels. The agent does not lose state when a user switches platforms.
+
+## Channel availability
+
+Agent execution is decoupled from channel delivery. If a channel is temporarily unavailable (network issue, platform outage), the agent continues working. Messages queue in the agent's outbox and deliver when the channel recovers.
+
+## Communication from actions
+
+Actions can send messages through channels using `ctx.communicate()`:
+
+```ts
+const notifyCustomer = delta.action({
+  name: "notify-customer",
+  schema: z.object({ message: z.string() }),
+  fn: async ({ message }, ctx) => {
+    return ctx.communicate("slack", message);
+  },
+});
+```
+
+The `communicate` method routes through the agent's configured channels and is governed by the same authorization and budget constraints as any other operation.

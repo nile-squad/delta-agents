@@ -1,0 +1,92 @@
+---
+title: Cost and Budget
+description: Multi-axis cost model and budget enforcement across tokens, time, memory, and money
+---
+
+
+Delta agents operate within explicit budget ceilings. Every task declares a budget at `send()` time, and the engine enforces it structurally: agents cannot exceed what the task allows.
+
+## Cost model
+
+Cost is a multi-axis vector that tracks resource consumption across several dimensions:
+
+```ts
+type Cost = {
+  tokens: number;
+  durationMs: number;
+  memory?: number;
+  latency?: number;
+  money?: Money;
+  content?: ContentCost;
+};
+
+type Money = {
+  value: number;
+  currency: string; // ISO 4217, e.g. "USD", "EUR", "NGN"
+};
+
+type ContentCost = {
+  count: number;
+  bytes: number;
+  unitType?: "tokens" | "pages" | "images" | "bytes";
+  itemSize?: number;
+};
+```
+
+- **`tokens`**: model API token consumption. Always tracked, always enforced.
+- **`durationMs`**: wall-clock execution time. Always tracked, always enforced.
+- **`memory`**: memory retrieved or stored during execution. Optional axis.
+- **`latency`**: time spent waiting on external operations. Optional axis.
+- **`money`**: financial cost as an explicit value and currency pair. Optional axis. A bare number would assume a single currency; the explicit pair means governance math never silently mixes regions.
+- **`content`**: attachment or content resource consumption. Populated but not yet enforced by any budget axis.
+
+Budget enforcement is per-axis. An axis that is not declared in the budget is unlimited on that axis.
+
+## Setting a budget
+
+Budgets are set per task at `delta.send()`:
+
+```ts
+const result = await delta.send({
+  goal: "Process order ORD-42",
+  agentName: "support-agent",
+  budget: {
+    tokens: 5000,
+    durationMs: 60_000,
+  },
+});
+```
+
+The default budget is `{ tokens: 10_000, durationMs: 300_000 }` when none is specified.
+
+## Budget enforcement
+
+The engine checks budget before every action execution. If the remaining budget is insufficient to cover the action's estimated or observed cost, the action is blocked. The task transitions to `failed` status with budget exhaustion as the reason.
+
+Budget enforcement operates at every governance gateway check, alongside schema validation, prerequisite checking, risk assessment, and approval gates. The sequence is deterministic: budget is checked before any action executes, not after.
+
+## Anticipated cost
+
+Actions and workflows may declare an `estimatedCost`: the developer's expectation of what the operation should consume.
+
+```ts
+const lookupCustomer = delta.action({
+  name: "lookup-customer",
+  estimatedCost: { tokens: 500, durationMs: 2000 },
+  // ...
+});
+```
+
+Anticipated cost seeds the engine's cost estimator with a prior, so the engine starts from a calibrated expectation instead of a cold one. The engine continuously refines its estimate from observed behavior and may adjust when actual consumption diverges from the estimate.
+
+## Cost in delegation
+
+When a parent delegates work to a subtask, it reserves a portion of its own budget for the child. The subtask receives a scoped budget and cannot exceed it. Any remaining budget at the child's completion is refunded to the parent. This prevents a runaway subtask from consuming the entire parent budget.
+
+## Budget in tool execution
+
+Tools may declare an optional budget for cost tracking. Unlike action budgets, tool budgets are purely advisory for cost awareness. When a tool's budget is exceeded, the engine blocks further calls and returns a humanized message.
+
+## Observing costs
+
+The task state snapshot carries the full spent cost at any point. Call `delta.inspect(taskId)` to read the current budget state, including what has been spent and what remains.

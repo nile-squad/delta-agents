@@ -1,0 +1,78 @@
+---
+title: Core Concepts
+description: "The mental model behind delta-agents: governance, agents, actions, and workflows"
+---
+
+
+## The engine owns enforcement
+
+The agent may propose actions. Only the engine may authorize them. Safety, policy, budget, risk, and workflow validation are enforced by the engine rather than learned by the model.
+
+Models are probabilistic reasoners. Governance requires deterministic guarantees. Separating reasoning from enforcement means the model can focus on what it does best: understanding goals and planning: while the engine handles the constraints that require mathematical certainty.
+
+## Actions
+
+An action is the smallest executable unit. It has a name, a description, a Zod schema for input validation, and a function that returns an explicit `Ok` or `Err` Result.
+
+Actions may declare:
+
+- **Risk**: an integer from 1 (safe) to 5 (dangerous or irreversible). Seeds the engine's risk estimator; high-risk actions can require human approval.
+- **Prerequisites**: actions or workflows that must complete before this action becomes legal. The engine blocks execution until prerequisites are satisfied, exposing only valid actions to the model.
+- **Estimated cost**: anticipated token, time, or financial consumption. Seeds the cost estimator so the engine starts from a calibrated expectation.
+- **Hooks**: `before`, `after`, and `onError` callbacks that observe and prepare without authorizing actions or bypassing governance.
+
+## Agents
+
+An agent is a named role with a set of allowed actions, optional workflows, skills, and channels. The agent defines what the model can do. The engine defines what the model will be allowed to do at any given state.
+
+An agent carries:
+
+- **Role and role prompt**: the agent's identity and behavioral instructions.
+- **Actions**: the operations the agent is permitted to perform.
+- **Workflows**: structured multi-phase procedures the agent follows.
+- **Skills**: knowledge resources the agent reads at runtime.
+- **Channels**: messaging platforms the agent communicates through.
+- **Team**: a group name for multi-agent coordination. Agents on the same team share a roster and mailbox awareness.
+
+## Workflows
+
+A workflow is a structured execution graph composed of phases. Each phase contains ordered actions or conditional branches. Workflows run deterministically: the same workflow produces the same execution order regardless of the model behind it.
+
+Phases support:
+
+- **Sequential execution**: actions in declared order.
+- **Conditional branching**: route to the next action based on an action's `Ok` or `Err` outcome, or a guard condition evaluated against task state.
+- **Checkpointing**: configurable recovery boundaries. On failure, the engine retries, restarts, resumes, or escalates from the latest checkpoint.
+- **Supervision**: retry, restart, resume, escalate, or abort strategies configured per phase.
+
+## Governance layer
+
+Every action passes through the governance gateway before execution. The gateway performs these checks in sequence:
+
+1. **Schema validation**: input must match the action's Zod schema.
+2. **Prerequisite check**: declared prerequisites must be satisfied.
+3. **Risk assessment**: current risk must not exceed the task's risk threshold. If it does, the action requires human approval.
+4. **Budget check**: remaining budget must cover the action's estimated or observed cost.
+5. **Approval gate**: if `requiresApproval` is set, or risk exceeds threshold, the action blocks until a human approves or rejects.
+
+If any check fails, the action is blocked with a deterministic outcome: the engine never silently drops or bypasses a governance check.
+
+## Tasks
+
+A task is the unit of execution and the security boundary. Every action, memory access, message, and escalation belongs to exactly one TaskID. TaskIDs are cryptographically random and unguessable: authorization, budgeting, checkpointing, delegation, and supervision all attach to them.
+
+The engine never creates a new task for an agent that already has active or queued work. New goals attach to the existing task or wait.
+
+## Delegation
+
+Agents delegate to other agents through a bounded supervision tree. Each parent can have at most two active subtasks; additional work enters a FIFO queue. Subtasks inherit scoped budgets and permissions from their parent: they never gain authority beyond the parent's scope.
+
+## Tools
+
+Tools are reusable, stateless utilities registered at the engine level. Unlike actions, tools have no prerequisites, no risk, and no state impact. They inform the model without changing business state.
+
+Tools use progressive disclosure: the model sees names and descriptions on every turn, but fetches schemas and execution history on demand. This keeps the context window efficient.
+
+## Human oversight
+
+The system never assumes perfect autonomy. Escalation can occur from risk thresholds, Bayesian surprise, policy violations, budget violations, workflow failures, or explicit configuration. Every escalation is auditable.

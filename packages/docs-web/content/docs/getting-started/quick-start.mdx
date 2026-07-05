@@ -1,0 +1,98 @@
+---
+title: Quick Start
+description: Build and run your first governed agent
+---
+
+
+This guide walks through defining an agent, giving it actions, deploying it, and sending a task. The full example runs in under 30 lines.
+
+## Create the engine
+
+The engine is the single entry point. It carries model configuration, persistence, and all governance machinery.
+
+```ts
+import { createDeltaEngine, Ok } from "delta-agents";
+import { z } from "zod";
+
+const delta = await createDeltaEngine({
+  apiKey: process.env.OPENAI_API_KEY,
+  models: [{ name: "fast", model: "gpt-4o-mini", default: true }],
+});
+```
+
+## Define an action
+
+An action is a named operation with a schema and an execution function. The engine validates every call against the schema before the function runs.
+
+```ts
+const lookupCustomer = delta.action({
+  name: "lookup-customer",
+  description: "Look up a customer account by ID",
+  risk: 1,
+  schema: z.object({ customerId: z.string() }),
+  fn: async ({ customerId }) => Ok(await db.customer.find(customerId)),
+});
+```
+
+Actions return explicit `Ok` or `Err` results. The engine never infers success from the absence of a thrown error.
+
+## Define an agent
+
+An agent is a role with a set of allowed actions, a description of its responsibilities, and behavioral instructions.
+
+```ts
+const supportAgent = delta.agent({
+  name: "support-agent",
+  description: "Handles customer support requests",
+  role: "Customer Support Specialist",
+  rolePrompt: "Help customers resolve their issues.",
+  actions: [lookupCustomer],
+});
+```
+
+An agent can also declare workflows, skills, channels, and a team for multi-agent coordination.
+
+## Deploy and send
+
+Deploying makes the agent active. Sending a goal creates a task, runs the reasoner loop through governance checks, and returns the result.
+
+```ts
+delta.deploy(supportAgent);
+
+const result = await delta.send({
+  goal: "Look up customer C-42",
+  agentName: "support-agent",
+  input: { customerId: "C-42" },
+  budget: { tokens: 5000, durationMs: 30_000 },
+});
+
+if (result.isOk) {
+  console.log(result.value.status); // "completed" | "blocked" | "failed" | "queued"
+}
+```
+
+The `send` call returns a `Result`: use `result.isOk` / `result.isErr` to check, and `match(result, { Ok: ..., Err: ... })` for exhaustive handling.
+
+## What the engine did
+
+Behind the scenes, the engine:
+
+- Created a cryptographically random TaskID as the security boundary for governance.
+- Assigned the task to `support-agent`.
+- Resolved the model (gpt-4o-mini) and called the reasoner with the goal.
+- Received the agent's action proposal.
+- Validated the input schema against the action definition.
+- Checked budget (5,000 tokens, 30 seconds): the agent cannot exceed either.
+- Executed the action function.
+- Updated trust and risk estimates from the outcome.
+- Checkpointed the final state.
+- Returned the result.
+
+The model never has access to operations it was not assigned. It cannot call `lookup-customer` with missing or invalid parameters. It cannot exceed the token budget. All enforced structurally, not by prompt engineering.
+
+## Next steps
+
+- [Core concepts](/docs/getting-started/core-concepts): the mental model behind agents, actions, workflows, and governance.
+- [Agents](/docs/basics/agents): defining agents with roles, skills, and teams.
+- [Actions](/docs/basics/actions): actions, prerequisites, hooks, and risk scoring.
+- [Workflows](/docs/basics/workflows): multi-phase deterministic SOPs.
