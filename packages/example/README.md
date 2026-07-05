@@ -1,6 +1,6 @@
 # delta-agents-example
 
-A reference implementation showing how to build with [delta-agents](https://github.com/hussein-kizz/delta-agents), a deterministic governance/control-plane engine for AI agents.
+A reference implementation showing how to build with [delta-agents](https://github.com/nile-squad/delta-agents), a deterministic governance/control-plane engine for AI agents.
 
 ## Scenario
 

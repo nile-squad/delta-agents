@@ -27,13 +27,13 @@
   "engines": {
     "node": ">=18"
   },
-  "homepage": "https://github.com/hussein-kizz/delta-agents#readme",
+  "homepage": "https://github.com/nile-squad/delta-agents#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hussein-kizz/delta-agents.git"
+    "url": "git+https://github.com/nile-squad/delta-agents.git"
   },
   "bugs": {
-    "url": "https://github.com/hussein-kizz/delta-agents/issues"
+    "url": "https://github.com/nile-squad/delta-agents/issues"
   },
   "keywords": [
     "ai-agents",
