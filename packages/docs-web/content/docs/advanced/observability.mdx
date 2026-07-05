@@ -135,7 +135,7 @@ const unsubscribe = delta.events.on("approval-requested", (data) => {
 unsubscribe();
 ```
 
-Events that involve human oversight — approvals, escalations, and task outcomes — always fire, regardless of configuration. Engine-internal events (step timing, action execution) respect the `diagnostics.engine` toggle so they can be enabled for debugging and disabled in production.
+Events that involve human oversight (approvals, escalations, and task outcomes) always fire, regardless of configuration. Engine-internal events (step timing, action execution) respect the `diagnostics.engine` toggle so they can be enabled for debugging and disabled in production.
 
 Available event types:
 

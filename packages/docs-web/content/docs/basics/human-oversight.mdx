@@ -7,12 +7,12 @@ Every autonomous system needs a circuit breaker. Delta provides a structured hum
 
 ## How it works
 
-The engine never assumes perfect autonomy. When an agent reaches a governance boundary it cannot cross alone — an action that requires approval, a budget violation, a persistent API failure — the engine pauses the task, records the reason, and waits. The task stays blocked until a human reviews the situation and decides what to do next.
+The engine never assumes perfect autonomy. When an agent reaches a governance boundary it cannot cross alone (an action that requires approval, a budget violation, a persistent API failure), the engine pauses the task, records the reason, and waits. The task stays blocked until a human reviews the situation and decides what to do next.
 
 ```ts
 // Subscribe to approval requests as they happen
 delta.events.on("approval-requested", ({ taskId, action, approvalId, reason }) => {
-  console.log(`Task ${taskId}: ${action} needs sign-off — ${reason}`);
+  console.log(`Task ${taskId}: ${action} needs sign-off (${reason})`);
   // Forward to Slack, email, dashboard
 });
 
@@ -42,7 +42,7 @@ const shipRefund = delta.action({
 
 ### Trust-based waiver
 
-Actions that need human oversight by default can waive it once the agent has earned enough trust. `requiresApproval: { untilTrust: 0.7 }` means the action requires approval only until the task's trust score reaches 0.7 — after that it auto-approves with an auditable record.
+Actions that need human oversight by default can waive it once the agent has earned enough trust. `requiresApproval: { untilTrust: 0.7 }` means the action requires approval only until the task's trust score reaches 0.7. After that it auto-approves with an auditable record.
 
 ```ts
 const action = delta.action({
@@ -53,20 +53,20 @@ const action = delta.action({
 });
 ```
 
-A rejection is always final. Even with a trust waiver, a human-rejected action stays blocked — the waiver only governs the initial approval gate, not overrides.
+A rejection is always final. Even with a trust waiver, a human-rejected action stays blocked. The waiver only governs the initial approval gate, not overrides.
 
 ### Approval lifecycle
 
 1. The engine creates an `ApprovalRequest` in `pending` status
 2. The task transitions to `blocked` (persisted as `paused`)
-3. The engine emits `approval-requested` — subscribe via `delta.events.on()`
+3. The engine emits `approval-requested`. Subscribe via `delta.events.on()`
 4. A human calls `delta.approve()` or `delta.reject()`
 5. The engine emits `approval-resolved` with the decision
 6. After approval, call `delta.resume(taskId)` to continue
 
 ## Escalations
 
-The engine escalates to a human when it hits a boundary it cannot resolve alone. Escalation is not an error — it is a designed recovery path.
+The engine escalates to a human when it hits a boundary it cannot resolve alone. Escalation is not an error. It is a designed recovery path.
 
 When escalation happens, the engine:
 1. Saves an escalation record with the trigger and reason
@@ -75,10 +75,10 @@ When escalation happens, the engine:
 
 ### Escalation triggers
 
-- **Reasoner failure**: the model API fails after all retries are exhausted — the problem is likely transient, so the task pauses rather than fails
-- **Budget violation**: an action would exceed the remaining budget — the engine blocks before executing
+- **Reasoner failure**: the model API fails after all retries are exhausted. The problem is likely transient, so the task pauses rather than fails
+- **Budget violation**: an action would exceed the remaining budget. The engine blocks before executing
 - **Risk threshold**: the task's assessed risk rises above the configured boundary
-- **Bayesian surprise**: observed outcomes deviate sharply from expected — indicates novel or potentially unsafe conditions
+- **Bayesian surprise**: observed outcomes deviate sharply from expected. This indicates novel or potentially unsafe conditions
 - **Supervision policy**: a workflow phase declares `escalate` as its supervision strategy for unrecoverable action failures
 
 ```ts
@@ -88,6 +88,14 @@ delta.events.on("escalation-raised", ({ taskId, trigger, reason }) => {
   notifyOnCallEngineer(taskId, reason);
 });
 ```
+
+## Engine guidance
+
+Before escalating, the engine warns the agent through advisory guidance lines injected into its reasoning context. On each turn, the engine checks governance signals (risk level, trust score, budget consumption, and Bayesian surprise) and computes warning-band text the model sees before it proposes its next action.
+
+Guidance works preventively: the agent sees "Risk rising above threshold" or "Budget at 80 percent" and can change course before the engine blocks the action. This reduces unnecessary escalations without reducing safety.
+
+Guidance is on by default. Set `guidance: false` in engine configuration to disable it entirely.
 
 ## Pause and resume
 
@@ -107,17 +115,17 @@ Resume re-enters the governance loop from the last checkpoint. Completed work is
 
 ### Concurrent resume safety
 
-Two callers cannot both resume the same task. The engine uses a compare-and-swap transition so exactly one resume wins — the other gets a clear error. This prevents duplicate execution when multiple reviewers respond to the same escalation.
+Two callers cannot both resume the same task. The engine uses a compare-and-swap transition so exactly one resume wins. The other gets a clear error. This prevents duplicate execution when multiple reviewers respond to the same escalation.
 
 ## Rejection routing
 
-When a human rejects an action, the engine feeds the rejection reason back to the model. The agent sees why its proposal was denied and can route around the blocked gate — choose a different approach, complete the task differently, or report what it could not do.
+When a human rejects an action, the engine feeds the rejection reason back to the model. The agent sees why its proposal was denied and can route around the blocked gate: choose a different approach, complete the task differently, or report what it could not do.
 
 ```ts
-await delta.reject(approvalId, "Use the standard refund flow — the customer is not eligible for manual override");
+await delta.reject(approvalId, "Use the standard refund flow. The customer is not eligible for manual override");
 ```
 
-The model receives this feedback on its next turn (free loop) or the workflow fails with the reason (deterministic path). A rejected action is never re-requested — the engine permanently blocks that specific approval.
+The model receives this feedback on its next turn (free loop) or the workflow fails with the reason (deterministic path). A rejected action is never re-requested. The engine permanently blocks that specific approval.
 
 ## Supervision and HITL
 
@@ -134,7 +142,7 @@ The `escalate` strategy is the designed HITL path for workflows: when automated 
 
 ## Events reference
 
-HITL events are always-on — they fire regardless of any diagnostics configuration because a silently dropped human-oversight notification is a safety failure.
+HITL events are always-on. They fire regardless of any diagnostics configuration because a silently dropped human-oversight notification is a safety failure.
 
 | Event | When |
 |-------|------|

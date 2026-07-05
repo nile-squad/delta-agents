@@ -26,6 +26,8 @@ Passed to `createDeltaEngine()`.
 | `commitMaxRetries` | `number` | 3 | Max reasoner attempts in commit step before auto-commit. |
 | `tools` | `ToolsConfig` | None | Builtin and custom tool declarations. |
 | `mailbox` | `{ inboxCap?: number }` | Unbounded | Per-agent inbox capacity cap. |
+| `guidance` | `boolean` | `true` | Warning-band advisory lines (risk, trust, budget, surprise) that reach the model so it can self-correct before escalation thresholds fire. |
+| `maxInvalidDecisionRetries` | `number` | 3 | Max consecutive invalid model decisions before the task fails. 0 fails immediately. |
 
 ## ModelDef
 

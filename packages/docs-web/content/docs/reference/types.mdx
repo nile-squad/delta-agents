@@ -389,3 +389,13 @@ type RosterEntry = {
   overloaded: boolean;
 };
 ```
+
+### CleanupOptions
+
+```ts
+type CleanupOptions = {
+  taskRetentionMs?: number;
+  messageRetentionMs?: number;
+  evictCache?: boolean;
+};
+```

@@ -171,7 +171,7 @@ await delta.cleanup(options?: CleanupOptions): Promise<Result<void, string>>
 Subscribe to engine events with typed payloads. Each event name maps to a specific payload shape so subscribers receive correctly typed data without casting.
 
 ```ts
-// Subscribe — returns an unsubscribe function
+// Subscribe. Returns an unsubscribe function
 const unsub = delta.events.on("approval-requested", (data) => {
   // data is typed as { taskId: string; action: string; approvalId: string; reason: string }
   console.log(data.taskId);
