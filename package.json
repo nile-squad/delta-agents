@@ -1,6 +1,6 @@
 {
   "name": "delta-agents-workspace",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "description": "Monorepo root for delta-agents — deterministic autonomous control plane for AI agents",
   "type": "module",

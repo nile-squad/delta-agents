@@ -108,13 +108,13 @@ Requirements: TypeScript 5 or later.
 
 ## Documentation
 
-The guide covers actions, agents, workflows, human oversight, tools, memory, delegation, channels, multimodal input, the cost model, and the complete API reference. It lives in `packages/web/docs/guide/` (an [rspress](https://rspress.dev) site; run locally with `pnpm --filter delta-agents-docs dev`).
+The full guide covers actions, agents, workflows, human oversight, tools, memory, delegation, channels, multimodal input, the cost model, and the complete API reference.
+
+Read it at **[delta.nilesquad.com](https://delta.nilesquad.com)**. Source lives in [`packages/docs-web/content/docs/`](./packages/docs-web/content/docs/).
 
 ## Status
 
-Pre-1.0. The specification is stable. The core engine, governance math, supervision strategies, workflow execution, delegation, channels, memory retrieval, tools, multimodal input, and human oversight are all implemented and tested. The API shape is final. Breaking changes before 1.0 will be documented.
-
-Install with `pnpm add delta-agents` to use the current build.
+v1. The specification is stable and the API is final. The core engine, governance math, supervision strategies, workflow execution, delegation, channels, memory retrieval, tools, multimodal input, and human oversight are implemented and tested.
 
 ## License
 
